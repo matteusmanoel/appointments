@@ -1,0 +1,115 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - region "Notifications (F8)":
+      - list
+    - region "Notifications alt+T"
+    - generic [ref=e1639]:
+      - complementary [ref=e1640]:
+        - generic [ref=e1641]:
+          - img [ref=e1643]
+          - generic [ref=e1649]:
+            - heading "BarberFlow" [level=1] [ref=e1650]
+            - paragraph [ref=e1651]: Gestão de Barbearia
+        - navigation [ref=e1652]:
+          - link "Dashboard" [ref=e1653] [cursor=pointer]:
+            - /url: /
+            - img [ref=e1654]
+            - generic [ref=e1659]: Dashboard
+          - link "Agendamentos" [ref=e1660] [cursor=pointer]:
+            - /url: /agendamentos
+            - img [ref=e1661]
+            - generic [ref=e1663]: Agendamentos
+          - link "Barbeiros" [ref=e1664] [cursor=pointer]:
+            - /url: /barbeiros
+            - img [ref=e1665]
+            - generic [ref=e1671]: Barbeiros
+          - link "Serviços" [ref=e1672] [cursor=pointer]:
+            - /url: /servicos
+            - img [ref=e1673]
+            - generic [ref=e1677]: Serviços
+          - link "Clientes" [ref=e1678] [cursor=pointer]:
+            - /url: /clientes
+            - img [ref=e1679]
+            - generic [ref=e1684]: Clientes
+          - link "Fidelidade" [ref=e1685] [cursor=pointer]:
+            - /url: /fidelidade
+            - img [ref=e1686]
+            - generic [ref=e1692]: Fidelidade
+        - generic [ref=e1693]:
+          - link "Configurações" [ref=e1694] [cursor=pointer]:
+            - /url: /configuracoes
+            - img [ref=e1695]
+            - generic [ref=e1698]: Configurações
+          - button "Sair" [ref=e1699] [cursor=pointer]:
+            - img [ref=e1700]
+            - generic [ref=e1703]: Sair
+        - generic [ref=e1705]:
+          - img [ref=e1707]
+          - generic [ref=e1711]:
+            - paragraph [ref=e1712]: Admin
+            - paragraph [ref=e1713]: admin@barbearia.com
+      - main [ref=e1714]:
+        - generic [ref=e1716]:
+          - generic [ref=e1717]:
+            - heading "Bom dia! 👋" [level=1] [ref=e1718]
+            - paragraph [ref=e1719]:
+              - text: Agenda organizada para hoje. Você tem
+              - generic [ref=e1720]: 0 atendimentos
+              - text: confirmados.
+          - generic [ref=e1721]:
+            - generic [ref=e1723]:
+              - generic [ref=e1724]:
+                - paragraph [ref=e1725]: Faturamento Hoje
+                - paragraph [ref=e1726]: R$ 0,00
+                - paragraph [ref=e1727]: Nenhum concluído ainda
+              - img [ref=e1729]
+            - generic [ref=e1732]:
+              - generic [ref=e1733]:
+                - paragraph [ref=e1734]: Agendamentos
+                - paragraph [ref=e1735]: "0"
+                - paragraph [ref=e1736]: 0 pendentes
+              - img [ref=e1738]
+            - generic [ref=e1741]:
+              - generic [ref=e1742]:
+                - paragraph [ref=e1743]: Clientes Atendidos
+                - paragraph [ref=e1744]: "0"
+                - paragraph [ref=e1745]: Hoje
+              - img [ref=e1747]
+            - generic [ref=e1753]:
+              - generic [ref=e1754]:
+                - paragraph [ref=e1755]: Taxa de Ocupação
+                - paragraph [ref=e1756]: 0%
+                - paragraph [ref=e1757]: Baseado na agenda de hoje
+              - img [ref=e1759]
+          - generic [ref=e1762]:
+            - generic [ref=e1763]:
+              - generic [ref=e1764]:
+                - heading "Faturamento Semanal" [level=3] [ref=e1765]
+                - paragraph [ref=e1766]: Receita dos últimos 7 dias
+              - img [ref=e1770]:
+                - generic [ref=e1790]:
+                  - generic [ref=e1792]: R$0
+                  - generic [ref=e1794]: R$900
+                  - generic [ref=e1796]: R$1800
+                  - generic [ref=e1798]: R$2700
+                  - generic [ref=e1800]: R$3600
+            - generic [ref=e1809]:
+              - generic [ref=e1810]:
+                - heading "Serviços Mais Contratados" [level=3] [ref=e1811]
+                - paragraph [ref=e1812]: Este mês
+              - img [ref=e1816]:
+                - generic [ref=e1832]:
+                  - generic [ref=e1834]: CorteSimples
+                  - generic [ref=e1836]: Corte +Barba
+                  - generic [ref=e1838]: Degradê
+                  - generic [ref=e1840]: Barba
+                  - generic [ref=e1842]: Sobrancelha
+          - generic [ref=e1857]:
+            - generic [ref=e1858]:
+              - generic [ref=e1859]:
+                - heading "Próximos Agendamentos" [level=3] [ref=e1860]
+                - paragraph [ref=e1861]: Agenda de hoje
+              - link "Ver todos" [ref=e1862] [cursor=pointer]:
+                - /url: /agendamentos
+            - paragraph [ref=e1863]: Nenhum agendamento para hoje.
+  - generic [ref=e213]: Corte Simples

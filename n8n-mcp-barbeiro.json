@@ -1,0 +1,341 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "path": "mcp-barbeiro"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [256, -208],
+      "id": "d8fff313-6c84-4527-bbce-a7fab9d4c473",
+      "name": "MCP Server Trigger",
+      "webhookId": "f1fb767b-7c9f-428a-ae7f-e001b5bcb389"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Cria um novo agendamento ",
+        "method": "POST",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Appointment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "notes",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Descrição do agendamento.`, 'string') }}"
+            },
+            {
+              "name": "time",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `horario do atendimento no formato HH:mm`, 'string') }}"
+            },
+            {
+              "name": "date",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `DAta do agendamento no formato yyyy-MM-dd`, 'string') }}"
+            },
+            {
+              "name": "client_id",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters3_Value', `Cliente id <CLIENT_ID>`, 'string') }}"
+            },
+            {
+              "name": "barber_id",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters4_Value', `<BARBER_ID>`, 'string') }}"
+            },
+            {
+              "name": "service_id",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters5_Value', `<SERVICE_ID>`, 'string') }}"
+            },
+            {
+              "name": "client_phone",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters6_Value', `Telefone do cliente.`, 'string') }}"
+            },
+            {
+              "name": "client_name",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters7_Value', `Nome do cliente.`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [0, 48],
+      "id": "15d01fca-cb88-4950-906e-b252ba1db7ea",
+      "name": "Cria um novo agendamento"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista os agendamentos para não agendar em um  horario ja cadastrado.",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Appointment",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "2026-10-11"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [112, 16],
+      "id": "971c1d23-807f-4e31-bc46-bfb58b3f87fd",
+      "name": "Lista todos os agendamentos"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar  cliente cadastrado",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Client",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "phone",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `Telefone do cliente`, 'string') }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [288, 160],
+      "id": "e94ca1fc-d9ad-4ac2-b775-9b774ecd2478",
+      "name": "Buscar entidades Client"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Atualizar cliente",
+        "method": "PUT",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Client/697f7faedd6ea74b897d2d5d",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "name",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `nome cliente`, 'string') }}"
+            },
+            {
+              "name": "phone",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `telefone cliente`, 'string') }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `descrição do cadastro\n`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [384, 16],
+      "id": "ad58cffb-85fe-48d0-a0db-d01432605d83",
+      "name": "Atualizar entidade Client"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar barbeiros",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Barber",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [{}]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [528, 0],
+      "id": "e925153f-4c1f-4e39-9b74-7c6e15a24f97",
+      "name": "Buscar entidades Barber"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Buscar serviços ",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Service",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [688, 0],
+      "id": "34fc3a1f-10ae-4e26-89b8-9045a3874790",
+      "name": "listar serviços da barbearia"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar  cliente cadastrado",
+        "method": "POST",
+        "url": "https://app.base44.com/api/apps/697f7d6e190b96ccb9f99100/entities/Client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "86978129af2546f3a7dfb94e13deb072"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phone",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', `telefone do cliente`, 'string') }}"
+            },
+            {
+              "name": "name",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters1_Value', `Nome do cliente.`, 'string') }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters2_Value', `Data de criação do cadastro`, 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [928, -16],
+      "id": "c8c2802f-d45d-422f-bfb3-6daf7082a869",
+      "name": "Cria cadastro do cliente"
+    }
+  ],
+  "connections": {
+    "Cria um novo agendamento": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lista todos os agendamentos": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar entidades Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar entidade Client": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar entidades Barber": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "listar serviços da barbearia": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cria cadastro do cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "b36bde97b912e3c6cc897410d5ff9a4c001765ff6130e3a20e5dcb1343f42126"
+  }
+}

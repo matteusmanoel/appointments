@@ -7,10 +7,44 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Node / package managers
 node_modules
+**/node_modules
 dist
 dist-ssr
+**/dist
 *.local
+bun.lockb
+
+# Env files (mantém apenas templates manuais)
+.env
+.env.*.local
+.env.local
+.env.development
+.env.production
+.env.test
+.env.example
+
+# Build / cache / tooling
+.turbo
+.cache
+.vite
+vite.config.local.*
+coverage
+coverage/
+*.tsbuildinfo
+.eslintcache
+.nyc_output
+*.lcov
+jest-report.*
+test-results/
+
+# Supabase local development artifacts
+supabase/.temp
+
+# AWS / CDK / SAM (se usados)
+cdk.out
+.aws-sam
 
 # Editor directories and files
 .vscode/*

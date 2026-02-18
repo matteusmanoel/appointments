@@ -1,0 +1,6 @@
+[
+  { "ParameterKey": "Stage", "ParameterValue": "prod" },
+  { "ParameterKey": "ArtifactKey", "ParameterValue": "api/latest.zip" },
+  { "ParameterKey": "JwtExpiresIn", "ParameterValue": "7d" },
+  { "ParameterKey": "CorsOrigin", "ParameterValue": "*" }
+]

@@ -1,0 +1,100 @@
+# Deploy API (Lambda) and static (S3 + CloudFront) on push to main.
+# Requires: AWS OIDC role (infra/ci/oidc-github-role.yaml) and GitHub secrets:
+#   AWS_ROLE_ARN, ARTIFACT_BUCKET, DATABASE_URL, JWT_SECRET, VITE_API_URL
+# Optional: CORS_ORIGIN, JWT_EXPIRES_IN, STRIPE_*, FROM_EMAIL, APP_URL (for API)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy-api:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Build and deploy API
+        env:
+          ARTIFACT_BUCKET: ${{ secrets.ARTIFACT_BUCKET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          CORS_ORIGIN: ${{ vars.CORS_ORIGIN || '*' }}
+          JWT_EXPIRES_IN: ${{ vars.JWT_EXPIRES_IN || '7d' }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          APP_URL: ${{ secrets.APP_URL }}
+        run: |
+          cd backend
+          npm ci
+          npm run build
+          zip -r -q ../dist.zip dist package.json package-lock.json node_modules -x "*.map"
+          aws s3 cp ../dist.zip "s3://${ARTIFACT_BUCKET}/api/latest.zip" --region ${{ env.AWS_REGION }}
+          aws lambda update-function-code \
+            --function-name barber-harmony-api-prod \
+            --s3-bucket "${ARTIFACT_BUCKET}" \
+            --s3-key "api/latest.zip" \
+            --region ${{ env.AWS_REGION }}
+        if: ${{ secrets.ARTIFACT_BUCKET != '' && secrets.DATABASE_URL != '' && secrets.JWT_SECRET != '' }}
+
+  deploy-static:
+    name: Deploy static
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Build and deploy static
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          npm ci
+          VITE_API_URL="$VITE_API_URL" npm run build
+          STATIC_BUCKET=$(aws cloudformation describe-stacks --stack-name barber-harmony-static-prod --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs[?OutputKey=='StaticBucketName'].OutputValue" --output text)
+          DIST_ID=$(aws cloudformation describe-stacks --stack-name barber-harmony-static-prod --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
+          aws s3 sync dist "s3://${STATIC_BUCKET}" --delete --region ${{ env.AWS_REGION }}
+          # Docs
+          mkdir -p dist-docs/docs
+          [ -f openapi.yaml ] && cp openapi.yaml dist-docs/docs/
+          [ -f openapi.json ] && cp openapi.json dist-docs/docs/
+          if [ -f openapi.yaml ] || [ -f openapi.json ]; then
+            echo '<!DOCTYPE html><html><head><meta charset="utf-8"/><link href="https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.css" rel="stylesheet"/><title>Barber Harmony API</title></head><body><div id="redoc"></div><script src="https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.js"></script><script>Redoc.init("openapi.yaml",{},document.getElementById("redoc"));</script></body></html>' > dist-docs/docs/index.html
+            aws s3 sync dist-docs/docs "s3://${STATIC_BUCKET}/docs" --delete --region ${{ env.AWS_REGION }}
+          fi
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" --region ${{ env.AWS_REGION }}
+        if: ${{ secrets.AWS_ROLE_ARN != '' }}

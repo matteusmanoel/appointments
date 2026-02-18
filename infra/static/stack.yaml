@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Barber Harmony - Static frontend + docs (S3 + CloudFront), us-east-1
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+
+Resources:
+  StaticBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub "barber-harmony-static-${Stage}-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ["*"]
+            MaxAge: 3600
+
+  StaticBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: StaticBucket
+    Properties:
+      Bucket: !Ref StaticBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt CloudFrontOAI.IamArn
+            Action: s3:GetObject
+            Resource: !Sub "${StaticBucket.Arn}/*"
+
+  CloudFrontOAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "OAI for barber-harmony-static-${Stage}"
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: StaticBucketPolicy
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "Barber Harmony static (app + docs) - ${Stage}"
+        DefaultRootObject: index.html
+        Origins:
+          - Id: S3Static
+            DomainName: !GetAtt StaticBucket.DomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${CloudFrontOAI}"
+        DefaultCacheBehavior:
+          TargetOriginId: S3Static
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          DefaultTTL: 300
+          MaxTTL: 86400
+          MinTTL: 0
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+        PriceClass: PriceClass_100
+
+Outputs:
+  StaticBucketName:
+    Description: S3 bucket for static assets (app + docs)
+    Value: !Ref StaticBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-StaticBucketName"
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID for invalidation
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub "${AWS::StackName}-DistributionId"
+  CloudFrontUrl:
+    Description: CloudFront URL (app + docs at /docs)
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+    Export:
+      Name: !Sub "${AWS::StackName}-CloudFrontUrl"

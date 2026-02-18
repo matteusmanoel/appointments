@@ -1,12 +1,14 @@
 import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { TrendingUp, TrendingDown, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface StatCardProps {
   title: string;
   value: string | number;
   subtitle?: string;
   icon: ReactNode;
+  helpText?: string;
   trend?: {
     value: number;
     isPositive: boolean;
@@ -19,6 +21,7 @@ export function StatCard({
   value,
   subtitle,
   icon,
+  helpText,
   trend,
   variant = "default",
 }: StatCardProps) {
@@ -26,7 +29,23 @@ export function StatCard({
     <div className="stat-card animate-fade-in">
       <div className="flex items-start justify-between">
         <div className="flex-1">
-          <p className="text-sm font-medium text-muted-foreground mb-1">{title}</p>
+          <div className="flex items-center gap-1 mb-1">
+            <p className="text-sm font-medium text-muted-foreground">{title}</p>
+            {helpText && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    aria-label={`Ajuda sobre ${title}`}
+                  >
+                    <Info className="w-3 h-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{helpText}</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
           <p
             className={cn(
               "text-2xl font-semibold",

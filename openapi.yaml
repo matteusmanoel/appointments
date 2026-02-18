@@ -1,0 +1,115 @@
+openapi: 3.0.3
+info:
+  title: Barber Harmony API
+  description: API para gestão de barbearias (agendamentos, clientes, barbeiros, serviços). Autenticação via JWT (Bearer) ou API Key (header X-API-Key).
+  version: 1.0.0
+
+servers:
+  - url: https://api.example.com
+    description: API (substitua pela URL real)
+
+security:
+  - bearerAuth: []
+  - apiKey: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags: [System]
+      security: []
+      responses:
+        "200":
+          description: OK
+
+  /api/auth/login:
+    post:
+      summary: Login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        "200":
+          description: Token e perfil
+        "401":
+          description: Credenciais inválidas
+
+  /api/auth/me:
+    get:
+      summary: Perfil do usuário autenticado
+      tags: [Auth]
+      responses:
+        "200":
+          description: Perfil (id, email, barbershop_id, role, must_change_password)
+        "401":
+          description: Não autorizado
+
+  /api/barbershops:
+    get:
+      summary: Dados da barbearia do tenant
+      tags: [Barbershops]
+    patch:
+      summary: Atualizar barbearia
+      tags: [Barbershops]
+
+  /api/integrations/api-keys:
+    get:
+      summary: Listar API keys do tenant
+      tags: [Integrações]
+    post:
+      summary: Criar API key (retorna valor uma vez)
+      tags: [Integrações]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, example: "n8n" }
+
+  /api/appointments:
+    get:
+      summary: Listar agendamentos
+      tags: [Agendamentos]
+    post:
+      summary: Criar agendamento
+      tags: [Agendamentos]
+
+  /api/clients:
+    get:
+      summary: Listar clientes
+      tags: [Clientes]
+    post:
+      summary: Criar cliente
+      tags: [Clientes]
+
+  /api/public/{slug}:
+    get:
+      summary: Dados públicos da barbearia por slug
+      tags: [Público]
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key

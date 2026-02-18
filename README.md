@@ -1,73 +1,87 @@
-# Welcome to your Lovable project
+# BarberFlow (barber-harmony)
 
-## Project info
+Sistema web (SPA) para **gestão de barbearias** com foco em operação diária: **agenda**, **barbeiros**, **serviços**, **clientes**, **fidelidade** e **configurações**.  
+Frontend em React + Vite conectado à **Product API** (backend em Node/Express); banco Postgres com schema em `supabase/migrations/`. Deploy on-prem via Docker Compose; integração WhatsApp e n8n (agente + tools) documentada em `docs/`.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+> O painel usa login (JWT) e dados reais da API. Configure `VITE_API_URL` (ex.: `http://localhost:3000`) no `.env` do frontend.
 
-## How can I edit this code?
+## Visão geral
 
-There are several ways of editing your application.
+- **Tipo**: SPA (Single Page Application) em React
+- **Rotas**: React Router
+- **Dados/Cache**: TanStack React Query (configurado no app)
+- **UI/UX**: TailwindCSS + shadcn/ui (Radix UI) + ícones Lucide + gráficos Recharts
+- **Backend**: Supabase (Postgres + Row Level Security + funções e triggers)
+- **Objetivo do domínio**: operação multi-tenant por barbearia (`barbershop_id`), com perfis e permissões.
 
-**Use Lovable**
+## Módulos (funcionalidades)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+### Dashboard (`/`)
 
-Changes made via Lovable will be committed automatically to this repo.
+Painel de visão geral com:
 
-**Use your preferred IDE**
+- KPIs (faturamento do dia, agendamentos, clientes atendidos, ocupação)
+- Gráfico semanal de faturamento
+- Ranking de serviços mais contratados
+- Lista de próximos agendamentos
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Agendamentos (`/agendamentos`)
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+Agenda diária com:
 
-Follow these steps:
+- Navegação por data
+- Grade por horário x barbeiro
+- Slots vazios e cartões de agendamento (cliente, serviço, telefone)
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+### Barbeiros (`/barbeiros`)
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+Gestão de equipe:
 
-# Step 3: Install the necessary dependencies.
-npm i
+- Lista de barbeiros e status (ativo/intervalo/offline)
+- Serviços por barbeiro
+- Indicadores (agenda hoje, atendimentos/mês, receita/mês, avaliação)
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+### Serviços (`/servicos`)
 
-**Edit a file directly in GitHub**
+Catálogo de serviços:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- Nome/descrição
+- Preço, duração, comissão
+- Categoria (corte/barba/combo/tratamento/adicional)
+- Indicadores de uso e receita
 
-**Use GitHub Codespaces**
+### Clientes (`/clientes`)
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+CRM simplificado:
 
-## What technologies are used for this project?
+- Busca por nome/telefone
+- Histórico (visitas, total gasto, pontos, última visita)
+- Preferências (barbeiro/serviço favorito)
 
-This project is built with:
+### Fidelidade (`/fidelidade`)
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+Programa de pontos:
 
-## How can I deploy this project?
+- Top clientes por pontos
+- Recompensas disponíveis
+- Métricas de retorno e resgates
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+### Configurações (`/configuracoes`)
 
-## Can I connect a custom domain to my Lovable project?
+Seções de configuração:
 
-Yes, you can!
+- Dados da barbearia
+- Horário de funcionamento
+- Link público de agendamento
+- Notificações
+- Pagamentos/comissões
+- Segurança e conta
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Arquitetura (como o projeto está organizado)
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+### Fluxo principal da aplicação
+
+- `src/main.tsx` monta o React no DOM.
+- `src/App.tsx` define providers globais (React Query, tooltips, toasts) e as rotas.
+
+Rotas registradas hoje:

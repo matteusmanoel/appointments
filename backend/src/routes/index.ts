@@ -1,0 +1,26 @@
+import { Router } from "express";
+import { authRouter } from "./auth.js";
+import { barbershopsRouter } from "./barbershops.js";
+import { barbersRouter } from "./barbers.js";
+import { servicesRouter } from "./services.js";
+import { clientsRouter } from "./clients.js";
+import { appointmentsRouter } from "./appointments.js";
+import { reportsRouter } from "./reports.js";
+import { publicRouter } from "./public.js";
+import { toolsRouter } from "./tools.js";
+import { webhooksRouter } from "./webhooks.js";
+import { integrationsRouter } from "./integrations.js";
+
+export const apiRouter = Router();
+
+apiRouter.use("/auth", authRouter);
+apiRouter.use("/integrations", integrationsRouter);
+apiRouter.use("/barbershops", barbershopsRouter);
+apiRouter.use("/barbers", barbersRouter);
+apiRouter.use("/services", servicesRouter);
+apiRouter.use("/clients", clientsRouter);
+apiRouter.use("/appointments", appointmentsRouter);
+apiRouter.use("/reports", reportsRouter);
+apiRouter.use("/public", publicRouter);
+apiRouter.use("/tools", toolsRouter);
+apiRouter.use("/webhooks", webhooksRouter);

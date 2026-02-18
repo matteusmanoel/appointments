@@ -1,0 +1,98 @@
+# OIDC provider for GitHub Actions + IAM role for deploy (API + static)
+# Deploy once: aws cloudformation deploy --stack-name barber-harmony-ci --template-file infra/ci/oidc-github-role.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides GitHubRepo=OWNER/REPO
+# Then set GitHub secret AWS_ROLE_ARN to the role ARN output.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Barber Harmony - GitHub Actions OIDC role for deploy
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Description: "GitHub repository (e.g. owner/repo)"
+  GitHubRef:
+    Type: String
+    Default: "refs/heads/main"
+    Description: "Ref allowed to assume role (e.g. refs/heads/main)"
+
+Resources:
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  GitHubOIDCRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: barber-harmony-github-deploy
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt GitHubOIDCProvider.Arn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+              StringLike:
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubRepo}:*"
+
+  GitHubOIDCRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: GitHubOIDCRole
+    Properties:
+      PolicyName: barber-harmony-deploy
+      Roles: [!Ref GitHubOIDCRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: S3Artifact
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !Sub "arn:aws:s3:::barber-harmony-artifacts-*"
+              - !Sub "arn:aws:s3:::barber-harmony-artifacts-*/*"
+          - Sid: S3Static
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+              - s3:ListBucket
+            Resource:
+              - !Sub "arn:aws:s3:::barber-harmony-static-*"
+              - !Sub "arn:aws:s3:::barber-harmony-static-*/*"
+          - Sid: LambdaUpdate
+            Effect: Allow
+            Action:
+              - lambda:UpdateFunctionCode
+              - lambda:GetFunction
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:barber-harmony-api-*"
+          - Sid: CloudFrontInvalidate
+            Effect: Allow
+            Action:
+              - cloudfront:CreateInvalidation
+              - cloudfront:GetDistribution
+            Resource: "*"
+          - Sid: CloudFormationDescribe
+            Effect: Allow
+            Action:
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackResources
+            Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: IAM role ARN for GitHub Actions (set as AWS_ROLE_ARN secret)
+    Value: !GetAtt GitHubOIDCRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"

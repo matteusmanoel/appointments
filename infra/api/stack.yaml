@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Barber Harmony API - Lambda + API Gateway HTTP API (us-east-1)
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+  ArtifactBucket:
+    Type: String
+    Description: S3 bucket name where Lambda deployment package is stored
+  ArtifactKey:
+    Type: String
+    Default: api/latest.zip
+    Description: S3 object key of the Lambda zip
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: Postgres connection string (e.g. Supabase)
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT signing secret
+  CorsOrigin:
+    Type: String
+    Default: "*"
+    Description: CORS allowed origins (comma-separated)
+  JwtExpiresIn:
+    Type: String
+    Default: "7d"
+  StripeWebhookSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Stripe webhook signing secret (leave empty to disable)
+  StripeSecretKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Stripe secret key for API
+  FromEmail:
+    Type: String
+    Default: ""
+    Description: SES verified sender email for onboarding
+  AppUrl:
+    Type: String
+    Default: ""
+    Description: Front app URL for onboarding emails
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional email for CloudWatch alarm notifications (leave empty to skip SNS)
+
+Resources:
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/barber-harmony-api-${Stage}"
+      RetentionInDays: 14
+
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "barber-harmony-api-${Stage}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+  ApiRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: ApiRole
+    Properties:
+      PolicyName: barber-harmony-api-logs
+      Roles: [!Ref ApiRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !GetAtt ApiLogGroup.Arn
+          - Effect: Allow
+            Action: ses:SendEmail
+            Resource: "*"
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ApiRolePolicy
+    Properties:
+      FunctionName: !Sub "barber-harmony-api-${Stage}"
+      Runtime: nodejs20.x
+      Handler: dist/lambda.handler
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      Timeout: 30
+      MemorySize: 256
+      Role: !GetAtt ApiRole.Arn
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          DATABASE_SSL: "true"
+          DATABASE_POOL_MAX: "5"
+          JWT_SECRET: !Ref JwtSecret
+          JWT_EXPIRES_IN: !Ref JwtExpiresIn
+          CORS_ORIGIN: !Ref CorsOrigin
+          TOOLS_API_KEY: ""
+          PORT: "3000"
+          STRIPE_WEBHOOK_SECRET: !Ref StripeWebhookSecret
+          STRIPE_SECRET_KEY: !Ref StripeSecretKey
+          FROM_EMAIL: !Ref FromEmail
+          APP_URL: !Ref AppUrl
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "barber-harmony-${Stage}"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        AllowHeaders: ["*"]
+        MaxAge: 300
+
+  HttpApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations"
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 29000
+
+  ApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: HttpApiIntegration
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*"
+
+  HttpApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    DependsOn: ApiGatewayPermission
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${HttpApiIntegration}"
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+  # Alarms (no SNS if AlarmEmail empty)
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "barber-harmony-api-${Stage}-lambda-errors"
+      AlarmDescription: Lambda invocation errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      TreatMissingData: notBreaching
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "barber-harmony-api-${Stage}-lambda-duration"
+      AlarmDescription: Lambda duration high
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 25000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+      TreatMissingData: notBreaching
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL (no trailing slash)
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+  ApiFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ApiFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiFunctionArn"
+  ApiFunctionName:
+    Description: Lambda function name for update-function-code
+    Value: !Ref ApiFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiFunctionName"
