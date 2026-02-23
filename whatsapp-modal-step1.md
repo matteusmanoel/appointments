@@ -1,0 +1,173 @@
+- generic:
+  - generic:
+    - list
+    - region "Notifications alt+T"
+    - generic:
+      - complementary:
+        - generic:
+          - generic:
+            - generic:
+              - img
+            - generic:
+              - heading [level=1]: NavalhIA
+            - button:
+              - img
+          - navigation:
+            - link:
+              - /url: /app
+              - img
+              - generic: Dashboard
+            - link:
+              - /url: /app/link
+              - img
+              - generic: Link Público
+            - link:
+              - /url: /app/agendamentos
+              - img
+              - generic: Agendamentos
+              - generic: Pro
+            - link:
+              - /url: /app/barbeiros
+              - img
+              - generic: Barbeiros
+              - generic: Pro
+            - link:
+              - /url: /app/servicos
+              - img
+              - generic: Serviços
+              - generic: Pro
+            - link:
+              - /url: /app/clientes
+              - img
+              - generic: Clientes
+              - generic: Pro
+            - link:
+              - /url: /app/fidelidade
+              - img
+              - generic: Fidelidade
+              - generic: Pro
+          - generic:
+            - link:
+              - /url: /app/integracoes
+              - img
+              - generic: Integrações
+              - generic: Pro
+            - link:
+              - /url: /app/configuracoes
+              - img
+              - generic: Configurações
+              - generic: Pro
+            - button:
+              - img
+              - generic: Sair
+          - generic:
+            - generic:
+              - generic: Tema
+              - button:
+                - img
+            - generic:
+              - generic:
+                - img
+              - generic:
+                - paragraph: Admin
+                - paragraph: admin@navalhia.com.br
+      - main:
+        - generic:
+          - generic:
+            - generic:
+              - heading [level=1]: Configurações
+              - paragraph: Gerencie as configurações da sua NavalhIA
+            - generic:
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Dados da NavalhIA
+                  - paragraph: Nome, endereço e informações de contato
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Horário de Funcionamento
+                  - paragraph: Dias, horários e exceções (feriados, fechamentos)
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Link de Agendamento
+                  - paragraph: Personalize o link público para seus clientes
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: WhatsApp (IA)
+                  - paragraph: Conecte seu número via QR e ative o atendente com IA
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Notificações
+                  - paragraph: Configure lembretes e alertas automáticos
+                  - paragraph: Em breve.
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Pagamentos e Comissões
+                  - paragraph: Métodos de pagamento e regras de comissão
+                  - paragraph: Em breve.
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Segurança
+                  - paragraph: Altere sua senha e configurações de acesso
+                - img
+            - generic:
+              - heading [level=2]: Zona de Perigo
+              - generic:
+                - generic:
+                  - generic:
+                    - heading [level=3]: Encerrar Conta
+                    - paragraph: Esta ação é irreversível e excluirá todos os seus dados.
+                  - button: Excluir Conta
+  - dialog "WhatsApp (IA)" [ref=e242]:
+    - generic [ref=e243]:
+      - heading "WhatsApp (IA)" [level=2] [ref=e244]
+      - paragraph [ref=e245]: Conectar WhatsApp
+    - generic [ref=e246]:
+      - button "1. Conectar WhatsApp" [active] [ref=e247] [cursor=pointer]
+      - button "2. Horários e exceções" [ref=e248] [cursor=pointer]
+      - button "3. Tom de voz" [ref=e249] [cursor=pointer]
+      - button "4. Comportamentos" [ref=e250] [cursor=pointer]
+      - button "5. Testar e publicar" [ref=e251] [cursor=pointer]
+    - generic [ref=e254]:
+      - generic [ref=e255]:
+        - img [ref=e256]
+        - generic [ref=e258]: Conectado
+      - generic [ref=e259]:
+        - text: Enviar teste para
+        - textbox "Enviar teste para" [ref=e260]:
+          - /placeholder: (11) 99999-9999
+        - text: Mensagem (opcional)
+        - textbox "Mensagem (opcional)" [ref=e261]:
+          - /placeholder: "Ex: Olá! Este é um teste do NavalhIA."
+      - generic [ref=e262]:
+        - button "Enviar mensagem de teste" [ref=e263] [cursor=pointer]
+        - button "Desconectar" [ref=e264] [cursor=pointer]
+    - generic [ref=e265]:
+      - button "Anterior" [disabled]:
+        - img
+        - text: Anterior
+      - button "Próximo" [ref=e266] [cursor=pointer]:
+        - text: Próximo
+        - img
+    - button "Close" [ref=e267] [cursor=pointer]:
+      - img [ref=e268]
+      - generic [ref=e271]: Close

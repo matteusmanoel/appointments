@@ -1,4 +1,4 @@
-# Levantamento: Ajustes e Novas Features – BarberFlow
+# Levantamento: Ajustes e Novas Features – NavalhIA
 
 **Data:** 02/02/2025 (atualizado)  
 **Método:** Análise de código + referência ao estado pós-implementação do plano  
@@ -15,7 +15,7 @@
 | **Clientes** | OK | Lista + busca (debounce); CRUD; máscara de telefone (formatPhoneBR/parsePhoneBR) |
 | **Barbeiros** | OK | CRUD + editor de escala (schedule); menu de ações |
 | **Agendamentos** | OK | Grade por `barber_id`; slots por `business_hours`; toast 409 para conflito; edição por IDs; suporte a múltiplos serviços (`service_ids`), status e seletor de período (date range) |
-| **Configurações** | OK | Dados da Barbearia com loading/skeleton; Horário de Funcionamento (modal por dia); Link de Agendamento (slug, copiar link); Excluir Conta com diálogo "Em breve" |
+| **Configurações** | OK | Dados da NavalhIA com loading/skeleton; Horário de Funcionamento (modal por dia); Link de Agendamento (slug, copiar link); Excluir Conta com diálogo "Em breve" |
 | **Fidelidade** | Preview | Placeholder honesto "Em breve"; cards com "—" |
 | **Agendamento público** | OK | Rota `/b/:slug`; fluxo serviço → barbeiro → data/horário → dados; criação com status pending |
 | **Tema / Mobile** | OK | Toggle tema na sidebar; drawer no mobile |
@@ -96,8 +96,8 @@
 - **Dashboard configurável**  
   Usuário escolher quais widgets exibir ou ordem (preferências no backend ou localStorage).
 
-- **Múltiplas barbearias (multi-tenant)**  
-  Se o produto for usado por mais de uma unidade: seletor de barbearia, escopo por `barbershop_id`.
+- **Múltiplas estabelecimentos (multi-tenant)**  
+  Se o produto for usado por mais de uma unidade: seletor de estabelecimento, escopo por `barbershop_id`.
 
 - **Página 404 customizada**  
   Manter ou melhorar a página NotFound com link de volta ao Dashboard.
@@ -109,7 +109,7 @@
 - [x] Agendamentos: uso de `barber_id` na grade e tipo da API.
 - [x] Tratamento de 409 (conflito de horário) no criar/editar agendamento.
 - [x] Serviços: default de preço 35 e placeholder.
-- [x] Configurações: loading ao abrir "Dados da Barbearia".
+- [x] Configurações: loading ao abrir "Dados da NavalhIA".
 - [x] Dashboard: gráficos com API de relatórios; loading/erro/empty nos cards.
 - [x] Horário de funcionamento: DB, backend GET/PATCH, editor no front, slots em Agendamentos.
 - [x] Link público: slug, rotas públicas, página `/b/:slug`, seção em Configurações.

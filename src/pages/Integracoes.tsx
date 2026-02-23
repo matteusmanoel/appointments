@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
 import { integrationsApi, type ApiKeyItem } from "@/lib/api";
 import { Key, Plus, Trash2, Copy, Check } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +22,10 @@ export default function Integracoes() {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  const [createdKey, setCreatedKey] = useState<{ api_key: string; name: string } | null>(null);
+  const [createdKey, setCreatedKey] = useState<{
+    api_key: string;
+    name: string;
+  } | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -38,7 +41,8 @@ export default function Integracoes() {
       setNewKeyName("");
       queryClient.invalidateQueries({ queryKey: ["integrations", "api-keys"] });
     },
-    onError: (e) => toastError(e instanceof Error ? e.message : "Erro ao criar chave"),
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao criar chave"),
   });
 
   const revokeMutation = useMutation({
@@ -48,7 +52,8 @@ export default function Integracoes() {
       queryClient.invalidateQueries({ queryKey: ["integrations", "api-keys"] });
       toastSuccess("Chave revogada");
     },
-    onError: (e) => toastError(e instanceof Error ? e.message : "Erro ao revogar"),
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao revogar"),
   });
 
   const handleCreate = () => {
@@ -65,18 +70,22 @@ export default function Integracoes() {
   };
 
   return (
-    <MainLayout>
+    <>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Integrações</h1>
+          <h1 className="text-2xl font-semibold text-foreground">
+            Integrações
+          </h1>
           <p className="text-muted-foreground mt-1">
-            API Keys para conectar n8n, WhatsApp e outros serviços. Use o header <code className="text-xs bg-muted px-1 rounded">X-API-Key</code> nas requisições.
+            API Keys para conectar n8n, WhatsApp e outros serviços. Use o header{" "}
+            <code className="text-xs bg-muted px-1 rounded">X-API-Key</code> nas
+            requisições.
           </p>
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-medium text-foreground">Chaves de API</h2>
-          <Button onClick={() => setCreateOpen(true)}>
+          <Button onClick={() => setCreateOpen(true)} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-2" />
             Nova chave
           </Button>
@@ -96,13 +105,17 @@ export default function Integracoes() {
                   <div>
                     <p className="font-medium">{k.name}</p>
                     <p className="text-xs text-muted-foreground">
-                      Criada em {new Date(k.created_at).toLocaleDateString("pt-BR")}
-                      {k.last_used_at && ` · Último uso: ${new Date(k.last_used_at).toLocaleString("pt-BR")}`}
+                      Criada em{" "}
+                      {new Date(k.created_at).toLocaleDateString("pt-BR")}
+                      {k.last_used_at &&
+                        ` · Último uso: ${new Date(k.last_used_at).toLocaleString("pt-BR")}`}
                     </p>
                   </div>
                 </div>
                 {k.revoked ? (
-                  <span className="text-sm text-muted-foreground">Revogada</span>
+                  <span className="text-sm text-muted-foreground">
+                    Revogada
+                  </span>
                 ) : (
                   <Button
                     variant="ghost"
@@ -116,8 +129,12 @@ export default function Integracoes() {
               </li>
             ))}
             {keys?.length === 0 && (
-              <li className="p-6 rounded-lg border border-dashed text-center text-muted-foreground">
-                Nenhuma chave. Crie uma para usar no n8n ou outras integrações.
+              <li className="list-none">
+                <EmptyState
+                  icon={<Key className="h-12 w-12" strokeWidth={1.5} />}
+                  title="Nenhuma chave de API"
+                  description="Crie uma chave para usar no n8n ou outras integrações."
+                />
               </li>
             )}
           </ul>
@@ -128,7 +145,9 @@ export default function Integracoes() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nova chave de API</DialogTitle>
-            <DialogDescription>Dê um nome para identificar esta chave (ex.: n8n-prod).</DialogDescription>
+            <DialogDescription>
+              Dê um nome para identificar esta chave (ex.: n8n-prod).
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
@@ -142,7 +161,9 @@ export default function Integracoes() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+              Cancelar
+            </Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
               Criar
             </Button>
@@ -150,7 +171,10 @@ export default function Integracoes() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!createdKey} onOpenChange={(open) => !open && setCreatedKey(null)}>
+      <Dialog
+        open={!!createdKey}
+        onOpenChange={(open) => !open && setCreatedKey(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Chave criada</DialogTitle>
@@ -165,7 +189,11 @@ export default function Integracoes() {
               variant="ghost"
               onClick={() => createdKey && copyKey(createdKey.api_key)}
             >
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
             </Button>
           </div>
           <DialogFooter>
@@ -184,6 +212,6 @@ export default function Integracoes() {
         }}
         variant="destructive"
       />
-    </MainLayout>
+    </>
   );
 }

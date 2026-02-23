@@ -2,7 +2,7 @@
 
 Todas as tools são chamadas pelo n8n (MCP client) contra o **Backend do Produto**. Autenticação: header `Authorization: Bearer <API_KEY>` ou `X-API-Key: <API_KEY>`.
 
-**Multi-tenant (SaaS):** cada barbearia tem sua própria API Key (gerada no painel em Integrações). O `barbershop_id` é **sempre inferido** pela API a partir da key; não envie `barbershop_id` em query ou body — ele será ignorado. Basta configurar no n8n uma credencial com a API Key da barbearia.
+**Multi-tenant (SaaS):** cada estabelecimento tem sua própria API Key (gerada no painel em Integrações). O `barbershop_id` é **sempre inferido** pela API a partir da key; não envie `barbershop_id` em query ou body — ele será ignorado. Basta configurar no n8n uma credencial com a API Key da NavalhIA.
 
 Em instalação single-tenant (on-prem), uma única key pode ser usada e o `barbershop_id` continua inferido (ex.: env `BARBERSHOP_ID` ou único registro).
 
@@ -10,7 +10,7 @@ Em instalação single-tenant (on-prem), uma única key pode ser usada e o `barb
 
 ## 1. list_services
 
-**Descrição:** Lista serviços ativos da barbearia (nome, valor, descrição; sem comissão).
+**Descrição:** Lista serviços ativos da NavalhIA (nome, valor, descrição; sem comissão).
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
@@ -54,7 +54,7 @@ Em instalação single-tenant (on-prem), uma única key pode ser usada e o `barb
 
 ## 4. upsert_client
 
-**Descrição:** Busca cliente por telefone na barbearia; se não existir, cria. Se existir, pode atualizar nome/notes.
+**Descrição:** Busca cliente por telefone na NavalhIA; se não existir, cria. Se existir, pode atualizar nome/notes.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
@@ -92,9 +92,9 @@ Em instalação single-tenant (on-prem), uma única key pode ser usada e o `barb
 
 ## Autorização (n8n → API)
 
-- Todas as requisições das tools devem incluir **uma API Key por barbearia** (header `X-API-Key` ou `Authorization: Bearer <key>`).
+- Todas as requisições das tools devem incluir **uma API Key por estabelecimento** (header `X-API-Key` ou `Authorization: Bearer <key>`).
 - A API associa a key a um `barbershop_id` (tabela `barbershop_api_keys`). O tenant é sempre inferido pela key; não envie `barbershop_id` no request.
-- Não expor dados de outras barbearias: cada key só acessa os dados da sua barbearia.
+- Não expor dados de outros estabelecimentos: cada key só acessa os dados da sua NavalhIA.
 
 ---
 

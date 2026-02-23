@@ -12,6 +12,8 @@ const createBody = z.object({
   commission_percentage: z.number().int().min(0).max(100).optional(),
   category: categoryEnum.optional(),
   is_active: z.boolean().optional(),
+  points_to_earn: z.number().int().min(0).optional(),
+  points_to_redeem: z.number().int().min(0).nullable().optional(),
 });
 const updateBody = createBody.partial();
 
@@ -19,11 +21,13 @@ export const servicesRouter = Router();
 
 servicesRouter.use(requireJwt);
 
+const serviceColumns =
+  "id, barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active, points_to_earn, points_to_redeem, created_at, updated_at";
+
 servicesRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const r = await pool.query(
-    `SELECT id, barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active, created_at, updated_at
-     FROM public.services WHERE barbershop_id = $1 ORDER BY name`,
+    `SELECT ${serviceColumns} FROM public.services WHERE barbershop_id = $1 ORDER BY name`,
     [barbershopId]
   );
   res.json(r.rows);
@@ -36,11 +40,11 @@ servicesRouter.post("/", async (req: Request, res: Response): Promise<void> => {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { name, description, price, duration_minutes, commission_percentage, category, is_active } = parsed.data;
+  const { name, description, price, duration_minutes, commission_percentage, category, is_active, points_to_earn, points_to_redeem } = parsed.data;
   const r = await pool.query(
-    `INSERT INTO public.services (barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING id, barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active, created_at, updated_at`,
+    `INSERT INTO public.services (barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active, points_to_earn, points_to_redeem)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING ${serviceColumns}`,
     [
       barbershopId,
       name,
@@ -50,6 +54,8 @@ servicesRouter.post("/", async (req: Request, res: Response): Promise<void> => {
       commission_percentage ?? 40,
       category ?? "corte",
       is_active ?? true,
+      points_to_earn ?? 0,
+      points_to_redeem ?? null,
     ]
   );
   res.status(201).json(r.rows[0]);
@@ -58,7 +64,7 @@ servicesRouter.post("/", async (req: Request, res: Response): Promise<void> => {
 servicesRouter.get("/:id", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const r = await pool.query(
-    "SELECT * FROM public.services WHERE id = $1 AND barbershop_id = $2",
+    `SELECT ${serviceColumns} FROM public.services WHERE id = $1 AND barbershop_id = $2`,
     [req.params.id, barbershopId]
   );
   if (r.rows.length === 0) {
@@ -78,7 +84,7 @@ servicesRouter.patch("/:id", async (req: Request, res: Response): Promise<void> 
   const updates: string[] = [];
   const values: unknown[] = [];
   let i = 1;
-  const allowed = ["name", "description", "price", "duration_minutes", "commission_percentage", "category", "is_active"];
+  const allowed = ["name", "description", "price", "duration_minutes", "commission_percentage", "category", "is_active", "points_to_earn", "points_to_redeem"];
   for (const key of allowed) {
     const v = (parsed.data as Record<string, unknown>)[key];
     if (v === undefined) continue;
@@ -87,7 +93,7 @@ servicesRouter.patch("/:id", async (req: Request, res: Response): Promise<void> 
   }
   if (updates.length === 0) {
     const r = await pool.query(
-      "SELECT * FROM public.services WHERE id = $1 AND barbershop_id = $2",
+      `SELECT ${serviceColumns} FROM public.services WHERE id = $1 AND barbershop_id = $2`,
       [req.params.id, barbershopId]
     );
     if (r.rows.length === 0) res.status(404).json({ error: "Service not found" });

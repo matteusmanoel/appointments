@@ -1,0 +1,128 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - complementary [ref=e4]:
+      - generic [ref=e5]:
+        - generic [ref=e6]:
+          - img "NavalhIA" [ref=e8]
+          - heading "NavalhIA" [level=1] [ref=e10]
+          - button "Recolher menu" [ref=e11] [cursor=pointer]:
+            - img
+        - navigation [ref=e12]:
+          - link "Dashboard" [ref=e13] [cursor=pointer]:
+            - /url: /app
+            - img [ref=e14]
+            - generic [ref=e19]: Dashboard
+          - link "Link Público" [ref=e20] [cursor=pointer]:
+            - /url: /app/link
+            - img [ref=e21]
+            - generic [ref=e24]: Link Público
+          - link "Agendamentos Pro" [ref=e25] [cursor=pointer]:
+            - /url: /app/agendamentos
+            - img [ref=e26]
+            - generic [ref=e28]: Agendamentos
+            - generic [ref=e29]: Pro
+          - link "Barbeiros Pro" [ref=e30] [cursor=pointer]:
+            - /url: /app/barbeiros
+            - img [ref=e31]
+            - generic [ref=e37]: Barbeiros
+            - generic [ref=e38]: Pro
+          - link "Serviços Pro" [ref=e39] [cursor=pointer]:
+            - /url: /app/servicos
+            - img [ref=e40]
+            - generic [ref=e44]: Serviços
+            - generic [ref=e45]: Pro
+          - link "Clientes Pro" [ref=e46] [cursor=pointer]:
+            - /url: /app/clientes
+            - img [ref=e47]
+            - generic [ref=e52]: Clientes
+            - generic [ref=e53]: Pro
+          - link "Fidelidade Pro" [ref=e54] [cursor=pointer]:
+            - /url: /app/fidelidade
+            - img [ref=e55]
+            - generic [ref=e61]: Fidelidade
+            - generic [ref=e62]: Pro
+        - generic [ref=e63]:
+          - link "Integrações Pro" [ref=e64] [cursor=pointer]:
+            - /url: /app/integracoes
+            - img [ref=e65]
+            - generic [ref=e69]: Integrações
+            - generic [ref=e70]: Pro
+          - link "Configurações Pro" [ref=e71] [cursor=pointer]:
+            - /url: /app/configuracoes
+            - img [ref=e72]
+            - generic [ref=e75]: Configurações
+            - generic [ref=e76]: Pro
+          - button "Sair" [ref=e77] [cursor=pointer]:
+            - img [ref=e78]
+            - generic [ref=e81]: Sair
+        - generic [ref=e82]:
+          - generic [ref=e83]:
+            - generic [ref=e84]: Tema
+            - button "Alternar tema" [ref=e85] [cursor=pointer]:
+              - img
+              - img
+          - generic [ref=e86]:
+            - img [ref=e88]
+            - generic [ref=e92]:
+              - paragraph [ref=e93]: Admin
+              - paragraph [ref=e94]: admin@navalhia.com.br
+    - main [ref=e95]:
+      - generic [ref=e97]:
+        - generic [ref=e98]:
+          - heading "Configurações" [level=1] [ref=e99]
+          - paragraph [ref=e100]: Gerencie as configurações da sua NavalhIA
+        - generic [ref=e101]:
+          - button "Dados da NavalhIA Nome, endereço e informações de contato" [ref=e102] [cursor=pointer]:
+            - img [ref=e104]
+            - generic [ref=e109]:
+              - heading "Dados da NavalhIA" [level=3] [ref=e110]
+              - paragraph [ref=e111]: Nome, endereço e informações de contato
+            - img [ref=e112]
+          - button "Horário de Funcionamento Dias, horários e exceções (feriados, fechamentos)" [ref=e114] [cursor=pointer]:
+            - img [ref=e116]
+            - generic [ref=e119]:
+              - heading "Horário de Funcionamento" [level=3] [ref=e120]
+              - paragraph [ref=e121]: Dias, horários e exceções (feriados, fechamentos)
+            - img [ref=e122]
+          - button "Link de Agendamento Personalize o link público para seus clientes" [ref=e124] [cursor=pointer]:
+            - img [ref=e126]
+            - generic [ref=e129]:
+              - heading "Link de Agendamento" [level=3] [ref=e130]
+              - paragraph [ref=e131]: Personalize o link público para seus clientes
+            - img [ref=e132]
+          - button "WhatsApp (IA) Conecte seu número via QR e ative o atendente com IA" [ref=e134] [cursor=pointer]:
+            - img [ref=e136]
+            - generic [ref=e138]:
+              - heading "WhatsApp (IA)" [level=3] [ref=e139]
+              - paragraph [ref=e140]: Conecte seu número via QR e ative o atendente com IA
+            - img [ref=e141]
+          - button "Notificações Configure lembretes e alertas automáticos Em breve." [ref=e143] [cursor=pointer]:
+            - img [ref=e145]
+            - generic [ref=e148]:
+              - heading "Notificações" [level=3] [ref=e149]
+              - paragraph [ref=e150]: Configure lembretes e alertas automáticos
+              - paragraph [ref=e151]: Em breve.
+            - img [ref=e152]
+          - button "Pagamentos e Comissões Métodos de pagamento e regras de comissão Em breve." [ref=e154] [cursor=pointer]:
+            - img [ref=e156]
+            - generic [ref=e158]:
+              - heading "Pagamentos e Comissões" [level=3] [ref=e159]
+              - paragraph [ref=e160]: Métodos de pagamento e regras de comissão
+              - paragraph [ref=e161]: Em breve.
+            - img [ref=e162]
+          - button "Segurança Altere sua senha e configurações de acesso" [ref=e164] [cursor=pointer]:
+            - img [ref=e166]
+            - generic [ref=e168]:
+              - heading "Segurança" [level=3] [ref=e169]
+              - paragraph [ref=e170]: Altere sua senha e configurações de acesso
+            - img [ref=e171]
+        - generic [ref=e173]:
+          - heading "Zona de Perigo" [level=2] [ref=e174]
+          - generic [ref=e176]:
+            - generic [ref=e177]:
+              - heading "Encerrar Conta" [level=3] [ref=e178]
+              - paragraph [ref=e179]: Esta ação é irreversível e excluirá todos os seus dados.
+            - button "Excluir Conta" [ref=e180] [cursor=pointer]

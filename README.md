@@ -1,6 +1,7 @@
-# BarberFlow (barber-harmony)
+# NavalhIA
 
-Sistema web (SPA) para **gestão de barbearias** com foco em operação diária: **agenda**, **barbeiros**, **serviços**, **clientes**, **fidelidade** e **configurações**.  
+Sistema web (SPA) para **gestão no NavalhIA** (navalhia.com.br) com foco em operação diária: **agenda**, **barbeiros**, **serviços**, **clientes**, **fidelidade** e **configurações**.
+Para consistência com o domínio navalhia.com.br, recomenda-se que o repositório remoto (GitHub/GitLab) tenha o nome **navalhia** ou **navalhia-app**.  
 Frontend em React + Vite conectado à **Product API** (backend em Node/Express); banco Postgres com schema em `supabase/migrations/`. Deploy on-prem via Docker Compose; integração WhatsApp e n8n (agente + tools) documentada em `docs/`.
 
 > O painel usa login (JWT) e dados reais da API. Configure `VITE_API_URL` (ex.: `http://localhost:3000`) no `.env` do frontend.
@@ -12,7 +13,7 @@ Frontend em React + Vite conectado à **Product API** (backend em Node/Express);
 - **Dados/Cache**: TanStack React Query (configurado no app)
 - **UI/UX**: TailwindCSS + shadcn/ui (Radix UI) + ícones Lucide + gráficos Recharts
 - **Backend**: Supabase (Postgres + Row Level Security + funções e triggers)
-- **Objetivo do domínio**: operação multi-tenant por barbearia (`barbershop_id`), com perfis e permissões.
+- **Objetivo do domínio**: operação multi-tenant por estabelecimento (`barbershop_id`), com perfis e permissões.
 
 ## Módulos (funcionalidades)
 
@@ -70,7 +71,7 @@ Programa de pontos:
 
 Seções de configuração:
 
-- Dados da barbearia
+- Dados do estabelecimento (NavalhIA)
 - Horário de funcionamento
 - Link público de agendamento
 - Notificações

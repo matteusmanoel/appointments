@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Barber Harmony - AWS bootstrap (run once per account/region)
+# NavalhIA - AWS bootstrap (run once per account/region)
 # Creates S3 bucket for Lambda artifacts. Requires AWS CLI configured.
 
 set -e
 AWS_REGION="${AWS_REGION:-us-east-1}"
-PROJECT="${PROJECT:-barber-harmony}"
+PROJECT="${PROJECT:-navalhia}"
 SUFFIX="${SUFFIX:-$(openssl rand -hex 4)}"
 ARTIFACT_BUCKET="${ARTIFACT_BUCKET:-${PROJECT}-artifacts-${SUFFIX}}"
 

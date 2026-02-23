@@ -1,0 +1,222 @@
+- generic:
+  - generic:
+    - list
+    - region "Notifications alt+T"
+    - generic:
+      - complementary:
+        - generic:
+          - generic:
+            - generic:
+              - img
+            - generic:
+              - heading [level=1]: NavalhIA
+            - button:
+              - img
+          - navigation:
+            - link:
+              - /url: /app
+              - img
+              - generic: Dashboard
+            - link:
+              - /url: /app/link
+              - img
+              - generic: Link Público
+            - link:
+              - /url: /app/agendamentos
+              - img
+              - generic: Agendamentos
+              - generic: Pro
+            - link:
+              - /url: /app/barbeiros
+              - img
+              - generic: Barbeiros
+              - generic: Pro
+            - link:
+              - /url: /app/servicos
+              - img
+              - generic: Serviços
+              - generic: Pro
+            - link:
+              - /url: /app/clientes
+              - img
+              - generic: Clientes
+              - generic: Pro
+            - link:
+              - /url: /app/fidelidade
+              - img
+              - generic: Fidelidade
+              - generic: Pro
+          - generic:
+            - link:
+              - /url: /app/integracoes
+              - img
+              - generic: Integrações
+              - generic: Pro
+            - link:
+              - /url: /app/configuracoes
+              - img
+              - generic: Configurações
+              - generic: Pro
+            - button:
+              - img
+              - generic: Sair
+          - generic:
+            - generic:
+              - generic: Tema
+              - button:
+                - img
+            - generic:
+              - generic:
+                - img
+              - generic:
+                - paragraph: Admin
+                - paragraph: admin@navalhia.com.br
+      - main:
+        - generic:
+          - generic:
+            - generic:
+              - heading [level=1]: Configurações
+              - paragraph: Gerencie as configurações da sua NavalhIA
+            - generic:
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Dados da NavalhIA
+                  - paragraph: Nome, endereço e informações de contato
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Horário de Funcionamento
+                  - paragraph: Dias, horários e exceções (feriados, fechamentos)
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Link de Agendamento
+                  - paragraph: Personalize o link público para seus clientes
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: WhatsApp (IA)
+                  - paragraph: Conecte seu número via QR e ative o atendente com IA
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Notificações
+                  - paragraph: Configure lembretes e alertas automáticos
+                  - paragraph: Em breve.
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Pagamentos e Comissões
+                  - paragraph: Métodos de pagamento e regras de comissão
+                  - paragraph: Em breve.
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Segurança
+                  - paragraph: Altere sua senha e configurações de acesso
+                - img
+            - generic:
+              - heading [level=2]: Zona de Perigo
+              - generic:
+                - generic:
+                  - generic:
+                    - heading [level=3]: Encerrar Conta
+                    - paragraph: Esta ação é irreversível e excluirá todos os seus dados.
+                  - button: Excluir Conta
+  - dialog "WhatsApp (IA)" [ref=e242]:
+    - generic [ref=e243]:
+      - heading "WhatsApp (IA)" [level=2] [ref=e244]
+      - paragraph [ref=e245]: Tom de voz
+    - generic [ref=e246]:
+      - button "1. Conectar WhatsApp" [ref=e247] [cursor=pointer]
+      - button "2. Horários e exceções" [ref=e248] [cursor=pointer]
+      - button "3. Tom de voz" [ref=e249] [cursor=pointer]
+      - button "4. Comportamentos" [ref=e250] [cursor=pointer]
+      - button "5. Testar e publicar" [ref=e251] [cursor=pointer]
+    - generic [ref=e321]:
+      - generic [ref=e322]:
+        - text: Preset de tom
+        - radiogroup [ref=e323]:
+          - generic [ref=e324]:
+            - radio "Padrão Curto, simpático, descolado. Gírias leves." [checked] [ref=e325] [cursor=pointer]:
+              - img [ref=e327]
+            - generic [ref=e329] [cursor=pointer]:
+              - text: Padrão
+              - generic [ref=e330]: Curto, simpático, descolado. Gírias leves.
+          - generic [ref=e331]:
+            - radio "Formal Educado e profissional, sem gírias." [ref=e332] [cursor=pointer]
+            - generic [ref=e333] [cursor=pointer]:
+              - text: Formal
+              - generic [ref=e334]: Educado e profissional, sem gírias.
+          - generic [ref=e335]:
+            - radio "Descolado Bem próximo, como um amigo." [ref=e336] [cursor=pointer]
+            - generic [ref=e337] [cursor=pointer]:
+              - text: Descolado
+              - generic [ref=e338]: Bem próximo, como um amigo.
+          - generic [ref=e339]:
+            - radio "Minimalista Objetivo, respostas curtas." [ref=e340] [cursor=pointer]
+            - generic [ref=e341] [cursor=pointer]:
+              - text: Minimalista
+              - generic [ref=e342]: Objetivo, respostas curtas.
+          - generic [ref=e343]:
+            - radio "Vendas Proativo em sugerir serviços e agendar." [ref=e344] [cursor=pointer]
+            - generic [ref=e345] [cursor=pointer]:
+              - text: Vendas
+              - generic [ref=e346]: Proativo em sugerir serviços e agendar.
+      - generic [ref=e347]:
+        - text: Emojis
+        - radiogroup [ref=e348]:
+          - generic [ref=e349]:
+            - radio "Nenhum" [ref=e350] [cursor=pointer]
+            - generic [ref=e351]: Nenhum
+          - generic [ref=e352]:
+            - radio "Poucos" [ref=e353] [cursor=pointer]
+            - generic [ref=e354]: Poucos
+          - generic [ref=e355]:
+            - radio "Moderado" [checked] [ref=e356] [cursor=pointer]:
+              - img [ref=e358]
+            - generic [ref=e360]: Moderado
+      - generic [ref=e361]:
+        - text: Objetividade
+        - radiogroup [ref=e362]:
+          - generic [ref=e363]:
+            - radio "Respostas curtas" [ref=e364] [cursor=pointer]
+            - generic [ref=e365]: Respostas curtas
+          - generic [ref=e366]:
+            - radio "Normal" [checked] [ref=e367] [cursor=pointer]:
+              - img [ref=e369]
+            - generic [ref=e371]: Normal
+      - generic [ref=e372]:
+        - text: Estilo de vendas
+        - radiogroup [ref=e373]:
+          - generic [ref=e374]:
+            - radio "Leve" [checked] [ref=e375] [cursor=pointer]:
+              - img [ref=e377]
+            - generic [ref=e379]: Leve
+          - generic [ref=e380]:
+            - radio "Direto" [ref=e381] [cursor=pointer]
+            - generic [ref=e382]: Direto
+    - generic [ref=e265]:
+      - button "Anterior" [active] [ref=e300] [cursor=pointer]:
+        - img
+        - text: Anterior
+      - button "Próximo" [ref=e320] [cursor=pointer]:
+        - text: Próximo
+        - img
+    - button "Close" [ref=e267] [cursor=pointer]:
+      - img [ref=e268]
+      - generic [ref=e271]: Close

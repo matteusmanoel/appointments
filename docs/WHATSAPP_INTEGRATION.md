@@ -10,7 +10,7 @@
 
 1. **URL pública com HTTPS**
    - O webhook do WhatsApp **exige HTTPS** e um domínio acessível pela internet.
-   - Exemplos: `https://api.seudominio.com`, `https://barberflow.seudominio.com`.
+   - Exemplos: `https://api.seudominio.com`, `https://api.navalhia.com.br.com`.
 
 2. **Opções de exposição**
    - **VPS/servidor**: domínio apontando para o IP, TLS com certificado (ex.: Let’s Encrypt via Caddy/Nginx).

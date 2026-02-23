@@ -12,7 +12,7 @@
     },
     {
       "parameters": {
-        "toolDescription": "Listar serviços da barbearia (nome, valor, descrição).",
+        "toolDescription": "Listar serviços da NavalhIA (nome, valor, descrição).",
         "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_services",
         "sendHeaders": true,
         "headerParameters": {
@@ -29,7 +29,7 @@
       "typeVersion": 4.3,
       "position": [688, 0],
       "id": "34fc3a1f-10ae-4e26-89b8-9045a3874790",
-      "name": "listar serviços da barbearia"
+      "name": "listar serviços da NavalhIA"
     },
     {
       "parameters": {
@@ -184,7 +184,7 @@
     }
   ],
   "connections": {
-    "listar serviços da barbearia": {
+    "listar serviços da NavalhIA": {
       "ai_tool": [
         [{ "node": "MCP Server Trigger", "type": "ai_tool", "index": 0 }]
       ]

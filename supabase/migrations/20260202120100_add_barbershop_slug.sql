@@ -24,7 +24,7 @@ WHERE b.id = n.id AND n.rn > 1;
 
 -- Default for any still null (new rows will set explicitly)
 UPDATE public.barbershops
-SET slug = 'barbearia-' || LEFT(id::text, 8)
+SET slug = 'navalhia-' || LEFT(id::text, 8)
 WHERE slug IS NULL;
 
 ALTER TABLE public.barbershops

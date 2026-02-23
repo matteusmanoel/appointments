@@ -1,9 +1,9 @@
 import pg from "pg";
 import { config } from "./config.js";
 
-const useSsl =
-  process.env.DATABASE_SSL === "true" ||
-  process.env.NODE_ENV === "production";
+// Só usa SSL quando explicitamente pedido (ex.: Supabase em produção).
+// Em Docker com Postgres local, não definir DATABASE_SSL para evitar "server does not support SSL".
+const useSsl = process.env.DATABASE_SSL === "true";
 
 // Em ambientes serverless (ex.: Lambda) evitar muitos connections por função.
 // Permite ajuste fino via env DATABASE_POOL_MAX se necessário.

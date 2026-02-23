@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Barber Harmony - Static frontend + docs (S3 + CloudFront), us-east-1
+Description: NavalhIA - Static frontend + docs (S3 + CloudFront), us-east-1
 
 Parameters:
   Stage:
@@ -12,7 +12,7 @@ Resources:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
     Properties:
-      BucketName: !Sub "barber-harmony-static-${Stage}-${AWS::AccountId}"
+      BucketName: !Sub "navalhia-static-${Stage}-${AWS::AccountId}-app"
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -35,7 +35,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !GetAtt CloudFrontOAI.IamArn
+              CanonicalUser: !GetAtt CloudFrontOAI.S3CanonicalUserId
             Action: s3:GetObject
             Resource: !Sub "${StaticBucket.Arn}/*"
 
@@ -43,7 +43,7 @@ Resources:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
     Properties:
       CloudFrontOriginAccessIdentityConfig:
-        Comment: !Sub "OAI for barber-harmony-static-${Stage}"
+        Comment: !Sub "OAI for navalhia-static-${Stage}"
 
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
@@ -51,7 +51,7 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: !Sub "Barber Harmony static (app + docs) - ${Stage}"
+        Comment: !Sub "NavalhIA static (app + docs) - ${Stage}"
         DefaultRootObject: index.html
         Origins:
           - Id: S3Static

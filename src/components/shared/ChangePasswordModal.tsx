@@ -31,8 +31,8 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
       toastError("Nova senha e confirmação não conferem.");
       return;
     }
-    if (newPassword.length < 6) {
-      toastError("Nova senha deve ter pelo menos 6 caracteres.");
+    if (newPassword.length < 8) {
+      toastError("Nova senha deve ter pelo menos 8 caracteres.");
       return;
     }
     setLoading(true);
@@ -63,12 +63,12 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
         <DialogHeader>
           <DialogTitle>Altere sua senha</DialogTitle>
           <DialogDescription>
-            É a primeira vez que você acessa. Por segurança, defina uma nova senha.
+            Se você recebeu uma senha temporária por e-mail ou é seu primeiro acesso, use-a como senha atual. Por segurança, defina uma nova senha.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="current-password">Senha atual (temporária)</Label>
+            <Label htmlFor="current-password">Senha atual (temporária ou atual)</Label>
             <Input
               id="current-password"
               type="password"
@@ -87,7 +87,7 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
             />
           </div>
           <div className="space-y-2">
@@ -99,7 +99,7 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
-              minLength={6}
+              minLength={8}
             />
           </div>
           <DialogFooter>

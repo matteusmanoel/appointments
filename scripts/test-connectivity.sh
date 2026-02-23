@@ -12,7 +12,7 @@ curl -s -w "\nHTTP %{http_code}\n" "$BASE/health"
 echo ""
 
 echo "=== 2. Login (POST /api/auth/login) ==="
-LOGIN=$(curl -s -X POST "$BASE/api/auth/login" -H "Content-Type: application/json" -d '{"email":"admin@barbearia.com","password":"admin123"}')
+LOGIN=$(curl -s -X POST "$BASE/api/auth/login" -H "Content-Type: application/json" -d '{"email":"admin@navalhia.com.br","password":"admin123"}')
 if echo "$LOGIN" | grep -q '"token"'; then
   echo "OK (token received)"
   TOKEN=$(echo "$LOGIN" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)

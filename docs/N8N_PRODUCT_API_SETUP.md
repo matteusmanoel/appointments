@@ -1,14 +1,14 @@
 # n8n — Uso da Product API (substituição do Base44)
 
-Os fluxos originais (`n8n-ia-barbeiro.json`, `n8n-mcp-barbeiro.json`) chamam a API externa **Base44**. Para o produto on-prem, as tools do MCP devem chamar a **Product API** do BarberFlow.
+Os fluxos originais (`n8n-ia-barbeiro.json`, `n8n-mcp-barbeiro.json`) chamam a API externa **Base44**. Para o produto on-prem, as tools do MCP devem chamar a **Product API** do NavalhIA.
 
 ## Credenciais no n8n
 
 1. **API Key das tools**
    - Crie uma credencial do tipo "Header Auth" ou use "Generic Credential" com um header fixo.
-   - Nome sugerido: `BarberFlow Tools API`.
+   - Nome sugerido: `NavalhIA Tools API`.
    - Header: `X-API-Key` (ou `Authorization: Bearer <key>`).
-   - **Multi-tenant (SaaS):** use a API Key da barbearia (gerada no painel em Integrações). Cada barbearia tem sua própria key; o `barbershop_id` é inferido pela API — não envie em query/body.
+   - **Multi-tenant (SaaS):** use a API Key da NavalhIA (gerada no painel em Integrações). Cada estabelecimento tem sua própria key; o `barbershop_id` é inferido pela API — não envie em query/body.
    - **Single-tenant (on-prem):** valor pode ser o `TOOLS_API_KEY` do backend ou uma key criada por `npm run tools:create-api-key` no backend.
 
 2. **URL base da API**
@@ -34,8 +34,8 @@ Os fluxos originais (`n8n-ia-barbeiro.json`, `n8n-mcp-barbeiro.json`) chamam a A
 
 ## Multi-tenant (SaaS) e single-tenant
 
-- **SaaS:** a API identifica a barbearia pela API Key. Não envie `barbershop_id` em query ou body; a API ignora e usa o tenant da key.
-- **Single-tenant (on-prem):** se `BARBERSHOP_ID` estiver definido no backend, a API usa esse tenant quando a key for a global `TOOLS_API_KEY`. Caso use keys por barbearia (tabela `barbershop_api_keys`), o tenant continua inferido pela key.
+- **SaaS:** a API identifica o estabelecimento pela API Key. Não envie `barbershop_id` em query ou body; a API ignora e usa o tenant da key.
+- **Single-tenant (on-prem):** se `BARBERSHOP_ID` estiver definido no backend, a API usa esse tenant quando a key for a global `TOOLS_API_KEY`. Caso use keys por estabelecimento (tabela `barbershop_api_keys`), o tenant continua inferido pela key.
 
 ## Template de fluxo MCP
 

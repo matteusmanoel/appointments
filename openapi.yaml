@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
-  title: Barber Harmony API
-  description: API para gestão de barbearias (agendamentos, clientes, barbeiros, serviços). Autenticação via JWT (Bearer) ou API Key (header X-API-Key).
+  title: NavalhIA API
+  description: API para gestão no NavalhIA (agendamentos, clientes, barbeiros, serviços). Autenticação via JWT (Bearer) ou API Key (header X-API-Key).
   version: 1.0.0
 
 servers:
-  - url: https://api.example.com
+  - url: https://api.navalhia.com.br
     description: API (substitua pela URL real)
 
 security:
@@ -55,10 +55,10 @@ paths:
 
   /api/barbershops:
     get:
-      summary: Dados da barbearia do tenant
+      summary: Dados da NavalhIA do tenant
       tags: [Barbershops]
     patch:
-      summary: Atualizar barbearia
+      summary: Atualizar NavalhIA
       tags: [Barbershops]
 
   /api/integrations/api-keys:
@@ -94,7 +94,7 @@ paths:
 
   /api/public/{slug}:
     get:
-      summary: Dados públicos da barbearia por slug
+      summary: Dados públicos da NavalhIA por slug
       tags: [Público]
       security: []
       parameters:

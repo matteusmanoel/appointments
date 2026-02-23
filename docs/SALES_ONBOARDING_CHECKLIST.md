@@ -4,11 +4,11 @@
 
 - [ ] Definir preço e forma de cobrança (licença única, mensalidade, suporte incluído ou separado).
 - [ ] Definir SLA mínimo (ex.: resposta a incidentes em 24h úteis; janela de manutenção).
-- [ ] Documentar o que está incluído no MVP (painel, WhatsApp bot, uma barbearia por instalação) e o que é evolução futura.
+- [ ] Documentar o que está incluído no MVP (painel, WhatsApp bot, um estabelecimento por instalação) e o que é evolução futura.
 
 ## Coleta de requisitos do salão
 
-- [ ] Nome e endereço da barbearia; telefone e email de contato.
+- [ ] Nome e endereço do estabelecimento; telefone e email de contato.
 - [ ] Quantidade de barbeiros e nomes (para cadastro inicial).
 - [ ] Lista de serviços com preço e duração aproximada.
 - [ ] Horário de funcionamento por dia da semana.
@@ -20,7 +20,7 @@
 - [ ] Acesso ao servidor ou VPS (SSH ou painel) ou confirmação de que o cliente hospedará em sua própria infra.
 - [ ] Domínio ou subdomínio para a aplicação e para o webhook (HTTPS obrigatório para WhatsApp).
 - [ ] Execução do deploy conforme o [Runbook](RUNBOOK.md): Docker Compose, env, migrações, seed.
-- [ ] Criação da primeira barbearia e do perfil admin com o email acordado.
+- [ ] Criação da primeiro estabelecimento e do perfil admin com o email acordado.
 - [ ] Cadastro inicial de barbeiros e serviços (manual ou via seed customizado).
 - [ ] Configuração do WhatsApp (Meta): app, webhook URL, token; teste de envio e recebimento.
 - [ ] Importação e ativação dos fluxos n8n (agente + MCP Product API); configuração da API Key.

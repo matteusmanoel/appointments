@@ -1,0 +1,190 @@
+- generic:
+  - generic:
+    - list
+    - region "Notifications alt+T"
+    - generic:
+      - complementary:
+        - generic:
+          - generic:
+            - generic:
+              - img
+            - generic:
+              - heading [level=1]: NavalhIA
+            - button:
+              - img
+          - navigation:
+            - link:
+              - /url: /app
+              - img
+              - generic: Dashboard
+            - link:
+              - /url: /app/link
+              - img
+              - generic: Link Público
+            - link:
+              - /url: /app/agendamentos
+              - img
+              - generic: Agendamentos
+              - generic: Pro
+            - link:
+              - /url: /app/barbeiros
+              - img
+              - generic: Barbeiros
+              - generic: Pro
+            - link:
+              - /url: /app/servicos
+              - img
+              - generic: Serviços
+              - generic: Pro
+            - link:
+              - /url: /app/clientes
+              - img
+              - generic: Clientes
+              - generic: Pro
+            - link:
+              - /url: /app/fidelidade
+              - img
+              - generic: Fidelidade
+              - generic: Pro
+          - generic:
+            - link:
+              - /url: /app/integracoes
+              - img
+              - generic: Integrações
+              - generic: Pro
+            - link:
+              - /url: /app/configuracoes
+              - img
+              - generic: Configurações
+              - generic: Pro
+            - button:
+              - img
+              - generic: Sair
+          - generic:
+            - generic:
+              - generic: Tema
+              - button:
+                - img
+            - generic:
+              - generic:
+                - img
+              - generic:
+                - paragraph: Admin
+                - paragraph: admin@navalhia.com.br
+      - main:
+        - generic:
+          - generic:
+            - generic:
+              - heading [level=1]: Configurações
+              - paragraph: Gerencie as configurações da sua NavalhIA
+            - generic:
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Dados da NavalhIA
+                  - paragraph: Nome, endereço e informações de contato
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Horário de Funcionamento
+                  - paragraph: Dias, horários e exceções (feriados, fechamentos)
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Link de Agendamento
+                  - paragraph: Personalize o link público para seus clientes
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: WhatsApp (IA)
+                  - paragraph: Conecte seu número via QR e ative o atendente com IA
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Notificações
+                  - paragraph: Configure lembretes e alertas automáticos
+                  - paragraph: Em breve.
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Pagamentos e Comissões
+                  - paragraph: Métodos de pagamento e regras de comissão
+                  - paragraph: Em breve.
+                - img
+              - button:
+                - generic:
+                  - img
+                - generic:
+                  - heading [level=3]: Segurança
+                  - paragraph: Altere sua senha e configurações de acesso
+                - img
+            - generic:
+              - heading [level=2]: Zona de Perigo
+              - generic:
+                - generic:
+                  - generic:
+                    - heading [level=3]: Encerrar Conta
+                    - paragraph: Esta ação é irreversível e excluirá todos os seus dados.
+                  - button: Excluir Conta
+  - dialog "WhatsApp (IA)" [ref=e242]:
+    - generic [ref=e243]:
+      - heading "WhatsApp (IA)" [level=2] [ref=e244]
+      - paragraph [ref=e245]: Comportamentos
+    - generic [ref=e246]:
+      - button "1. Conectar WhatsApp" [ref=e247] [cursor=pointer]
+      - button "2. Horários e exceções" [ref=e248] [cursor=pointer]
+      - button "3. Tom de voz" [ref=e249] [cursor=pointer]
+      - button "4. Comportamentos" [ref=e250] [cursor=pointer]
+      - button "5. Testar e publicar" [ref=e251] [cursor=pointer]
+    - generic [ref=e301]:
+      - paragraph [ref=e302]: Regras de comportamento do atendente. As regras fixas do sistema (não editáveis) continuam valendo.
+      - generic [ref=e303]:
+        - generic [ref=e304]:
+          - checkbox "Nunca pedir telefone" [checked] [ref=e305] [cursor=pointer]:
+            - generic:
+              - img
+          - generic [ref=e306]:
+            - text: Nunca pedir telefone
+            - paragraph [ref=e307]: O sistema já identifica o cliente pelo número.
+        - generic [ref=e308]:
+          - checkbox "Nunca inventar endereços" [checked] [ref=e309] [cursor=pointer]:
+            - generic:
+              - img
+          - generic [ref=e310]:
+            - text: Nunca inventar endereços
+            - paragraph [ref=e311]: Não sugerir lugares que não existem.
+        - generic [ref=e312]:
+          - checkbox "Sempre direcionar para agendamento" [checked] [ref=e313] [cursor=pointer]:
+            - generic:
+              - img
+          - generic [ref=e314]:
+            - text: Sempre direcionar para agendamento
+            - paragraph [ref=e315]: Puxar a conversa para marcar horário.
+        - generic [ref=e316]:
+          - checkbox "Mostrar principais serviços quando não existir" [checked] [ref=e317] [cursor=pointer]:
+            - generic:
+              - img
+          - generic [ref=e318]:
+            - text: Mostrar principais serviços quando não existir
+            - paragraph [ref=e319]: Se pedirem algo que não temos, listar os principais e CTA.
+    - generic [ref=e265]:
+      - button "Anterior" [active] [ref=e300] [cursor=pointer]:
+        - img
+        - text: Anterior
+      - button "Próximo" [ref=e320] [cursor=pointer]:
+        - text: Próximo
+        - img
+    - button "Close" [ref=e267] [cursor=pointer]:
+      - img [ref=e268]
+      - generic [ref=e271]: Close

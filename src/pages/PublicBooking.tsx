@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { format, addDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -9,18 +9,14 @@ import { Label } from "@/components/ui/label";
 import { publicApi } from "@/lib/api";
 import { getTimeSlotsForDay } from "@/lib/slots";
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { LoadingState } from "@/components/LoadingState";
 import {
   ChevronLeft,
   ChevronRight,
@@ -164,15 +160,24 @@ export default function PublicBooking() {
   const availableSlots = barberId
     ? timeSlots.filter((t) => !isSlotOccupied(t, availabilityForBarber))
     : timeSlots.filter((t) =>
-        barbers.some((b) =>
-          !isSlotOccupied(t, availability.filter((a) => a.barber_id === b.id))
-        )
+        barbers.some(
+          (b) =>
+            !isSlotOccupied(
+              t,
+              availability.filter((a) => a.barber_id === b.id),
+            ),
+        ),
       );
 
-  function resolveBarberForSlot(slotTime: string, durationMinutes: number): string | null {
+  function resolveBarberForSlot(
+    slotTime: string,
+    durationMinutes: number,
+  ): string | null {
     const slotStart = parseTime(slotTime);
     for (const barber of barbers) {
-      const barberOccupied = availability.filter((a) => a.barber_id === barber.id);
+      const barberOccupied = availability.filter(
+        (a) => a.barber_id === barber.id,
+      );
       let conflict = false;
       for (let m = 0; m < durationMinutes; m += 30) {
         const t = formatMins(slotStart + m);
@@ -196,16 +201,12 @@ export default function PublicBooking() {
   if (errorShop || (barbershop === undefined && !loadingShop)) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <p className="text-destructive">Barbearia não encontrada.</p>
+        <p className="text-destructive">NavalhIA não encontrada.</p>
       </div>
     );
   }
   if (loadingShop || !barbershop) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <p className="text-muted-foreground">Carregando...</p>
-      </div>
-    );
+    return <LoadingState fullPage />;
   }
 
   if (success) {
@@ -229,40 +230,35 @@ export default function PublicBooking() {
           <p className="text-sm text-muted-foreground mt-1">
             {barbershop.name}
           </p>
-          <TooltipProvider delayDuration={0}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="mt-4 block w-full">
-                  <Button
-                    className="w-full bg-green-600 hover:bg-green-700 text-white disabled:opacity-60"
-                    asChild={!!barbershop.phone}
-                    disabled={!barbershop.phone}
-                  >
-                    {barbershop.phone ? (
-                      <a
-                        href={whatsappUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <MessageCircle className="w-4 h-4 mr-2" />
-                        Retornar para o WhatsApp
-                      </a>
-                    ) : (
-                      <span>
-                        <MessageCircle className="w-4 h-4 mr-2" />
-                        Retornar para o WhatsApp
-                      </span>
-                    )}
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {barbershop.phone
-                  ? "Abrir conversa no WhatsApp"
-                  : "Cadastre o telefone nas configurações da barbearia"}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <div className="mt-4 space-y-2">
+            {barbershop.phone ? (
+              <Button
+                className="w-full bg-green-600 hover:bg-green-700 text-white"
+                asChild
+              >
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Retornar para o WhatsApp
+                </a>
+              </Button>
+            ) : (
+              <>
+                <Button variant="secondary" className="w-full" asChild>
+                  <Link to="/app/configuracoes">
+                    <MessageCircle className="w-4 h-4 mr-2" />
+                    Configurar WhatsApp
+                  </Link>
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Cadastre o telefone em Configurações para ativar o link.
+                </p>
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -280,9 +276,7 @@ export default function PublicBooking() {
     const servicesLines =
       selectedServices.length > 0
         ? selectedServices.map((s) => {
-            const price = Number(s.price)
-              .toFixed(2)
-              .replace(".", ",");
+            const price = Number(s.price).toFixed(2).replace(".", ",");
             return `• ${s.name} — R$ ${price}`;
           })
         : ["• (nenhum serviço selecionado)"];
@@ -321,40 +315,30 @@ export default function PublicBooking() {
             <h1 className="text-base sm:text-lg font-semibold text-foreground truncate">
               {barbershop.name}
             </h1>
-            <TooltipProvider delayDuration={0}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="flex-shrink-0">
-                    <Button
-                      className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-60"
-                      asChild={!!barbershop.phone}
-                      disabled={!barbershop.phone}
-                    >
-                      {barbershop.phone ? (
-                        <a
-                          href={whatsappUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <MessageCircle className="w-4 h-4 mr-1.5" />
-                          Agendar via WhatsApp
-                        </a>
-                      ) : (
-                        <span>
-                          <MessageCircle className="w-4 h-4 mr-1.5" />
-                          Agendar via WhatsApp
-                        </span>
-                      )}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {barbershop.phone
-                    ? "Abrir conversa no WhatsApp"
-                    : "Cadastre o telefone nas configurações da barbearia"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <span className="flex-shrink-0">
+              {barbershop.phone ? (
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  asChild
+                >
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <MessageCircle className="w-4 h-4 mr-1.5" />
+                    Agendar via WhatsApp
+                  </a>
+                </Button>
+              ) : (
+                <Button variant="secondary" asChild>
+                  <Link to="/app/configuracoes">
+                    <MessageCircle className="w-4 h-4 mr-1.5" />
+                    Configurar WhatsApp
+                  </Link>
+                </Button>
+              )}
+            </span>
           </div>
         </header>
       )}
@@ -538,9 +522,7 @@ export default function PublicBooking() {
                     Não tenho preferência
                   </p>
                 </div>
-                {barberId === "" && (
-                  <Check className="w-5 h-5 text-primary" />
-                )}
+                {barberId === "" && <Check className="w-5 h-5 text-primary" />}
               </button>
               {barbers.map((b) => (
                 <button
@@ -598,27 +580,12 @@ export default function PublicBooking() {
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
-                      aria-label="Escolher data"
-                    >
-                      <CalendarIcon className="w-4 h-4 text-muted-foreground" />
-                      {format(selectedDate, "EEEE, d 'de' MMMM", {
-                        locale: ptBR,
-                      })}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-auto p-0" align="center">
-                    <Calendar
-                      mode="single"
-                      selected={selectedDate}
-                      onSelect={(d) => d && setSelectedDate(d)}
-                    />
-                  </PopoverContent>
-                </Popover>
+                <DatePicker
+                  value={selectedDate}
+                  onChange={(d) => d && setSelectedDate(d)}
+                  triggerVariant="verbose"
+                  className="flex-1 min-w-0 flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
+                />
                 <Button
                   variant="outline"
                   size="icon"
@@ -690,83 +657,85 @@ export default function PublicBooking() {
             className={`stat-card flex flex-col flex-1 ${BOOKING_CARD_MIN_HEIGHT}`}
           >
             <div className="flex flex-col flex-1 min-h-0 space-y-4">
-            <h2 className="font-semibold text-foreground text-base sm:text-lg">
-              Seus dados
-            </h2>
-            <div className="space-y-4 flex-shrink-0">
-              <div>
-                <Label htmlFor="name" className="text-base">
-                  Nome <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="name"
-                  value={clientName}
-                  onChange={(e) => setClientName(e.target.value)}
-                  placeholder="Seu nome"
-                  className="mt-1 min-h-12 h-12 text-base"
-                />
-              </div>
-              <div>
-                <Label htmlFor="phone" className="text-base">
-                  Telefone <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  value={formatPhoneBR(clientPhone)}
-                  onChange={(e) =>
-                    setClientPhone(parsePhoneBR(e.target.value).slice(0, 11))
-                  }
-                  placeholder="(11) 99999-9999"
-                  className="mt-1 min-h-12 h-12 text-base"
-                />
-              </div>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-4 space-y-4 flex-shrink-0">
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-semibold text-foreground flex items-center gap-2 text-base">
-                  <Check className="w-5 h-5 text-primary shrink-0" />
-                  Resumo
-                </p>
-                <p className="text-lg font-bold text-green-600 whitespace-nowrap">
-                  R$ {totalPrice.toFixed(2).replace(".", ",")}
-                </p>
-              </div>
-              <div className="space-y-3 text-base pt-1">
-                <div className="space-y-2">
-                  {selectedServices.map((s) => (
-                    <div
-                      key={s.id}
-                      className="flex items-center justify-between gap-2 text-foreground"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Scissors className="w-5 h-5 text-muted-foreground shrink-0" />
-                        {s.name}
-                      </span>
-                      <span className="text-muted-foreground whitespace-nowrap">
-                        R$ {Number(s.price).toFixed(2).replace(".", ",")}
-                      </span>
-                    </div>
-                  ))}
+              <h2 className="font-semibold text-foreground text-base sm:text-lg">
+                Seus dados
+              </h2>
+              <div className="space-y-4 flex-shrink-0">
+                <div>
+                  <Label htmlFor="name" className="text-base">
+                    Nome <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="name"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                    placeholder="Seu nome"
+                    className="mt-1 min-h-12 h-12 text-base"
+                  />
                 </div>
-                <div className="flex items-center gap-2 text-foreground pt-1 border-t border-border">
-                  <User className="w-5 h-5 text-muted-foreground shrink-0" />
-                  <span>{selectedBarber?.name ?? "Não tenho preferência"}</span>
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <CalendarDays className="w-5 h-5 text-muted-foreground shrink-0" />
-                  <span>
-                    {format(selectedDate, "EEEE, d 'de' MMMM", {
-                      locale: ptBR,
-                    })}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
-                  <span>{selectedTime}</span>
+                <div>
+                  <Label htmlFor="phone" className="text-base">
+                    Telefone <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    value={formatPhoneBR(clientPhone)}
+                    onChange={(e) =>
+                      setClientPhone(parsePhoneBR(e.target.value).slice(0, 11))
+                    }
+                    placeholder="(11) 99999-9999"
+                    className="mt-1 min-h-12 h-12 text-base"
+                  />
                 </div>
               </div>
-            </div>
+              <div className="rounded-lg border border-border bg-card p-4 space-y-4 flex-shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-foreground flex items-center gap-2 text-base">
+                    <Check className="w-5 h-5 text-primary shrink-0" />
+                    Resumo
+                  </p>
+                  <p className="text-lg font-bold text-green-600 whitespace-nowrap">
+                    R$ {totalPrice.toFixed(2).replace(".", ",")}
+                  </p>
+                </div>
+                <div className="space-y-3 text-base pt-1">
+                  <div className="space-y-2">
+                    {selectedServices.map((s) => (
+                      <div
+                        key={s.id}
+                        className="flex items-center justify-between gap-2 text-foreground"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Scissors className="w-5 h-5 text-muted-foreground shrink-0" />
+                          {s.name}
+                        </span>
+                        <span className="text-muted-foreground whitespace-nowrap">
+                          R$ {Number(s.price).toFixed(2).replace(".", ",")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2 text-foreground pt-1 border-t border-border">
+                    <User className="w-5 h-5 text-muted-foreground shrink-0" />
+                    <span>
+                      {selectedBarber?.name ?? "Não tenho preferência"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-foreground">
+                    <CalendarDays className="w-5 h-5 text-muted-foreground shrink-0" />
+                    <span>
+                      {format(selectedDate, "EEEE, d 'de' MMMM", {
+                        locale: ptBR,
+                      })}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 text-foreground">
+                    <Clock className="w-5 h-5 text-muted-foreground shrink-0" />
+                    <span>{selectedTime}</span>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="flex gap-2 mt-auto pt-4 min-h-11 sm:min-h-0 flex-shrink-0">
               <Button

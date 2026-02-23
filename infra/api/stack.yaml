@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Barber Harmony API - Lambda + API Gateway HTTP API (us-east-1)
+Description: NavalhIA API - Lambda + API Gateway HTTP API (us-east-1)
 
 Parameters:
   Stage:
@@ -38,6 +38,22 @@ Parameters:
     NoEcho: true
     Default: ""
     Description: Stripe secret key for API
+  StripePriceId:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID fallback for subscription checkout
+  StripePriceIdEssential:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID for Essential plan
+  StripePriceIdPro:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID for Pro plan
+  StripePriceIdPremium:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID for Premium plan
   FromEmail:
     Type: String
     Default: ""
@@ -50,18 +66,40 @@ Parameters:
     Type: String
     Default: ""
     Description: Optional email for CloudWatch alarm notifications (leave empty to skip SNS)
+  UazapiBaseUrl:
+    Type: String
+    Default: ""
+    Description: Uazapi API base URL (e.g. https://free.uazapi.com)
+  UazapiAdminToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Uazapi admin token for creating instances
+  UazapiWebhookPublicUrl:
+    Type: String
+    Default: ""
+    Description: Public URL for Uazapi webhook (e.g. https://api.example.com/api/webhooks/uazapi)
+  AppEncryptionKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: 32+ char key for encrypting instance tokens (required for WhatsApp connection)
+  N8nChatTriggerUrl:
+    Type: String
+    Default: ""
+    Description: n8n chat trigger URL for WhatsApp bot replies (optional)
 
 Resources:
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub "/aws/lambda/barber-harmony-api-${Stage}"
+      LogGroupName: !Sub "/aws/lambda/navalhia-api-${Stage}"
       RetentionInDays: 14
 
   ApiRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub "barber-harmony-api-${Stage}"
+      RoleName: !Sub "navalhia-api-${Stage}"
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -74,7 +112,7 @@ Resources:
     Type: AWS::IAM::Policy
     DependsOn: ApiRole
     Properties:
-      PolicyName: barber-harmony-api-logs
+      PolicyName: navalhia-api-logs
       Roles: [!Ref ApiRole]
       PolicyDocument:
         Version: "2012-10-17"
@@ -92,7 +130,7 @@ Resources:
     Type: AWS::Lambda::Function
     DependsOn: ApiRolePolicy
     Properties:
-      FunctionName: !Sub "barber-harmony-api-${Stage}"
+      FunctionName: !Sub "navalhia-api-${Stage}"
       Runtime: nodejs20.x
       Handler: dist/lambda.handler
       Code:
@@ -114,13 +152,22 @@ Resources:
           PORT: "3000"
           STRIPE_WEBHOOK_SECRET: !Ref StripeWebhookSecret
           STRIPE_SECRET_KEY: !Ref StripeSecretKey
+          STRIPE_PRICE_ID: !Ref StripePriceId
+          STRIPE_PRICE_ID_ESSENTIAL: !Ref StripePriceIdEssential
+          STRIPE_PRICE_ID_PRO: !Ref StripePriceIdPro
+          STRIPE_PRICE_ID_PREMIUM: !Ref StripePriceIdPremium
           FROM_EMAIL: !Ref FromEmail
           APP_URL: !Ref AppUrl
+          UAZAPI_BASE_URL: !Ref UazapiBaseUrl
+          UAZAPI_ADMIN_TOKEN: !Ref UazapiAdminToken
+          UAZAPI_WEBHOOK_PUBLIC_URL: !Ref UazapiWebhookPublicUrl
+          APP_ENCRYPTION_KEY: !Ref AppEncryptionKey
+          N8N_CHAT_TRIGGER_URL: !Ref N8nChatTriggerUrl
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub "barber-harmony-${Stage}"
+      Name: !Sub "navalhia-${Stage}"
       ProtocolType: HTTP
       CorsConfiguration:
         AllowOrigins: ["*"]
@@ -165,7 +212,7 @@ Resources:
   LambdaErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "barber-harmony-api-${Stage}-lambda-errors"
+      AlarmName: !Sub "navalhia-api-${Stage}-lambda-errors"
       AlarmDescription: Lambda invocation errors
       MetricName: Errors
       Namespace: AWS/Lambda
@@ -181,7 +228,7 @@ Resources:
   LambdaDurationAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub "barber-harmony-api-${Stage}-lambda-duration"
+      AlarmName: !Sub "navalhia-api-${Stage}-lambda-duration"
       AlarmDescription: Lambda duration high
       MetricName: Duration
       Namespace: AWS/Lambda

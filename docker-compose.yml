@@ -2,15 +2,15 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: barberflow
-      POSTGRES_DB: barberflow
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-barberflow_secret}
+      POSTGRES_USER: navalhia
+      POSTGRES_DB: navalhia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-navalhia_secret}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U barberflow -d barberflow"]
+      test: ["CMD-SHELL", "pg_isready -U navalhia -d navalhia"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -19,9 +19,10 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    env_file: .env
     environment:
       PORT: 3000
-      DATABASE_URL: postgres://barberflow:${POSTGRES_PASSWORD:-barberflow_secret}@db:5432/barberflow
+      DATABASE_URL: postgres://navalhia:${POSTGRES_PASSWORD:-navalhia_secret}@db:5432/navalhia
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       TOOLS_API_KEY: ${TOOLS_API_KEY}
@@ -31,6 +32,11 @@ services:
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       N8N_CHAT_TRIGGER_URL: ${N8N_CHAT_TRIGGER_URL:-}
+      # Uazapi (WhatsApp plug-and-play)
+      UAZAPI_BASE_URL: ${UAZAPI_BASE_URL:-}
+      UAZAPI_ADMIN_TOKEN: ${UAZAPI_ADMIN_TOKEN:-}
+      UAZAPI_WEBHOOK_PUBLIC_URL: ${UAZAPI_WEBHOOK_PUBLIC_URL:-}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
     depends_on:
       db: { condition: service_healthy }
     healthcheck:
@@ -41,6 +47,42 @@ services:
       start_period: 5s
     ports:
       - "3003:3000"
+
+  worker-ai:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["node", "dist/workers/ai-worker.js"]
+    restart: on-failure
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://navalhia:${POSTGRES_PASSWORD:-navalhia_secret}@db:5432/navalhia
+      JWT_SECRET: ${JWT_SECRET}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AI_WORKER_CONCURRENCY: ${AI_WORKER_CONCURRENCY:-5}
+      AI_JOB_MAX_ATTEMPTS: ${AI_JOB_MAX_ATTEMPTS:-5}
+      AI_JOB_BACKOFF_BASE_SECONDS: ${AI_JOB_BACKOFF_BASE_SECONDS:-2}
+      N8N_EVENTS_WEBHOOK_URL: ${N8N_EVENTS_WEBHOOK_URL:-}
+      N8N_EVENTS_SECRET: ${N8N_EVENTS_SECRET:-}
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_healthy }
+
+  worker-scheduled:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["node", "dist/workers/scheduled-messages-worker.js"]
+    restart: on-failure
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://navalhia:${POSTGRES_PASSWORD:-navalhia_secret}@db:5432/navalhia
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      UAZAPI_BASE_URL: ${UAZAPI_BASE_URL:-}
+      UAZAPI_ADMIN_TOKEN: ${UAZAPI_ADMIN_TOKEN:-}
+    depends_on:
+      db: { condition: service_healthy }
 
   # app:
   #   build:

@@ -1,9 +1,9 @@
 # OIDC provider for GitHub Actions + IAM role for deploy (API + static)
-# Deploy once: aws cloudformation deploy --stack-name barber-harmony-ci --template-file infra/ci/oidc-github-role.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides GitHubRepo=OWNER/REPO
+# Deploy once: aws cloudformation deploy --stack-name navalhia-ci --template-file infra/ci/oidc-github-role.yaml --capabilities CAPABILITY_NAMED_IAM --parameter-overrides GitHubRepo=OWNER/REPO
 # Then set GitHub secret AWS_ROLE_ARN to the role ARN output.
 
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Barber Harmony - GitHub Actions OIDC role for deploy
+Description: NavalhIA - GitHub Actions OIDC role for deploy
 
 Parameters:
   GitHubRepo:
@@ -28,7 +28,7 @@ Resources:
   GitHubOIDCRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: barber-harmony-github-deploy
+      RoleName: navalhia-github-deploy
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
@@ -46,7 +46,7 @@ Resources:
     Type: AWS::IAM::Policy
     DependsOn: GitHubOIDCRole
     Properties:
-      PolicyName: barber-harmony-deploy
+      PolicyName: navalhia-deploy
       Roles: [!Ref GitHubOIDCRole]
       PolicyDocument:
         Version: "2012-10-17"
@@ -59,8 +59,8 @@ Resources:
               - s3:DeleteObject
               - s3:ListBucket
             Resource:
-              - !Sub "arn:aws:s3:::barber-harmony-artifacts-*"
-              - !Sub "arn:aws:s3:::barber-harmony-artifacts-*/*"
+              - !Sub "arn:aws:s3:::navalhia-artifacts-*"
+              - !Sub "arn:aws:s3:::navalhia-artifacts-*/*"
           - Sid: S3Static
             Effect: Allow
             Action:
@@ -69,14 +69,14 @@ Resources:
               - s3:DeleteObject
               - s3:ListBucket
             Resource:
-              - !Sub "arn:aws:s3:::barber-harmony-static-*"
-              - !Sub "arn:aws:s3:::barber-harmony-static-*/*"
+              - !Sub "arn:aws:s3:::navalhia-static-*"
+              - !Sub "arn:aws:s3:::navalhia-static-*/*"
           - Sid: LambdaUpdate
             Effect: Allow
             Action:
               - lambda:UpdateFunctionCode
               - lambda:GetFunction
-            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:barber-harmony-api-*"
+            Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:navalhia-api-*"
           - Sid: CloudFrontInvalidate
             Effect: Allow
             Action:

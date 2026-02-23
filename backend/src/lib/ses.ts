@@ -16,7 +16,7 @@ export async function sendOnboardingEmail(params: OnboardingEmailParams): Promis
   const body = `
 Olá,
 
-Sua conta na barbearia ${params.barbershopName} foi criada.
+Sua conta na NavalhIA ${params.barbershopName} foi criada.
 
 Acesse o painel: ${params.appUrl}
 Email: ${params.to}
@@ -35,6 +35,40 @@ Guarde esta chave em local seguro; ela não será exibida novamente no painel.
       Destination: { ToAddresses: [params.to] },
       Message: {
         Subject: { Data: `Acesso ao painel - ${params.barbershopName}` },
+        Body: {
+          Text: { Data: body },
+        },
+      },
+    })
+  );
+}
+
+export type PasswordResetEmailParams = {
+  to: string;
+  appUrl: string;
+  tempPassword: string;
+};
+
+export async function sendPasswordResetEmail(params: PasswordResetEmailParams): Promise<void> {
+  const from = process.env.FROM_EMAIL;
+  if (!from) return;
+  const body = `
+Olá,
+
+Você solicitou a recuperação de senha da sua conta NavalhIA.
+
+Senha temporária: ${params.tempPassword}
+
+Acesse o painel em ${params.appUrl}/login e faça login com esta senha. Na primeira vez você será solicitado a definir uma nova senha.
+
+Se você não pediu a recuperação de senha, ignore este e-mail. Sua senha atual continua válida.
+`.trim();
+  await ses.send(
+    new SendEmailCommand({
+      Source: from,
+      Destination: { ToAddresses: [params.to] },
+      Message: {
+        Subject: { Data: "Recuperação de senha - NavalhIA" },
         Body: {
           Text: { Data: body },
         },

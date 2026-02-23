@@ -4,7 +4,7 @@ Este documento descreve um plano **fase a fase**, com foco em **MVP funcional, b
 
 - **AWS (infra automatizada via AWS CLI + CloudFormation)** para hospedar **API** e **front/docs estáticos**
 - **Supabase Postgres** como banco gerenciado (menos atrito operacional no MVP)
-- Integração com **n8n** via **API keys por barbearia** (plug-and-play)
+- Integração com **n8n** via **API keys por estabelecimento** (plug-and-play)
 
 > Região escolhida: **`us-east-1`** (tudo em uma região para simplificar).
 
@@ -19,12 +19,12 @@ Após o primeiro deploy da API via `scripts/aws/deploy-api.sh`:
 | **API (base)** | `https://2ggnv5isxc.execute-api.us-east-1.amazonaws.com` |
 | **Health** | `https://2ggnv5isxc.execute-api.us-east-1.amazonaws.com/health` |
 | **API (auth, tools, public)** | `https://2ggnv5isxc.execute-api.us-east-1.amazonaws.com/api` |
-| **Bucket de artifacts** | `barber-harmony-artifacts-bdcf2e84` |
-| **Stack CloudFormation** | `barber-harmony-api-prod` |
+| **Bucket de artifacts** | `navalhia-artifacts-bdcf2e84` |
+| **Stack CloudFormation** | `navalhia-api-prod` |
 | **Região** | `us-east-1` |
 
 - **Frontend (produção)**: defina `VITE_API_URL=https://2ggnv5isxc.execute-api.us-east-1.amazonaws.com` no build.
-- **n8n**: base URL das tools = `https://2ggnv5isxc.execute-api.us-east-1.amazonaws.com/api`; autenticação via header `X-API-Key` (API key por barbearia).
+- **n8n**: base URL das tools = `https://2ggnv5isxc.execute-api.us-east-1.amazonaws.com/api`; autenticação via header `X-API-Key` (API key por estabelecimento).
 
 ---
 
@@ -69,7 +69,7 @@ Referências úteis no repo:
 Permitir que o n8n envie payloads sem precisar confiar em `barbershop_id` no body.
 
 ### Trabalho de desenvolvimento (backend)
-1) **Criar tabela de API keys por barbearia**:
+1) **Criar tabela de API keys por estabelecimento**:
    - `barbershop_api_keys` com campos mínimos:
      - `id`
      - `barbershop_id`
@@ -77,11 +77,11 @@ Permitir que o n8n envie payloads sem precisar confiar em `barbershop_id` no bod
      - `key_hash` (NÃO salvar key em texto puro)
      - `last_used_at`, `created_at`, `revoked_at`
 
-2) **Gerar keys por barbearia**:
+2) **Gerar keys por estabelecimento**:
    - endpoint admin no painel para criar/revogar keys (MVP pode ser só “criar 1 key”)
    - key exibida **uma vez** e depois só hash no banco
 
-3) **Trocar `TOOLS_API_KEY` global por validação por barbearia**:
+3) **Trocar `TOOLS_API_KEY` global por validação por estabelecimento**:
    - `requireToolsKey` passa a:
      - ler `x-api-key`
      - buscar a key no banco (por hash)
@@ -97,7 +97,7 @@ Permitir que o n8n envie payloads sem precisar confiar em `barbershop_id` no bod
   - `POST /api/tools/upsert_client`
   - `POST /api/tools/create_appointment`
   - etc…
-- sempre com `x-api-key: <key da barbearia>`
+- sempre com `x-api-key: <key do estabelecimento>`
 - a API descobre o `barbershop_id` automaticamente.
 
 ---
@@ -181,7 +181,7 @@ export AWS_REGION=us-east-1
 2) Criar bucket de artifacts:
 
 ```bash
-export PROJECT=barber-harmony
+export PROJECT=navalhia
 export SUFFIX=<um-sufixo-unico>
 export ARTIFACT_BUCKET="${PROJECT}-artifacts-${SUFFIX}"
 aws s3 mb "s3://${ARTIFACT_BUCKET}"
@@ -199,7 +199,7 @@ Provisionar via:
 
 ```bash
 aws cloudformation deploy \
-  --stack-name barber-harmony-api-prod \
+  --stack-name navalhia-api-prod \
   --template-file infra/api/stack.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
@@ -217,7 +217,7 @@ Provisionar via:
 
 ```bash
 aws cloudformation deploy \
-  --stack-name barber-harmony-static-prod \
+  --stack-name navalhia-static-prod \
   --template-file infra/static/stack.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
@@ -249,7 +249,7 @@ aws s3 cp backend/dist.zip "s3://${ARTIFACT_BUCKET}/api/dist.zip"
 
 ```bash
 aws lambda update-function-code \
-  --function-name barber-harmony-api-prod \
+  --function-name navalhia-api-prod \
   --s3-bucket "${ARTIFACT_BUCKET}" \
   --s3-key "api/dist.zip"
 ```
@@ -329,9 +329,9 @@ Deploy automático por push na `main`, sem chaves long-lived.
 2) Criar endpoint na API:
 - `POST /api/billing/webhook`
 3) Quando o pagamento confirmar:
-- criar barbearia
+- criar estabelecimento
 - criar perfil admin
-- gerar `api_key` da barbearia
+- gerar `api_key` do estabelecimento
 - enviar email com acesso + instruções de n8n
 
 Email:
@@ -349,14 +349,14 @@ Email:
 - **Checklist antes de abrir vendas**:
   - CORS restrito
   - rate limit habilitado
-  - `api_key` por barbearia funcionando
+  - `api_key` por estabelecimento funcionando
   - docs públicas publicadas
 
 ---
 
 ## Entregáveis (ordem sugerida)
 
-1) Migração + código: API keys por barbearia + validação no middleware tools
+1) Migração + código: API keys por estabelecimento + validação no middleware tools
 2) Ajuste SSL/pool do Postgres no backend (Supabase)
 3) OpenAPI + docs estáticas
 4) Adaptar Express para Lambda (`serverless-http`)
@@ -373,7 +373,7 @@ Email:
 - `DATABASE_URL` (Supabase)
 - `JWT_SECRET`
 - variáveis do front `VITE_API_URL` (local ou produção; ver `.env.example`)
-- para deploy API: `ARTIFACT_BUCKET` (ex.: `barber-harmony-artifacts-bdcf2e84`)
+- para deploy API: `ARTIFACT_BUCKET` (ex.: `navalhia-artifacts-bdcf2e84`)
 
 2) Executar local:
 - `docker compose up db api` (se for continuar usando Postgres local para desenvolvimento)

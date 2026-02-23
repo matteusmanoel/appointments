@@ -1,5 +1,5 @@
 -- ========================================
--- BarberFlow Database Schema
+-- NavalhIA Database Schema
 -- ========================================
 
 -- Barbershop table (multi-tenant support)

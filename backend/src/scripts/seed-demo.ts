@@ -1,6 +1,6 @@
 /**
  * Seed de dados de teste: serviços, barbeiros, clientes e agendamentos.
- * Rode após o seed principal (barbearia + admin). Idempotente: só insere se não houver dados.
+ * Rode após o seed principal (estabelecimento + admin). Idempotente: só insere se não houver dados.
  */
 import pg from "pg";
 

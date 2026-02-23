@@ -54,7 +54,7 @@ jobs:
           zip -r -q ../dist.zip dist package.json package-lock.json node_modules -x "*.map"
           aws s3 cp ../dist.zip "s3://${ARTIFACT_BUCKET}/api/latest.zip" --region ${{ env.AWS_REGION }}
           aws lambda update-function-code \
-            --function-name barber-harmony-api-prod \
+            --function-name navalhia-api-prod \
             --s3-bucket "${ARTIFACT_BUCKET}" \
             --s3-key "api/latest.zip" \
             --region ${{ env.AWS_REGION }}
@@ -85,15 +85,15 @@ jobs:
         run: |
           npm ci
           VITE_API_URL="$VITE_API_URL" npm run build
-          STATIC_BUCKET=$(aws cloudformation describe-stacks --stack-name barber-harmony-static-prod --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs[?OutputKey=='StaticBucketName'].OutputValue" --output text)
-          DIST_ID=$(aws cloudformation describe-stacks --stack-name barber-harmony-static-prod --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
+          STATIC_BUCKET=$(aws cloudformation describe-stacks --stack-name navalhia-static-prod --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs[?OutputKey=='StaticBucketName'].OutputValue" --output text)
+          DIST_ID=$(aws cloudformation describe-stacks --stack-name navalhia-static-prod --region ${{ env.AWS_REGION }} --query "Stacks[0].Outputs[?OutputKey=='CloudFrontDistributionId'].OutputValue" --output text)
           aws s3 sync dist "s3://${STATIC_BUCKET}" --delete --region ${{ env.AWS_REGION }}
           # Docs
           mkdir -p dist-docs/docs
           [ -f openapi.yaml ] && cp openapi.yaml dist-docs/docs/
           [ -f openapi.json ] && cp openapi.json dist-docs/docs/
           if [ -f openapi.yaml ] || [ -f openapi.json ]; then
-            echo '<!DOCTYPE html><html><head><meta charset="utf-8"/><link href="https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.css" rel="stylesheet"/><title>Barber Harmony API</title></head><body><div id="redoc"></div><script src="https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.js"></script><script>Redoc.init("openapi.yaml",{},document.getElementById("redoc"));</script></body></html>' > dist-docs/docs/index.html
+            echo '<!DOCTYPE html><html><head><meta charset="utf-8"/><link href="https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.css" rel="stylesheet"/><title>NavalhIA API</title></head><body><div id="redoc"></div><script src="https://cdn.jsdelivr.net/npm/redoc@2.1.3/bundles/redoc.standalone.js"></script><script>Redoc.init("openapi.yaml",{},document.getElementById("redoc"));</script></body></html>' > dist-docs/docs/index.html
             aws s3 sync dist-docs/docs "s3://${STATIC_BUCKET}/docs" --delete --region ${{ env.AWS_REGION }}
           fi
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" --region ${{ env.AWS_REGION }}

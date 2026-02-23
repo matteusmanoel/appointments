@@ -1,5 +1,5 @@
 {
-  "name": "barber-harmony-api",
+  "name": "navalhia-api",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,11 @@
     "seed:dev": "tsx src/scripts/seed.ts",
     "seed:demo": "node dist/scripts/seed-demo.js",
     "seed:demo:dev": "tsx src/scripts/seed-demo.ts",
-    "tools:create-api-key": "tsx src/scripts/create-api-key.ts"
+    "seed:production": "node dist/scripts/seed.js && node dist/scripts/seed-demo.js",
+    "tools:create-api-key": "tsx src/scripts/create-api-key.ts",
+    "worker:ai": "tsx src/workers/run-ai-worker.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.700.0",
@@ -21,6 +25,7 @@
     "express": "^4.21.0",
     "express-rate-limit": "^8.2.1",
     "jsonwebtoken": "^9.0.2",
+    "openai": "^6.22.0",
     "pg": "^8.13.0",
     "serverless-http": "^3.2.0",
     "stripe": "^17.4.0",
@@ -33,7 +38,11 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.9.0",
     "@types/pg": "^8.11.10",
+    "@types/supertest": "^6.0.3",
+    "dotenv": "^17.3.1",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.0.18"
   }
 }

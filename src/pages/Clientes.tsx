@@ -3,11 +3,23 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Phone, Calendar, DollarSign, Trophy, User } from "lucide-react";
+import {
+  Plus,
+  Search,
+  Phone,
+  Calendar,
+  DollarSign,
+  Trophy,
+  User,
+} from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 import { clientsApi } from "@/lib/api";
-import { ConfirmDialog, EntityActionsMenu, EntityFormDialog } from "@/components/shared";
+import {
+  ConfirmDialog,
+  EntityActionsMenu,
+  EntityFormDialog,
+} from "@/components/shared";
 import { toastError, withToast } from "@/lib/toast-helpers";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
@@ -25,11 +37,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 const clientSchema = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
-  phone: z.string().min(10, "Telefone deve ter pelo menos 10 dígitos").refine((v) => /^\d+$/.test(v), "Use apenas números"),
+  phone: z
+    .string()
+    .min(10, "Telefone deve ter pelo menos 10 dígitos")
+    .refine((v) => /^\d+$/.test(v), "Use apenas números"),
   email: z
     .string()
     .optional()
-    .refine((v) => !v || v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "E-mail inválido"),
+    .refine(
+      (v) => !v || v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+      "E-mail inválido",
+    ),
   notes: z.string().optional(),
 });
 
@@ -56,7 +74,11 @@ export default function Clientes() {
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
 
-  const { data: clients = [], isLoading, error } = useQuery({
+  const {
+    data: clients = [],
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["clients", search],
     queryFn: () => clientsApi.list(search || undefined),
   });
@@ -132,13 +154,16 @@ export default function Clientes() {
             notes: values.notes || undefined,
           },
         }),
-        { successMessage: "Cliente atualizado.", errorMessage: "Erro ao atualizar cliente." }
+        {
+          successMessage: "Cliente atualizado.",
+          errorMessage: "Erro ao atualizar cliente.",
+        },
       );
     } else {
-      await withToast(
-        createMutation.mutateAsync(values),
-        { successMessage: "Cliente criado.", errorMessage: "Erro ao criar cliente." }
-      );
+      await withToast(createMutation.mutateAsync(values), {
+        successMessage: "Cliente criado.",
+        errorMessage: "Erro ao criar cliente.",
+      });
     }
   };
 
@@ -159,14 +184,20 @@ export default function Clientes() {
   };
 
   return (
-    <MainLayout>
+    <>
       <div className="animate-fade-in">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div className="page-header mb-0">
             <h1 className="page-title">Clientes</h1>
-            <p className="page-subtitle">Histórico e relacionamento com clientes</p>
+            <p className="page-subtitle">
+              Histórico e relacionamento com clientes
+            </p>
           </div>
-          <Button className="btn-accent w-fit" onClick={openCreate} aria-label="Adicionar cliente">
+          <Button
+            className="btn-accent w-full md:w-fit"
+            onClick={openCreate}
+            aria-label="Adicionar cliente"
+          >
             <Plus className="w-4 h-4 mr-2" />
             Adicionar Cliente
           </Button>
@@ -186,7 +217,11 @@ export default function Clientes() {
           </div>
         </div>
 
-        {error && <p className="text-sm text-destructive mb-4">Erro ao carregar clientes.</p>}
+        {error && (
+          <p className="text-sm text-destructive mb-4">
+            Erro ao carregar clientes.
+          </p>
+        )}
         {isLoading && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {[1, 2, 3].map((i) => (
@@ -199,7 +234,7 @@ export default function Clientes() {
             {clients.map((client) => (
               <div
                 key={client.id}
-                className="stat-card cursor-pointer transition-shadow hover:shadow-md"
+                className="stat-card cursor-pointer"
                 onClick={() => openEdit(client as Client)}
               >
                 <div className="flex items-start justify-between mb-4">
@@ -208,7 +243,9 @@ export default function Clientes() {
                       <User className="w-6 h-6 text-primary" />
                     </div>
                     <div>
-                      <h3 className="font-semibold text-foreground">{client.name}</h3>
+                      <h3 className="font-semibold text-foreground">
+                        {client.name}
+                      </h3>
                       <p className="text-sm text-muted-foreground flex items-center gap-1">
                         <Phone className="w-3 h-3" />
                         {client.phone}
@@ -232,7 +269,9 @@ export default function Clientes() {
                     <div className="flex items-center justify-center gap-1 mb-1">
                       <Calendar className="w-3.5 h-3.5 text-info" />
                     </div>
-                    <p className="text-sm font-semibold text-foreground">{client.total_visits}</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {client.total_visits}
+                    </p>
                     <p className="text-xs text-muted-foreground">Visitas</p>
                   </div>
                   <div className="text-center">
@@ -248,7 +287,9 @@ export default function Clientes() {
                     <div className="flex items-center justify-center gap-1 mb-1">
                       <Trophy className="w-3.5 h-3.5 text-warning" />
                     </div>
-                    <p className="text-sm font-semibold text-foreground">{client.loyalty_points}</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {client.loyalty_points}
+                    </p>
                     <p className="text-xs text-muted-foreground">Pontos</p>
                   </div>
                   <div className="text-center">
@@ -266,7 +307,11 @@ export default function Clientes() {
           </div>
         )}
         {!isLoading && !error && clients.length === 0 && (
-          <p className="text-muted-foreground">Nenhum cliente encontrado.</p>
+          <EmptyState
+            icon={<User className="h-12 w-12" strokeWidth={1.5} />}
+            title="Nenhum cliente encontrado"
+            description="Cadastre clientes para agendar atendimentos e acumular pontos de fidelidade."
+          />
         )}
       </div>
 
@@ -274,7 +319,11 @@ export default function Clientes() {
         open={formOpen}
         onOpenChange={setFormOpen}
         title={editingClient ? "Editar Cliente" : "Novo Cliente"}
-        description={editingClient ? "Altere os dados do cliente." : "Preencha os dados do novo cliente."}
+        description={
+          editingClient
+            ? "Altere os dados do cliente."
+            : "Preencha os dados do novo cliente."
+        }
         footer={
           <>
             <Button variant="outline" onClick={() => setFormOpen(false)}>
@@ -296,7 +345,9 @@ export default function Clientes() {
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Nome <span className="text-destructive">*</span></FormLabel>
+                  <FormLabel>
+                    Nome <span className="text-destructive">*</span>
+                  </FormLabel>
                   <FormControl>
                     <Input placeholder="Nome completo" {...field} />
                   </FormControl>
@@ -309,13 +360,19 @@ export default function Clientes() {
               name="phone"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Telefone <span className="text-destructive">*</span></FormLabel>
+                  <FormLabel>
+                    Telefone <span className="text-destructive">*</span>
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="tel"
                       placeholder="(11) 99999-9999"
                       value={formatPhoneBR(field.value)}
-                      onChange={(e) => field.onChange(parsePhoneBR(e.target.value).slice(0, 11))}
+                      onChange={(e) =>
+                        field.onChange(
+                          parsePhoneBR(e.target.value).slice(0, 11),
+                        )
+                      }
                     />
                   </FormControl>
                   <FormMessage />
@@ -329,7 +386,11 @@ export default function Clientes() {
                 <FormItem>
                   <FormLabel>E-mail</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="email@exemplo.com" {...field} />
+                    <Input
+                      type="email"
+                      placeholder="email@exemplo.com"
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -342,7 +403,11 @@ export default function Clientes() {
                 <FormItem>
                   <FormLabel>Observações</FormLabel>
                   <FormControl>
-                    <Textarea placeholder="Anotações sobre o cliente" className="resize-none" {...field} />
+                    <Textarea
+                      placeholder="Anotações sobre o cliente"
+                      className="resize-none"
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -363,6 +428,6 @@ export default function Clientes() {
           onConfirm={handleDelete}
         />
       )}
-    </MainLayout>
+    </>
   );
 }

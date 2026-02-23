@@ -8,8 +8,8 @@
         - generic [ref=e1641]:
           - img [ref=e1643]
           - generic [ref=e1649]:
-            - heading "BarberFlow" [level=1] [ref=e1650]
-            - paragraph [ref=e1651]: Gestão de Barbearia
+            - heading "NavalhIA" [level=1] [ref=e1650]
+            - paragraph [ref=e1651]: Gestão NavalhIA
         - navigation [ref=e1652]:
           - link "Dashboard" [ref=e1653] [cursor=pointer]:
             - /url: /
@@ -47,7 +47,7 @@
           - img [ref=e1707]
           - generic [ref=e1711]:
             - paragraph [ref=e1712]: Admin
-            - paragraph [ref=e1713]: admin@barbearia.com
+            - paragraph [ref=e1713]: admin@navalhia.com.br
       - main [ref=e1714]:
         - generic [ref=e1716]:
           - generic [ref=e1717]:

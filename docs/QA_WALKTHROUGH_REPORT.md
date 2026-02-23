@@ -1,4 +1,4 @@
-# Relatório de Teste Walkthrough – BarberFlow
+# Relatório de Teste Walkthrough – NavalhIA
 
 **Data:** 12/02/2025 | **URL:** http://localhost:3002 | **Método:** Análise de código + snapshot inicial
 
@@ -12,8 +12,8 @@ O app carregou corretamente. Dashboard usa API real para agendamentos; gráficos
 
 ## 2. Login
 
-- Rota `/login` existe. Campos email/senha. Placeholder: admin@barbearia.com
-- Credenciais sugeridas: admin@barbearia.com / admin123
+- Rota `/login` existe. Campos email/senha. Placeholder: admin@navalhia.com.br
+- Credenciais sugeridas: admin@navalhia.com.br / admin123
 - AuthContext lê profile de localStorage; ProtectedRoute redireciona se não logado
 - 401 na API redireciona para /login
 

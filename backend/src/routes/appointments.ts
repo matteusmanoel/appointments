@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { barbershopHasAutomation, cancelReminderForAppointment, scheduleReminderForAppointment } from "../outbound/scheduled-messages.js";
 
 const statusEnum = z.enum(["pending", "confirmed", "completed", "cancelled", "no_show"]);
 const createBody = z.object({
@@ -201,6 +202,38 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
     const serviceIdsArr = snapshots.map((s) => s.service_id);
     const serviceNamesArr = snapshots.map((s) => s.name);
     res.status(201).json({ ...appointment, service_ids: serviceIdsArr, service_names: serviceNamesArr });
+
+    barbershopHasAutomation(barbershopId).then((has) => {
+      if (!has) return;
+      return pool
+        .query<{ client_phone: string; client_name: string | null; barber_name: string; slug: string | null; timezone: string; public_token: string }>(
+          `SELECT c.phone AS client_phone, c.name AS client_name, b.name AS barber_name, bs.slug, COALESCE(ais.timezone, 'America/Sao_Paulo') AS timezone, a.public_token
+           FROM public.appointments a
+           JOIN public.clients c ON c.id = a.client_id
+           JOIN public.barbers b ON b.id = a.barber_id
+           JOIN public.barbershops bs ON bs.id = a.barbershop_id
+           LEFT JOIN public.barbershop_ai_settings ais ON ais.barbershop_id = a.barbershop_id
+           WHERE a.id = $1 AND a.barbershop_id = $2`,
+          [appointment.id, barbershopId]
+        )
+        .then((r) => {
+          const row = r.rows[0];
+          if (!row?.public_token) return;
+          return scheduleReminderForAppointment({
+            barbershopId,
+            appointmentId: appointment.id,
+            publicToken: row.public_token,
+            clientPhone: row.client_phone,
+            clientName: row.client_name,
+            barberName: row.barber_name,
+            serviceNames: serviceNamesArr,
+            scheduledDate: scheduled_date,
+            scheduledTime: timeNorm,
+            slug: row.slug,
+            timezone: row.timezone,
+          });
+        });
+    }).catch(() => {});
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
@@ -382,5 +415,6 @@ appointmentsRouter.delete("/:id", async (req: Request, res: Response): Promise<v
     res.status(404).json({ error: "Appointment not found" });
     return;
   }
+  await cancelReminderForAppointment(req.params.id);
   res.json({ id: r.rows[0].id, status: "cancelled" });
 });

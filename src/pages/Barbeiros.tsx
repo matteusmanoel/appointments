@@ -3,12 +3,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
-import { Plus, Clock } from "lucide-react";
+import { Plus, Clock, Scissors } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 import { barbersApi } from "@/lib/api";
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
-import { ConfirmDialog, EntityActionsMenu, EntityFormDialog } from "@/components/shared";
+import {
+  ConfirmDialog,
+  EntityActionsMenu,
+  EntityFormDialog,
+} from "@/components/shared";
 import { toastError, withToast } from "@/lib/toast-helpers";
 import {
   Form,
@@ -44,7 +48,8 @@ const statusMap: Record<string, { label: string; className: string }> = {
   break: { label: "Intervalo", className: "badge-warning" },
   inactive: {
     label: "Inativo",
-    className: "bg-muted text-muted-foreground border border-border px-2.5 py-0.5 rounded-full text-xs font-medium",
+    className:
+      "bg-muted text-muted-foreground border border-border px-2.5 py-0.5 rounded-full text-xs font-medium",
   },
 };
 
@@ -79,7 +84,9 @@ const barberSchema = z.object({
   email: z.string().optional(),
   status: z.enum(["active", "inactive", "break"]),
   commission_percentage: z.coerce.number().min(0).max(100),
-  schedule: z.record(z.union([z.object({ start: z.string(), end: z.string() }), z.null()])),
+  schedule: z.record(
+    z.union([z.object({ start: z.string(), end: z.string() }), z.null()]),
+  ),
 });
 
 type BarberFormValues = z.infer<typeof barberSchema>;
@@ -100,7 +107,11 @@ export default function Barbeiros() {
   const [editingBarber, setEditingBarber] = useState<Barber | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Barber | null>(null);
 
-  const { data: barbers = [], isLoading, error } = useQuery({
+  const {
+    data: barbers = [],
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["barbers"],
     queryFn: () => barbersApi.list(),
   });
@@ -169,8 +180,17 @@ export default function Barbeiros() {
     const out = { ...defaultSchedule };
     DAYS.forEach((d) => {
       const slot = (s as Record<string, unknown>)[d.key];
-      if (slot && typeof slot === "object" && slot !== null && "start" in slot && "end" in slot) {
-        out[d.key] = { start: String((slot as { start: string }).start), end: String((slot as { end: string }).end) };
+      if (
+        slot &&
+        typeof slot === "object" &&
+        slot !== null &&
+        "start" in slot &&
+        "end" in slot
+      ) {
+        out[d.key] = {
+          start: String((slot as { start: string }).start),
+          end: String((slot as { end: string }).end),
+        };
       } else {
         out[d.key] = null;
       }
@@ -205,13 +225,16 @@ export default function Barbeiros() {
             schedule: values.schedule,
           },
         }),
-        { successMessage: "Barbeiro atualizado.", errorMessage: "Erro ao atualizar barbeiro." }
+        {
+          successMessage: "Barbeiro atualizado.",
+          errorMessage: "Erro ao atualizar barbeiro.",
+        },
       );
     } else {
-      await withToast(
-        createMutation.mutateAsync(values),
-        { successMessage: "Barbeiro criado.", errorMessage: "Erro ao criar barbeiro." }
-      );
+      await withToast(createMutation.mutateAsync(values), {
+        successMessage: "Barbeiro criado.",
+        errorMessage: "Erro ao criar barbeiro.",
+      });
     }
   };
 
@@ -227,20 +250,30 @@ export default function Barbeiros() {
   const schedule = form.watch("schedule") ?? defaultSchedule;
 
   return (
-    <MainLayout>
+    <>
       <div className="animate-fade-in">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div className="page-header mb-0">
             <h1 className="page-title">Barbeiros</h1>
-            <p className="page-subtitle">Gerencie sua equipe de profissionais</p>
+            <p className="page-subtitle">
+              Gerencie sua equipe de profissionais
+            </p>
           </div>
-          <Button className="btn-accent w-fit" onClick={openCreate} aria-label="Adicionar barbeiro">
+          <Button
+            className="btn-accent w-full md:w-fit"
+            onClick={openCreate}
+            aria-label="Adicionar barbeiro"
+          >
             <Plus className="w-4 h-4 mr-2" />
             Adicionar Barbeiro
           </Button>
         </div>
 
-        {error && <p className="text-sm text-destructive mb-4">Erro ao carregar barbeiros.</p>}
+        {error && (
+          <p className="text-sm text-destructive mb-4">
+            Erro ao carregar barbeiros.
+          </p>
+        )}
         {isLoading && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
             {[1, 2, 3].map((i) => (
@@ -255,7 +288,7 @@ export default function Barbeiros() {
               return (
                 <div
                   key={barber.id}
-                  className="stat-card cursor-pointer transition-shadow hover:shadow-md"
+                  className="stat-card cursor-pointer"
                   onClick={() => openEdit(barber as Barber)}
                 >
                   <div className="flex items-start justify-between mb-4">
@@ -269,8 +302,12 @@ export default function Barbeiros() {
                         </span>
                       </div>
                       <div>
-                        <h3 className="font-semibold text-foreground">{barber.name}</h3>
-                        <p className="text-sm text-muted-foreground">{barber.phone ?? "—"}</p>
+                        <h3 className="font-semibold text-foreground">
+                          {barber.name}
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          {barber.phone ?? "—"}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -285,28 +322,28 @@ export default function Barbeiros() {
                           onDelete={() => setDeleteTarget(barber as Barber)}
                           isActive={barber.status === "active"}
                           onDeactivate={async () => {
-                          await withToast(
-                            updateMutation.mutateAsync({
-                              id: barber.id,
-                              body: { status: "inactive" },
-                            }),
-                            {
-                              successMessage: "Barbeiro desativado.",
-                              errorMessage: "Erro ao desativar barbeiro.",
-                            }
-                          );
-                        }}
+                            await withToast(
+                              updateMutation.mutateAsync({
+                                id: barber.id,
+                                body: { status: "inactive" },
+                              }),
+                              {
+                                successMessage: "Barbeiro desativado.",
+                                errorMessage: "Erro ao desativar barbeiro.",
+                              },
+                            );
+                          }}
                           onActivate={async () => {
-                          await withToast(
-                            updateMutation.mutateAsync({
-                              id: barber.id,
-                              body: { status: "active" },
-                            }),
-                            {
-                              successMessage: "Barbeiro ativado.",
-                              errorMessage: "Erro ao ativar barbeiro.",
-                            }
-                          );
+                            await withToast(
+                              updateMutation.mutateAsync({
+                                id: barber.id,
+                                body: { status: "active" },
+                              }),
+                              {
+                                successMessage: "Barbeiro ativado.",
+                                errorMessage: "Erro ao ativar barbeiro.",
+                              },
+                            );
                           }}
                           actions={["edit", "delete", "activate", "deactivate"]}
                           aria-label="Menu do barbeiro"
@@ -334,7 +371,11 @@ export default function Barbeiros() {
           </div>
         )}
         {!isLoading && !error && barbers.length === 0 && (
-          <p className="text-muted-foreground">Nenhum barbeiro cadastrado.</p>
+          <EmptyState
+            icon={<Scissors className="h-12 w-12" strokeWidth={1.5} />}
+            title="Nenhum barbeiro cadastrado"
+            description="Cadastre os barbeiros da equipe para organizar a agenda."
+          />
         )}
       </div>
 
@@ -343,7 +384,9 @@ export default function Barbeiros() {
         onOpenChange={setFormOpen}
         title={editingBarber ? "Editar Barbeiro" : "Novo Barbeiro"}
         description={
-          editingBarber ? "Altere os dados do barbeiro." : "Preencha os dados do novo barbeiro."
+          editingBarber
+            ? "Altere os dados do barbeiro."
+            : "Preencha os dados do novo barbeiro."
         }
         contentClassName="sm:max-w-xl"
         footer={
@@ -367,7 +410,9 @@ export default function Barbeiros() {
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Nome <span className="text-destructive">*</span></FormLabel>
+                  <FormLabel>
+                    Nome <span className="text-destructive">*</span>
+                  </FormLabel>
                   <FormControl>
                     <Input placeholder="Nome completo" {...field} />
                   </FormControl>
@@ -386,7 +431,11 @@ export default function Barbeiros() {
                       type="tel"
                       placeholder="(11) 99999-9999"
                       value={formatPhoneBR(field.value)}
-                      onChange={(e) => field.onChange(parsePhoneBR(e.target.value).slice(0, 11))}
+                      onChange={(e) =>
+                        field.onChange(
+                          parsePhoneBR(e.target.value).slice(0, 11),
+                        )
+                      }
                     />
                   </FormControl>
                   <FormMessage />
@@ -400,19 +449,25 @@ export default function Barbeiros() {
                 <FormItem>
                   <FormLabel>E-mail</FormLabel>
                   <FormControl>
-                    <Input type="email" placeholder="email@exemplo.com" {...field} />
+                    <Input
+                      type="email"
+                      placeholder="email@exemplo.com"
+                      {...field}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <FormField
                 control={form.control}
                 name="status"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Status <span className="text-destructive">*</span></FormLabel>
+                    <FormLabel>
+                      Status <span className="text-destructive">*</span>
+                    </FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -434,7 +489,9 @@ export default function Barbeiros() {
                 name="commission_percentage"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Comissão (%) <span className="text-destructive">*</span></FormLabel>
+                    <FormLabel>
+                      Comissão (%) <span className="text-destructive">*</span>
+                    </FormLabel>
                     <FormControl>
                       <Input type="number" min={0} max={100} {...field} />
                     </FormControl>
@@ -444,26 +501,33 @@ export default function Barbeiros() {
               />
             </div>
             <div className="space-y-3">
-              <FormLabel>Horário de trabalho <span className="text-destructive">*</span></FormLabel>
-              <div className="space-y-0 rounded-lg border p-3">
+              <FormLabel>
+                Horário de trabalho <span className="text-destructive">*</span>
+              </FormLabel>
+              <div className="space-y-0 rounded-lg border p-3 min-w-0">
                 {DAYS.map((d) => (
-                  <div key={d.key} className="flex min-h-[52px] items-center gap-2 border-b border-border py-2 last:border-0">
+                  <div
+                    key={d.key}
+                    className="flex min-h-[52px] flex-wrap items-center gap-2 border-b border-border py-2 last:border-0"
+                  >
                     <Checkbox
-                      className="border-green-600 data-[state=checked]:bg-green-600 data-[state=checked]:text-white"
+                      className="border-green-600 data-[state=checked]:bg-green-600 data-[state=checked]:text-white shrink-0"
                       checked={schedule[d.key] !== null}
                       onCheckedChange={(checked) => {
                         form.setValue("schedule", {
                           ...form.getValues("schedule"),
-                          [d.key]: checked ? { start: "09:00", end: "18:00" } : null,
+                          [d.key]: checked
+                            ? { start: "09:00", end: "18:00" }
+                            : null,
                         });
                       }}
                     />
                     <span className="text-sm w-20 shrink-0">{d.label}</span>
                     {schedule[d.key] !== null ? (
-                      <div className="flex shrink-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-0 sm:flex-nowrap">
                         <Input
                           type="time"
-                          className="h-8 w-28 min-w-[7rem]"
+                          className="h-8 min-w-0 flex-1 sm:w-28 sm:flex-none sm:min-w-[7rem]"
                           value={schedule[d.key]?.start ?? "09:00"}
                           onChange={(e) =>
                             form.setValue("schedule", {
@@ -475,10 +539,12 @@ export default function Barbeiros() {
                             })
                           }
                         />
-                        <span className="shrink-0 text-muted-foreground whitespace-nowrap">até</span>
+                        <span className="shrink-0 text-muted-foreground whitespace-nowrap">
+                          até
+                        </span>
                         <Input
                           type="time"
-                          className="h-8 w-28 min-w-[7rem]"
+                          className="h-8 min-w-0 flex-1 sm:w-28 sm:flex-none sm:min-w-[7rem]"
                           value={schedule[d.key]?.end ?? "18:00"}
                           onChange={(e) =>
                             form.setValue("schedule", {
@@ -492,7 +558,9 @@ export default function Barbeiros() {
                         />
                       </div>
                     ) : (
-                      <span className="text-sm text-muted-foreground">Fechado</span>
+                      <span className="text-sm text-muted-foreground">
+                        Fechado
+                      </span>
                     )}
                   </div>
                 ))}
@@ -513,6 +581,6 @@ export default function Barbeiros() {
           onConfirm={handleDelete}
         />
       )}
-    </MainLayout>
+    </>
   );
 }

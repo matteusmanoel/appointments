@@ -10,8 +10,8 @@
 
 - `barbershops`, `barbers`, `services`, `clients`, `appointments`, `reports`: usam `getBarbershopId(req)` (JWT).
 - `tools`: usa `req.barbershopId` injetado pelo middleware após validar API key.
-- `public`: usa `slug` na URL para resolver barbearia (dados públicos de uma barbearia por slug).
+- `public`: usa `slug` na URL para resolver estabelecimento (dados públicos de um estabelecimento por slug).
 
 ## Resultado
 
-Nenhum usuário ou integração pode acessar ou criar dados em nome de outra barbearia; o tenant é sempre derivado do token ou da API key.
+Nenhum usuário ou integração pode acessar ou criar dados em nome de outro estabelecimento; o tenant é sempre derivado do token ou da API key.
