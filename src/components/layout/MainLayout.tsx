@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useMemo, useState } from "react";
+import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Menu } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { SidebarContent } from "./SidebarContent";
@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChangePasswordModal } from "@/components/shared";
+import { shouldRunSetupTour, runSetupTour } from "@/lib/setup-tour";
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -16,6 +17,18 @@ export function MainLayout({ children }: MainLayoutProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { profile } = useAuth();
+  const tourRunRef = useRef(false);
+
+  useEffect(() => {
+    if (tourRunRef.current || !profile) return;
+    if (profile.must_change_password) return;
+    if (!shouldRunSetupTour()) return;
+    tourRunRef.current = true;
+    const t = setTimeout(() => {
+      runSetupTour();
+    }, 400);
+    return () => clearTimeout(t);
+  }, [profile]);
 
   const layoutStyle = useMemo(
     () =>

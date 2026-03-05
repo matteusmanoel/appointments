@@ -22,4 +22,12 @@ test.describe("Smoke — fluxo mínimo", () => {
       await expect(page.locator('input[type="password"]')).toBeVisible();
     }
   });
+
+  test("login exibe dica de primeiro acesso quando first_access=1", async ({ page }) => {
+    await page.goto("/login?first_access=1", { waitUntil: "load", timeout: 15000 });
+    // Se estiver autenticado, pode redirecionar para /app (ok). Caso contrário, deve mostrar o callout.
+    const callout = page.getByText(/primeiro acesso após o pagamento/i);
+    const dashboardOuApp = page.getByText(/dashboard|agendamentos|sair/i);
+    await expect(callout.or(dashboardOuApp)).toBeVisible({ timeout: 15000 });
+  });
 });

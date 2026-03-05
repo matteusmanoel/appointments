@@ -1,13 +1,14 @@
+import { lazy, Suspense, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { StatCard } from "@/components/dashboard/StatCard";
-import { RevenueChart } from "@/components/dashboard/RevenueChart";
 import { AppointmentsList } from "@/components/dashboard/AppointmentsList";
 import { RankingCard } from "@/components/dashboard/RankingCard";
-import { TopServices } from "@/components/dashboard/TopServices";
 import { Calendar, DollarSign, Users, TrendingUp, MessageCircle, AlertCircle } from "lucide-react";
-import { useState } from "react";
-import { startOfMonth } from "date-fns";
+
+const RevenueChart = lazy(() => import("@/components/dashboard/RevenueChart").then((m) => ({ default: m.RevenueChart })));
+const TopServices = lazy(() => import("@/components/dashboard/TopServices").then((m) => ({ default: m.TopServices })));
+import { startOfMonth, format, differenceInDays } from "date-fns";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { appointmentsApi, barbershopsApi, barbersApi, servicesApi, whatsappApi, integrationsApi, reportsApi } from "@/lib/api";
 import { getTimeSlotsForDay } from "@/lib/slots";
@@ -19,7 +20,6 @@ function todayISO() {
 }
 
 export default function Dashboard() {
-  const today = todayISO();
   const { data: barbershop } = useQuery({
     queryKey: ["barbershop"],
     queryFn: () => barbershopsApi.get(),
@@ -34,9 +34,26 @@ export default function Dashboard() {
     queryKey: ["services"],
     queryFn: () => servicesApi.list(),
   });
+  const { profile } = useAuth();
+  const greetingName = barbershop?.name?.trim() || "NavalhIA";
+  const [range, setRange] = useState<{
+    from: Date | null;
+    to: Date | null;
+  } | null>(() => {
+    const now = new Date();
+    return { from: startOfMonth(now), to: now };
+  });
+
+  const fromStr = range?.from && range?.to ? format(range.from, "yyyy-MM-dd") : null;
+  const toStr = range?.from && range?.to ? format(range.to, "yyyy-MM-dd") : null;
+  const today = todayISO();
+
   const { data: appointments = [] } = useQuery({
-    queryKey: ["appointments", today],
-    queryFn: () => appointmentsApi.list({ date: today }),
+    queryKey: ["appointments", "dashboard", fromStr ?? today, toStr ?? today],
+    queryFn: () =>
+      fromStr && toStr
+        ? appointmentsApi.list({ from: fromStr, to: toStr })
+        : appointmentsApi.list({ date: today }),
   });
   const { data: whatsapp } = useQuery({
     queryKey: ["whatsapp"],
@@ -56,24 +73,23 @@ export default function Dashboard() {
     retry: false,
     staleTime: 2 * 60 * 1000,
   });
-  const { profile } = useAuth();
-  const greetingName = barbershop?.name?.trim() || "NavalhIA";
-  const [range, setRange] = useState<{
-    from: Date | null;
-    to: Date | null;
-  } | null>(() => {
-    const now = new Date();
-    return { from: startOfMonth(now), to: now };
-  });
 
-  const confirmed = appointments.filter(
-    (a) => a.status === "confirmed" || a.status === "pending",
+  const isRange = !!fromStr && !!toStr;
+  const confirmed = useMemo(
+    () => appointments.filter((a) => a.status === "confirmed" || a.status === "pending"),
+    [appointments],
   );
-  const completed = appointments.filter((a) => a.status === "completed");
-  const revenueToday = completed.reduce((s, a) => s + Number(a.price), 0);
-  const countToday = confirmed.length;
+  const completed = useMemo(
+    () => appointments.filter((a) => a.status === "completed"),
+    [appointments],
+  );
+  const revenuePeriod = useMemo(
+    () => completed.reduce((s, a) => s + Number(a.price), 0),
+    [completed],
+  );
+  const countPeriod = confirmed.length;
 
-  // Taxa de ocupação: minutos agendados / capacidade em minutos (horário de funcionamento × barbeiros ativos)
+  // Taxa de ocupação: no período usa minutos agendados no range / (dias no range × capacidade por dia)
   const todayDate = new Date();
   const openSlots = getTimeSlotsForDay(
     barbershop?.business_hours,
@@ -82,14 +98,33 @@ export default function Dashboard() {
   const activeBarbersCount = barbers.filter(
     (b) => b.status === "active" || b.status === "break",
   ).length;
-  const capacityMinutes = openSlots * 30 * Math.max(1, activeBarbersCount);
-  const bookedMinutes = appointments
-    .filter((a) => ["pending", "confirmed", "completed"].includes(a.status))
-    .reduce((sum, a) => sum + (a.duration_minutes ?? 0), 0);
+  const capacityMinutesPerDay = openSlots * 30 * Math.max(1, activeBarbersCount);
+  const bookedMinutes = useMemo(
+    () =>
+      appointments
+        .filter((a) => ["pending", "confirmed", "completed"].includes(a.status))
+        .reduce((sum, a) => sum + (a.duration_minutes ?? 0), 0),
+    [appointments],
+  );
+  const daysInRange =
+    range?.from && range?.to
+      ? Math.max(1, differenceInDays(range.to, range.from) + 1)
+      : 1;
+  const capacityMinutes = capacityMinutesPerDay * daysInRange;
   const occupancyPct =
     capacityMinutes > 0
       ? Math.min(100, Math.round((bookedMinutes / capacityMinutes) * 100))
       : 0;
+
+  const periodLabel = isRange ? "No período" : "Hoje";
+  const revenueSubtitle = isRange
+    ? `${completed.length} concluídos no período`
+    : completed.length > 0
+      ? `${completed.length} concluídos`
+      : "Nenhum concluído ainda";
+  const occupancySubtitle = isRange
+    ? "Baseado no período selecionado"
+    : "Baseado na agenda de hoje";
 
   const setupLoading =
     barbershop === undefined ||
@@ -113,9 +148,9 @@ export default function Dashboard() {
           <div>
             <h1 className="page-title">Salve, {greetingName}! 👋</h1>
             <p className="page-subtitle">
-              Agenda organizada para hoje. Você tem{" "}
+              {isRange ? "Resumo do período selecionado." : "Agenda organizada para hoje."} Você tem{" "}
               <span className="font-medium text-foreground">
-                {countToday} atendimentos
+                {countPeriod} atendimentos
               </span>{" "}
               confirmados.
             </p>
@@ -150,7 +185,7 @@ export default function Dashboard() {
         )}
         {whatsapp && !whatsapp.connected && (
           <Link
-            to="/configuracoes?tab=whatsapp"
+            to="/app/integracoes?step=connect"
             className="text-sm font-medium text-primary hover:underline"
           >
             Conectar WhatsApp →
@@ -161,33 +196,29 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
-          title="Faturamento Hoje"
-          value={`R$ ${revenueToday.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
-          subtitle={
-            completed.length > 0
-              ? `${completed.length} concluídos`
-              : "Nenhum concluído ainda"
-          }
+          title={isRange ? "Faturamento no período" : "Faturamento Hoje"}
+          value={`R$ ${revenuePeriod.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
+          subtitle={revenueSubtitle}
           icon={<DollarSign className="w-6 h-6" />}
           variant="success"
         />
         <StatCard
           title="Agendamentos"
-          value={String(countToday)}
+          value={String(countPeriod)}
           subtitle={`${appointments.filter((a) => a.status === "pending").length} pendentes`}
           icon={<Calendar className="w-6 h-6" />}
         />
         <StatCard
           title="Clientes Atendidos"
           value={String(completed.length)}
-          subtitle="Hoje"
+          subtitle={periodLabel}
           icon={<Users className="w-6 h-6" />}
         />
         <StatCard
           title="Taxa de Ocupação"
           value={`${occupancyPct}%`}
-          subtitle="Baseado na agenda de hoje"
-          helpText="Minutos agendados hoje ÷ (horário de funcionamento × barbeiros ativos, em minutos)."
+          subtitle={occupancySubtitle}
+          helpText={isRange ? "Minutos agendados no período ÷ capacidade no período." : "Minutos agendados hoje ÷ (horário de funcionamento × barbeiros ativos, em minutos)."}
           icon={<TrendingUp className="w-6 h-6" />}
           variant="accent"
         />
@@ -223,11 +254,13 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        <RevenueChart range={range} />
-        <TopServices range={range} />
-      </div>
+      {/* Charts Row (lazy so recharts loads only when Dashboard is shown) */}
+      <Suspense fallback={<div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 min-h-[240px] rounded-lg border bg-muted/30 animate-pulse" />}>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <RevenueChart range={range} />
+          <TopServices range={range} />
+        </div>
+      </Suspense>
 
       {/* Appointments + Ranking */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

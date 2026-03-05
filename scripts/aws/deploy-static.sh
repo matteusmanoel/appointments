@@ -7,11 +7,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-STACK_NAME="${STACK_NAME:-navalhia-static-prod}"
+STAGE="${STAGE:-prod}"
+STACK_NAME="${STACK_NAME:-navalhia-static-${STAGE}}"
 
-if [ -f "$REPO_ROOT/.env" ]; then
+ENV_FILE="$REPO_ROOT/.env"
+if [ -f "$REPO_ROOT/.env.${STAGE}" ]; then
+  ENV_FILE="$REPO_ROOT/.env.${STAGE}"
+fi
+if [ -f "$ENV_FILE" ]; then
+  echo "Loading env: $ENV_FILE"
   set -a
-  source "$REPO_ROOT/.env"
+  source "$ENV_FILE"
   set +a
 fi
 
@@ -32,7 +38,7 @@ if [ -z "${STATIC_BUCKET}" ] || [ "${STATIC_BUCKET}" = "None" ]; then
     --template-file "$REPO_ROOT/infra/static/stack.yaml" \
     --capabilities CAPABILITY_NAMED_IAM \
     --region "$AWS_REGION" \
-    --parameter-overrides Stage=prod
+    --parameter-overrides Stage="$STAGE"
   STATIC_BUCKET=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_REGION" \
     --query "Stacks[0].Outputs[?OutputKey=='StaticBucketName'].OutputValue" --output text)
   DISTRIBUTION_ID=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$AWS_REGION" \

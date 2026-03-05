@@ -61,13 +61,25 @@ else
   echo "API Gateway domain api.navalhia.com.br already exists."
 fi
 
-# Create API mapping (map domain to our API default stage)
-echo "Creating API mapping (api.navalhia.com.br -> API $API_ID)..."
-aws apigatewayv2 create-api-mapping \
-  --domain-name "api.navalhia.com.br" \
-  --api-id "$API_ID" \
-  --stage "\$default" \
-  --region "$AWS_REGION" 2>/dev/null && echo "API mapping created." || echo "Mapping may already exist."
+# API mappings: ensure exactly one root mapping (no ApiMappingKey) pointing to current API.
+# Wrong or duplicate mappings cause 404 on /api/* (e.g. POST /api/billing/checkout).
+echo "Ensuring API mapping (api.navalhia.com.br -> API $API_ID, stage \$default, key empty)..."
+EXISTING=$(aws apigatewayv2 get-api-mappings --domain-name "api.navalhia.com.br" --region "$AWS_REGION" --output json 2>/dev/null || echo '{"Items":[]}')
+for id in $(echo "$EXISTING" | jq -r '.Items[] | select(.ApiId != "'"$API_ID"'" or .ApiMappingKey != "") | .ApiMappingId'); do
+  echo "  Removing obsolete mapping: $id"
+  aws apigatewayv2 delete-api-mapping --domain-name "api.navalhia.com.br" --api-mapping-id "$id" --region "$AWS_REGION" 2>/dev/null || true
+done
+ROOT_EXISTS=$(echo "$EXISTING" | jq -r --arg api "$API_ID" '.Items[] | select(.ApiId == $api and .ApiMappingKey == "") | .ApiMappingId' | head -1)
+if [ -z "$ROOT_EXISTS" ]; then
+  aws apigatewayv2 create-api-mapping \
+    --domain-name "api.navalhia.com.br" \
+    --api-id "$API_ID" \
+    --stage "\$default" \
+    --region "$AWS_REGION" --output json >/dev/null
+  echo "  Root mapping created."
+else
+  echo "  Root mapping already exists (id: $ROOT_EXISTS)."
+fi
 
 # Show targets for CNAMEs (CloudFront domain + API Gateway custom domain)
 [ -z "$CF_DOMAIN" ] && CF_DOMAIN=$(aws cloudfront get-distribution --id "$CF_DISTRIBUTION_ID" --query "Distribution.DomainName" --output text 2>/dev/null || true)

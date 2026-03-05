@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireToolsKey, getBarbershopId } from "../middleware/auth.js";
+import { validateUuidIds } from "../lib/uuid.js";
 
 async function resolveBarbershopId(req: Request): Promise<string | null> {
   try {
@@ -136,6 +137,11 @@ toolsRouter.post("/create_appointment", async (req: Request, res: Response): Pro
   const serviceIds: string[] = parsed.data.service_ids?.length ? parsed.data.service_ids : parsed.data.service_id ? [parsed.data.service_id] : [];
   if (serviceIds.length === 0) {
     res.status(400).json({ error: "service_id or service_ids (min 1) required" });
+    return;
+  }
+  const uuidErr = validateUuidIds(serviceIds, "service_id");
+  if (uuidErr) {
+    res.status(400).json({ error: uuidErr });
     return;
   }
   const timeNorm = time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");

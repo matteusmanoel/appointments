@@ -1,0 +1,56 @@
+Você está trabalhando no repositório "barber-harmony" (NavalhIA).
+
+## Como o maintainer (Mateus) pede as coisas (padrões de prompt)
+- Linguagem: PT-BR, direto ao ponto, com contexto operacional.
+- Costuma enviar: prints, trechos de logs, stack traces minificadas, URLs de ambiente (staging/prod), e hipóteses.
+- Expectativa: investigação com evidência (CloudWatch/Supabase/DB), correção completa do fluxo fim‑a‑fim, redeploy, e testes.
+- Prioridade de produto: UX sem fricção. Ex.: “pagou → aguarda provisionamento → entra automaticamente”. Evitar exigir cliques manuais (“Atualizar”, “Ir para o painel”).
+- Quando houver “recuperar acesso”: mover mensagens de “Primeiro acesso…” para o lugar correto (ex.: modal “Esqueci minha senha”, não a tela de login).
+
+## Stack e bibliotecas preferidas (siga isso por padrão)
+### Frontend
+- React 18 + TypeScript + Vite.
+- UI: shadcn/radix (`@radix-ui/*`), TailwindCSS (+ `tailwind-merge`, `clsx`, `cva`).
+- Data fetching/state server: `@tanstack/react-query`.
+- Forms/validation: `react-hook-form` + `zod`.
+- Charts: `recharts`.
+- Routing: `react-router-dom`.
+- Testes: Vitest e Playwright.
+
+### Backend
+- Node + TypeScript (ESM) + Express.
+- Banco: Postgres (`pg`), com SQL explícito.
+- Validação: `zod` (prefira `safeParse` + 400 com detalhes).
+- Auth: JWT (`jsonwebtoken`), senha com `bcryptjs`.
+- Pagamentos: Stripe.
+- AWS: SES e S3 via AWS SDK v3.
+- AI: `openai` (agente WhatsApp), com guardrails fortes + RAG (pgvector/knowledge).
+
+## Estilo de código do repo (imite)
+- TypeScript forte, explícito, sem “mágica”.
+- ESM: imports no backend usam extensão `.js` (ex.: `import { pool } from "../db.js";`).
+- Preferir `const` e funções pequenas e testáveis.
+- Validação/erros: early-return com status correto; logs úteis (com contexto) quando for falha operacional.
+- Idempotência: em fluxos de Stripe/webhooks/provisionamento, usar `ON CONFLICT ... DO NOTHING/UPDATE` e evitar duplicar tenant/usuário.
+- Resiliência: suportar atrasos/falhas do webhook com fallback no endpoint que o front chama (ex.: `/api/billing/session`), mas sem criar inconsistências.
+- Segurança: nunca vazar IDs/UUIDs/tokens/segredos em UI ou logs “user-facing”.
+
+## Preferências de implementação (intenções típicas)
+- Sempre que eu disser “produção”, trate como: robustez > elegância. Busque causa raiz e feche arestas.
+- Se o usuário final ficar travado: implemente polling/retry/backoff no front + endpoint determinístico no backend, com estados claros (“pending/provisioning/ready/error”).
+- Provisionamento (Stripe → tenant): garantir campos NOT NULL (ex.: `slug`) e relacionamentos de multi‑unidade (`accounts` + `account_memberships`) consistentes.
+- Autenticação pós-checkout: priorize login automático por token (não depender de e-mail/SES para entrar).
+- Se houver senha temporária/primeiro acesso: fornecer endpoint e UX para “definir primeira senha” sem exigir senha atual.
+
+## Diretrizes de depuração (como responder e agir)
+- Comece pelo “fim-a-fim”: reproduzir mentalmente o fluxo, identificar qual endpoint decide o estado, e procurar o ponto onde ele retorna “pending”.
+- Busque evidência: logs do servidor, queries no Postgres/Supabase e status do Stripe/SES. Depois conclua.
+- Quando achar a causa raiz, aplique fix mínimo e completo, e adicione (ou ajuste) testes:
+  - unit/integration (Vitest) quando for lógica/validação/SQL
+  - e2e (Playwright) quando for fluxo de onboarding/checkout/redirect
+- Se testes falharem por ambiente/credenciais, adapte a suíte para “skip condicionado” (sem mascarar bugs reais) e mantenha um e2e determinístico com mocks quando necessário.
+
+## Regras práticas do repo
+- Não commitar arquivos de ambiente/segredos (ex.: `.env.prod`, `.env.staging`) nem outputs sensíveis.
+- Não criar mudanças grandes sem necessidade: prefira patches localizados, consistentes com o estilo existente.
+- Ao tocar UI/UX, mantenha consistência visual (Tailwind + componentes shadcn) e acessibilidade (labels/aria).

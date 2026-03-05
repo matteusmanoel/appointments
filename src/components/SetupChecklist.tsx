@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { CheckCircle2, Circle, Settings, Scissors, Users, MessageCircle } from "lucide-react";
+import { CheckCircle2, Circle, Settings, Scissors, Users, MessageCircle, Lock } from "lucide-react";
 import { hasPro } from "@/lib/plan";
 import type { Profile } from "@/contexts/AuthContext";
+import { CheckoutModal } from "@/components/CheckoutModal";
 
 type SetupChecklistProps = {
   profile: Profile | null;
@@ -32,6 +34,8 @@ export function SetupChecklist({
   loading,
   error,
 }: SetupChecklistProps) {
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+
   if (loading) {
     return (
       <div className="mb-6 rounded-lg border border-border/50 bg-muted/30 p-4 animate-pulse">
@@ -73,8 +77,8 @@ export function SetupChecklist({
   const steps = [
     {
       done: configDone,
-      label: "Configurações (nome, horários e link de agendamento)",
-      to: "/app/configuracoes",
+      label: "Definir horário de funcionamento, nome e link de agendamento",
+      to: "/app/configuracoes?open=hours",
       icon: Settings,
     },
     {
@@ -89,16 +93,14 @@ export function SetupChecklist({
       to: "/app/barbeiros",
       icon: Users,
     },
-    ...(isPro
-      ? [
-          {
-            done: whatsappDone,
-            label: "Conectar WhatsApp (recepcionista 24h)",
-            to: "/app/integracoes",
-            icon: MessageCircle,
-          },
-        ]
-      : []),
+    {
+      done: whatsappDone,
+      label: "Conectar WhatsApp (recepcionista 24h)",
+      to: "/app/integracoes?step=connect",
+      icon: MessageCircle,
+      proOnly: true,
+      isPro,
+    },
   ];
 
   return (
@@ -107,15 +109,27 @@ export function SetupChecklist({
       <ul className="space-y-2">
         {steps.map((step) => {
           const Icon = step.icon;
+          const isProOnly = "proOnly" in step && step.proOnly && !step.isPro;
           return (
             <li key={step.label} className="flex items-center gap-2 text-sm">
               {step.done ? (
                 <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
+              ) : isProOnly ? (
+                <Lock className="h-4 w-4 text-muted-foreground shrink-0" />
               ) : (
                 <Circle className="h-4 w-4 text-muted-foreground shrink-0" />
               )}
               {step.done ? (
                 <span className="text-muted-foreground line-through">{step.label}</span>
+              ) : isProOnly ? (
+                <button
+                  type="button"
+                  onClick={() => setCheckoutOpen(true)}
+                  className="flex items-center gap-1.5 text-primary hover:underline font-medium"
+                >
+                  <Icon className="h-4 w-4" />
+                  {step.label} (Plano Profissional) →
+                </button>
               ) : (
                 <Link
                   to={step.to}
@@ -129,6 +143,7 @@ export function SetupChecklist({
           );
         })}
       </ul>
+      <CheckoutModal open={checkoutOpen} onOpenChange={setCheckoutOpen} initialPlan="pro" />
     </div>
   );
 }

@@ -36,7 +36,7 @@ export function EntityFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "max-w-[calc(100vw-2rem)] sm:max-w-[425px] max-h-[85vh] overflow-hidden grid grid-rows-[auto,1fr,auto]",
+          "max-w-[calc(100vw-2rem)] sm:max-w-xl md:max-w-2xl max-h-[85vh] overflow-hidden grid grid-rows-[auto,1fr,auto]",
           contentClassName,
         )}
       >
@@ -53,7 +53,11 @@ export function EntityFormDialog({
         >
           {children}
         </div>
-        {footer && <DialogFooter>{footer}</DialogFooter>}
+        {footer && (
+          <DialogFooter className="grid grid-cols-2 gap-2 w-full sm:grid-cols-2">
+            {footer}
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

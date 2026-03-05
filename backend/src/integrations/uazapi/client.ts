@@ -202,6 +202,55 @@ export async function setWebhook(params: { token: string; url: string }): Promis
   );
 }
 
+/** Body for POST /message/find (buscar mensagens em um chat). */
+export type FindMessagesParams = {
+  token: string;
+  chatid: string;
+  limit?: number;
+  offset?: number;
+  id?: string;
+  track_source?: string;
+  track_id?: string;
+};
+
+/** Resposta típica: lista de mensagens com id, from, body, fromMe, etc. */
+export type FindMessagesResult = {
+  messages?: Array<{
+    id?: string;
+    from?: string;
+    body?: string;
+    fromMe?: boolean;
+    timestamp?: number;
+    [k: string]: unknown;
+  }>;
+  [k: string]: unknown;
+};
+
+export async function findMessages(params: FindMessagesParams): Promise<FindMessagesResult> {
+  const base = getBaseUrl();
+  const body: Record<string, unknown> = {
+    chatid: params.chatid,
+    limit: params.limit ?? 100,
+    offset: params.offset ?? 0,
+  };
+  if (params.id != null) body.id = params.id;
+  if (params.track_source != null) body.track_source = params.track_source;
+  if (params.track_id != null) body.track_id = params.track_id;
+  const res = await fetchWithTimeout(`${base}/message/find`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: params.token,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uazapi message/find failed: ${res.status} ${text}`);
+  }
+  return res.json() as Promise<FindMessagesResult>;
+}
+
 export async function instanceDisconnect(token: string): Promise<unknown> {
   const base = getBaseUrl();
   const res = await fetchWithTimeout(`${base}/instance/disconnect`, {

@@ -7,6 +7,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Plus } from "lucide-react";
 
 export interface FiltersBarProps {
   /** Left slot (e.g. Status). */
@@ -87,6 +88,8 @@ export interface BarbersMultiSelectProps {
   onChange: (ids: string[]) => void;
   label?: string;
   className?: string;
+  /** When set, shows "Criar novo barbeiro" as first option. */
+  onCreateBarber?: () => void;
 }
 
 /** Reusable barbers multiselect: Popover + Checkboxes, count badge, "Limpar". */
@@ -96,6 +99,7 @@ export function BarbersMultiSelect({
   onChange,
   label = "Barbeiros",
   className,
+  onCreateBarber,
 }: BarbersMultiSelectProps) {
   const isAll = selectedIds.length === 0;
   const displayCount = isAll ? barbers.length : selectedIds.length;
@@ -107,7 +111,11 @@ export function BarbersMultiSelect({
       </label>
       <Popover>
         <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="gap-1 h-10 w-full justify-between">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1 h-10 w-full justify-between"
+          >
             <span className="truncate">
               {isAll ? "Todos" : `${displayCount} selecionado(s)`}
             </span>
@@ -118,8 +126,20 @@ export function BarbersMultiSelect({
             ) : null}
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-56 p-2">
+        <PopoverContent align="start" className="w-56 p-2">
           <div className="flex flex-col gap-2 max-h-[240px] overflow-y-auto">
+            {onCreateBarber && (
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm font-bold text-primary hover:bg-muted text-left"
+                onClick={onCreateBarber}
+              >
+                <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center">
+                  <Plus className="h-4 w-4 stroke-[4]" />
+                </span>
+                Criar novo barbeiro
+              </button>
+            )}
             {barbers.map((b) => (
               <label
                 key={b.id}
@@ -130,7 +150,9 @@ export function BarbersMultiSelect({
                   onCheckedChange={(checked) => {
                     if (isAll) {
                       if (checked) return;
-                      onChange(barbers.filter((x) => x.id !== b.id).map((x) => x.id));
+                      onChange(
+                        barbers.filter((x) => x.id !== b.id).map((x) => x.id),
+                      );
                     } else if (checked) {
                       onChange([...selectedIds, b.id]);
                     } else {

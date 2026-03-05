@@ -1,4 +1,5 @@
 import { pool } from "../db.js";
+import { validateUuidIds } from "../lib/uuid.js";
 import { barbershopHasAutomation, cancelReminderForAppointment, scheduleReminderForAppointment } from "../outbound/scheduled-messages.js";
 
 const MAX_TEXT_LENGTH = 8 * 1024;
@@ -96,6 +97,8 @@ export async function checkAvailability(
 
   const serviceIds: string[] = (params.service_ids?.length ? params.service_ids : params.service_id ? [params.service_id] : []) as string[];
   if (serviceIds.length === 0) return { error: "service_id or service_ids (min 1) required" };
+  const uuidErr = validateUuidIds(serviceIds, "service_id");
+  if (uuidErr) return { error: uuidErr };
 
   const afterMins = params.after_time ? timeToMinutes(params.after_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2")) : null;
   if (params.after_time != null && afterMins == null) return { error: "after_time must be HH:mm" };
@@ -150,8 +153,8 @@ export async function checkAvailability(
   // Shop-level business hours + closures (single source of open/closed for slot calculation).
   const [shopRow, closureRow] = await Promise.all([
     pool.query<{ business_hours: unknown }>("SELECT business_hours FROM public.barbershops WHERE id = $1", [barbershopId]),
-    pool.query<{ status: string; start_time: string | null; end_time: string | null }>(
-      "SELECT status, start_time::text as start_time, end_time::text as end_time FROM public.barbershop_closures WHERE barbershop_id = $1 AND closure_date = $2::date",
+    pool.query<{ status: string; start_time: string | null; end_time: string | null; unavailability_intervals: unknown }>(
+      "SELECT status, start_time::text as start_time, end_time::text as end_time, unavailability_intervals FROM public.barbershop_closures WHERE barbershop_id = $1 AND closure_date = $2::date",
       [barbershopId, params.date]
     ),
   ]);
@@ -168,16 +171,21 @@ export async function checkAvailability(
       alternatives: [],
     });
   }
-  const bh = (shopRow.rows[0]?.business_hours ?? {}) as Record<string, { start?: string; end?: string } | null>;
+  const bh = (shopRow.rows[0]?.business_hours ?? {}) as Record<string, { start?: string; end?: string; unavailability_intervals?: { start: string; end: string }[] } | null>;
   const bhDay = bh[dayKey];
   let shopStartM: number | null = null;
   let shopEndM: number | null = null;
+  let unavailabilityIntervals: { start: string; end: string }[] = [];
   if (closure?.status === "open_partial" && closure.start_time && closure.end_time) {
     shopStartM = timeToMinutes(closure.start_time.slice(0, 5));
     shopEndM = timeToMinutes(closure.end_time.slice(0, 5));
+    const raw = closure.unavailability_intervals;
+    if (Array.isArray(raw)) unavailabilityIntervals = raw.filter((x: unknown) => x && typeof x === "object" && "start" in x && "end" in x).map((x: unknown) => ({ start: String((x as { start: string }).start).slice(0, 5), end: String((x as { end: string }).end).slice(0, 5) }));
   } else if (bhDay && typeof bhDay === "object") {
     shopStartM = timeToMinutes(String(bhDay.start ?? ""));
     shopEndM = timeToMinutes(String(bhDay.end ?? ""));
+    const raw = bhDay.unavailability_intervals;
+    if (Array.isArray(raw)) unavailabilityIntervals = raw.filter((x: unknown) => x && typeof x === "object" && "start" in x && "end" in x).map((x: unknown) => ({ start: String((x as { start: string }).start).slice(0, 5), end: String((x as { end: string }).end).slice(0, 5) }));
   }
   if (shopStartM == null || shopEndM == null) {
     return truncateForLlm({
@@ -188,6 +196,23 @@ export async function checkAvailability(
       services,
       requested: { available: false, barbers: [] },
       why_unavailable: "Barbearia não abre neste dia.",
+      alternatives: [],
+    });
+  }
+  const inUnavailability = unavailabilityIntervals.some((i) => {
+    const iStart = timeToMinutes(i.start);
+    const iEnd = timeToMinutes(i.end);
+    return iStart != null && iEnd != null && overlaps(requestedStart, requestedEnd, iStart, iEnd);
+  });
+  if (inUnavailability) {
+    return truncateForLlm({
+      date: params.date,
+      time: timeNorm,
+      duration_minutes: totalDuration,
+      total_price: totalPrice,
+      services,
+      requested: { available: false, barbers: [] },
+      why_unavailable: "Horário dentro de um intervalo de indisponibilidade (ex.: almoço).",
       alternatives: [],
     });
   }
@@ -327,8 +352,8 @@ export async function validateSlotForPublicReschedule(
 
   const [shopRow, closureRow, barberRow] = await Promise.all([
     pool.query<{ business_hours: unknown }>("SELECT business_hours FROM public.barbershops WHERE id = $1", [barbershopId]),
-    pool.query<{ status: string; start_time: string | null; end_time: string | null }>(
-      "SELECT status, start_time::text as start_time, end_time::text as end_time FROM public.barbershop_closures WHERE barbershop_id = $1 AND closure_date = $2::date",
+    pool.query<{ status: string; start_time: string | null; end_time: string | null; unavailability_intervals: unknown }>(
+      "SELECT status, start_time::text as start_time, end_time::text as end_time, unavailability_intervals FROM public.barbershop_closures WHERE barbershop_id = $1 AND closure_date = $2::date",
       [barbershopId, params.date]
     ),
     pool.query<{ id: string; schedule: unknown }>("SELECT id, schedule FROM public.barbers WHERE id = $1 AND barbershop_id = $2", [params.barber_id, barbershopId]),
@@ -337,21 +362,43 @@ export async function validateSlotForPublicReschedule(
   const closure = closureRow.rows[0];
   if (closure?.status === "closed") return { ok: false, error: "Barbearia fechada nesta data" };
 
-  const bh = (shopRow.rows[0]?.business_hours ?? {}) as Record<string, { start?: string; end?: string } | null>;
+  const bh = (shopRow.rows[0]?.business_hours ?? {}) as Record<string, { start?: string; end?: string; unavailability_intervals?: { start: string; end: string }[] } | null>;
   let shopStartM: number | null = null;
   let shopEndM: number | null = null;
+  let unavail: { start: number; end: number }[] = [];
   if (closure?.status === "open_partial" && closure.start_time && closure.end_time) {
     shopStartM = timeToMinutes(closure.start_time.slice(0, 5));
     shopEndM = timeToMinutes(closure.end_time.slice(0, 5));
+    const raw = closure.unavailability_intervals;
+    if (Array.isArray(raw)) {
+      for (const x of raw) {
+        if (x && typeof x === "object" && "start" in x && "end" in x) {
+          const s = timeToMinutes(String((x as { start: string }).start).slice(0, 5));
+          const e = timeToMinutes(String((x as { end: string }).end).slice(0, 5));
+          if (s != null && e != null) unavail.push({ start: s, end: e });
+        }
+      }
+    }
   } else {
     const bhDay = bh[dayKey];
     if (bhDay && typeof bhDay === "object") {
       shopStartM = timeToMinutes(String(bhDay.start ?? ""));
       shopEndM = timeToMinutes(String(bhDay.end ?? ""));
+      const raw = bhDay.unavailability_intervals;
+      if (Array.isArray(raw)) {
+        for (const x of raw) {
+          if (x && typeof x === "object" && "start" in x && "end" in x) {
+            const s = timeToMinutes(String((x as { start: string }).start).slice(0, 5));
+            const e = timeToMinutes(String((x as { end: string }).end).slice(0, 5));
+            if (s != null && e != null) unavail.push({ start: s, end: e });
+          }
+        }
+      }
     }
   }
   if (shopStartM == null || shopEndM == null) return { ok: false, error: "Barbearia não abre neste dia" };
   if (startMins < shopStartM || endMins > shopEndM) return { ok: false, error: "Horário fora do expediente" };
+  if (unavail.some((u) => overlaps(startMins, endMins, u.start, u.end))) return { ok: false, error: "Horário dentro de intervalo de indisponibilidade" };
 
   const sched = (barberRow.rows[0].schedule ?? {}) as Record<string, { start?: string; end?: string } | null>;
   const barberDay = sched[dayKey];
@@ -393,6 +440,8 @@ export async function getNextSlots(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date)) return { error: "date must be yyyy-MM-dd" };
   const serviceIds: string[] = (params.service_ids?.length ? params.service_ids : params.service_id ? [params.service_id] : []) as string[];
   if (serviceIds.length === 0) return { error: "service_id or service_ids (min 1) required" };
+  const uuidErrGetSlots = validateUuidIds(serviceIds, "service_id");
+  if (uuidErrGetSlots) return { error: uuidErrGetSlots };
 
   const limit = Math.min(Math.max(Number(params.limit) || 10, 1), 20);
   const afterMins = params.after_time ? timeToMinutes(params.after_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2")) : null;
@@ -400,8 +449,8 @@ export async function getNextSlots(
 
   const [shopRow, closureRow, serviceRows, barbersRows, apptsRows] = await Promise.all([
     pool.query<{ business_hours: unknown }>("SELECT business_hours FROM public.barbershops WHERE id = $1", [barbershopId]),
-    pool.query<{ status: string; start_time: string | null; end_time: string | null }>(
-      "SELECT status, start_time::text as start_time, end_time::text as end_time FROM public.barbershop_closures WHERE barbershop_id = $1 AND closure_date = $2::date",
+    pool.query<{ status: string; start_time: string | null; end_time: string | null; unavailability_intervals: unknown }>(
+      "SELECT status, start_time::text as start_time, end_time::text as end_time, unavailability_intervals FROM public.barbershop_closures WHERE barbershop_id = $1 AND closure_date = $2::date",
       [barbershopId, params.date]
     ),
     pool.query("SELECT id, duration_minutes FROM public.services WHERE id = ANY($1::uuid[]) AND barbershop_id = $2", [serviceIds, barbershopId]),
@@ -430,6 +479,7 @@ export async function getNextSlots(
 
   let startM: number;
   let endM: number;
+  let unavailIntervals: { start: number; end: number }[] = [];
   const closure = closureRow.rows[0];
   if (closure?.status === "closed") {
     return truncateForLlm({ date: params.date, slots: [], message: "Barbearia fechada nesta data." });
@@ -440,8 +490,18 @@ export async function getNextSlots(
     if (s == null || e == null) return { error: "Invalid closure times" };
     startM = s;
     endM = e;
+    const raw = (closure as { unavailability_intervals?: unknown }).unavailability_intervals;
+    if (Array.isArray(raw)) {
+      for (const x of raw) {
+        if (x && typeof x === "object" && "start" in x && "end" in x) {
+          const is_ = timeToMinutes(String((x as { start: string }).start).slice(0, 5));
+          const ie = timeToMinutes(String((x as { end: string }).end).slice(0, 5));
+          if (is_ != null && ie != null) unavailIntervals.push({ start: is_, end: ie });
+        }
+      }
+    }
   } else {
-    const bh = (shopRow.rows[0].business_hours ?? {}) as Record<string, { start?: string; end?: string } | null>;
+    const bh = (shopRow.rows[0].business_hours ?? {}) as Record<string, { start?: string; end?: string; unavailability_intervals?: { start: string; end: string }[] } | null>;
     const day = bh[dayKey];
     if (!day || typeof day !== "object") {
       return truncateForLlm({ date: params.date, slots: [], message: "Barbearia não abre neste dia." });
@@ -451,6 +511,16 @@ export async function getNextSlots(
     if (s == null || e == null) return { error: "Invalid business_hours" };
     startM = s;
     endM = e;
+    const raw = day.unavailability_intervals;
+    if (Array.isArray(raw)) {
+      for (const x of raw) {
+        if (x && typeof x === "object" && "start" in x && "end" in x) {
+          const is_ = timeToMinutes(String((x as { start: string }).start).slice(0, 5));
+          const ie = timeToMinutes(String((x as { end: string }).end).slice(0, 5));
+          if (is_ != null && ie != null) unavailIntervals.push({ start: is_, end: ie });
+        }
+      }
+    }
   }
 
   if (afterMins != null) startM = Math.max(startM, afterMins);
@@ -474,6 +544,7 @@ export async function getNextSlots(
   const STEP = 15;
   for (let slotStart = startM; slotStart < slotEndMax && slots.length < limit; slotStart += STEP) {
     const slotEnd = slotStart + totalDuration;
+    if (unavailIntervals.some((u) => overlaps(slotStart, slotEnd, u.start, u.end))) continue;
     for (const b of barbers) {
       const sched = (b.schedule ?? {}) as Record<string, { start?: string; end?: string }>;
       const day = sched[dayKey];
@@ -548,6 +619,8 @@ export async function createAppointment(
 
   const serviceIds: string[] = (params.service_ids?.length ? params.service_ids : params.service_id ? [params.service_id] : []) as string[];
   if (serviceIds.length === 0) return { error: "service_id or service_ids (min 1) required" };
+  const uuidErrBook = validateUuidIds(serviceIds, "service_id");
+  if (uuidErrBook) return { error: uuidErrBook };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date)) return { error: "date must be yyyy-MM-dd" };
   if (!/^\d{2}:\d{2}(:\d{2})?$/.test(params.time)) return { error: "time must be HH:mm or HH:mm:ss" };
   const timeNorm = params.time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");

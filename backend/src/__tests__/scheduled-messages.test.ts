@@ -148,11 +148,13 @@ describe("scheduled-messages", () => {
     if (!fixturesSweep1) return;
     const yearMonth = new Date().toISOString().slice(0, 7);
     const dedupeKey = `followup_30d:${fixturesSweep1.barbershopId}:${fixturesSweep1.clientId}:${yearMonth}`;
+    await pool.query(`DELETE FROM public.scheduled_messages WHERE dedupe_key = $1`, [dedupeKey]);
     const before = await countScheduledMessagesByDedupe(dedupeKey);
+    expect(before).toBe(0);
 
     await runDailyFollowUp30dSweep();
     const after1 = await countScheduledMessagesByDedupe(dedupeKey);
-    expect(after1).toBeGreaterThanOrEqual(before + 1);
+    expect(after1).toBeGreaterThanOrEqual(1);
 
     await runDailyFollowUp30dSweep();
     const after2 = await countScheduledMessagesByDedupe(dedupeKey);

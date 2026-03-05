@@ -26,6 +26,16 @@ export type AgentProfile = {
   verbosity: Verbosity;
   salesStyle: SalesStyle;
   hardRules?: AgentProfileHardRules;
+  /** Nome exibido do agente (ex.: "NavalhIA") */
+  displayName?: string;
+  /** Apelido ou nome curto */
+  nickname?: string;
+  /** Papel/função (ex.: "Assistente de agendamento") */
+  role?: string;
+  /** Assinar mensagens com identidade */
+  signMessages?: boolean;
+  /** Estilo da assinatura: "short" = só nome; "full" = nome + papel */
+  signatureStyle?: "short" | "full";
 };
 
 const MAX_ADDITIONAL_INSTRUCTIONS_LENGTH = 2000;
@@ -71,6 +81,12 @@ const SALES_STYLE_SNIPPETS: Record<SalesStyle, string> = {
 
 function profileToSnippet(profile: AgentProfile): string {
   const parts: string[] = [];
+  if (profile.displayName?.trim()) {
+    parts.push(`Você se apresenta como "${profile.displayName.trim()}".`);
+  }
+  if (profile.role?.trim()) {
+    parts.push(`Seu papel: ${profile.role.trim()}.`);
+  }
   parts.push(TONE_PRESET_SNIPPETS[profile.tonePreset] ?? TONE_PRESET_SNIPPETS.default);
   parts.push(EMOJI_LEVEL_SNIPPETS[profile.emojiLevel] ?? EMOJI_LEVEL_SNIPPETS.medium);
   parts.push(SLANG_LEVEL_SNIPPETS[profile.slangLevel] ?? SLANG_LEVEL_SNIPPETS.medium);
@@ -81,6 +97,14 @@ function profileToSnippet(profile: AgentProfile): string {
   if (rules?.doNotInventPlaces !== false) parts.push("Nunca invente endereços ou lugares.");
   if (rules?.alwaysSteerToBooking !== false) parts.push("Sempre direcione para agendamento quando apropriado.");
   if (rules?.showTopServicesWhenUnknown !== false) parts.push("Quando o cliente pedir serviço que não existe, mostre os principais serviços e CTA para agendar.");
+  if (profile.signMessages && (profile.displayName?.trim() || profile.nickname?.trim())) {
+    const name = (profile.signMessages && profile.nickname?.trim()) ? profile.nickname.trim() : profile.displayName?.trim();
+    if (profile.signatureStyle === "full" && profile.role?.trim()) {
+      parts.push(`Ao final de cada resposta, assine com: "${name} — ${profile.role.trim()}".`);
+    } else {
+      parts.push(`Ao final de cada resposta, assine com: "${name}".`);
+    }
+  }
   return parts.join(" ");
 }
 
@@ -166,5 +190,10 @@ export function normalizeProfile(profile: unknown): AgentProfile {
     verbosity: ["short", "normal"].includes(String(p.verbosity)) ? (p.verbosity as Verbosity) : DEFAULT_AGENT_PROFILE.verbosity,
     salesStyle: ["soft", "direct"].includes(String(p.salesStyle)) ? (p.salesStyle as SalesStyle) : DEFAULT_AGENT_PROFILE.salesStyle,
     hardRules: p.hardRules && typeof p.hardRules === "object" ? (p.hardRules as AgentProfileHardRules) : DEFAULT_AGENT_PROFILE.hardRules,
+    displayName: typeof p.displayName === "string" ? p.displayName.trim() || undefined : undefined,
+    nickname: typeof p.nickname === "string" ? p.nickname.trim() || undefined : undefined,
+    role: typeof p.role === "string" ? p.role.trim() || undefined : undefined,
+    signMessages: typeof p.signMessages === "boolean" ? p.signMessages : undefined,
+    signatureStyle: p.signatureStyle === "short" || p.signatureStyle === "full" ? p.signatureStyle : undefined,
   };
 }

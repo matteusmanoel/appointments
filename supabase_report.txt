@@ -1,0 +1,92 @@
+--- SECURITY LINT ---
+--- UNUSED INDEXES ---
+
+  
+   Name                                                                 | Size       | Percent used | Index scans | Seq scans | Unused 
+  ----------------------------------------------------------------------|------------|--------------|-------------|-----------|--------
+   public.idx_profiles_email                                            | 16 kB      | 100%         | 1           | 0         | false  
+   public.idx_appointments_barber                                       | 16 kB      | 0%           | 0           | 0         | true   
+   public.account_memberships_pkey                                      | 16 kB      | 0%           | 0           | 0         | true   
+   public.barber_services_barber_id_service_id_key                      | 16 kB      | 100%         | 8           | 0         | false  
+   public.profiles_user_id_key                                          | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_appointments_client                                       | 16 kB      | 0%           | 0           | 0         | true   
+   public.appointments_pkey                                             | 16 kB      | 100%         | 3           | 0         | false  
+   public.barbershops_slug_key                                          | 16 kB      | 100%         | 2           | 0         | false  
+   public.idx_appointments_status                                       | 16 kB      | 0%           | 0           | 0         | true   
+   public.profiles_pkey                                                 | 16 kB      | 100%         | 2           | 0         | false  
+   public.clients_barbershop_id_phone_key                               | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_barbershops_slug                                          | 16 kB      | 0%           | 0           | 0         | true   
+   public.accounts_pkey                                                 | 16 kB      | 100%         | 2           | 0         | false  
+   public.barbershops_pkey                                              | 16 kB      | 100%         | 13          | 0         | false  
+   public.account_memberships_profile_id_account_id_key                 | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_services_barbershop                                       | 16 kB      | 100%         | 3           | 0         | false  
+   public.idx_clients_phone                                             | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_appointments_barbershop                                   | 16 kB      | 100%         | 1           | 0         | false  
+   public.barber_services_pkey                                          | 16 kB      | 100%         | 4           | 0         | false  
+   public.services_pkey                                                 | 16 kB      | 100%         | 10          | 0         | false  
+   public.idx_appointments_public_token                                 | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_appointments_date                                         | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_barbers_barbershop                                        | 16 kB      | 100%         | 8           | 0         | false  
+   public.idx_account_memberships_profile                               | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_barbershops_account                                       | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_clients_barbershop                                        | 16 kB      | 100%         | 3           | 0         | false  
+   public.barbers_pkey                                                  | 16 kB      | 100%         | 12          | 0         | false  
+   public.clients_pkey                                                  | 16 kB      | 100%         | 3           | 0         | false  
+   public.appointments_public_token_key                                 | 16 kB      | 0%           | 0           | 0         | true   
+   public.idx_account_memberships_account                               | 16 kB      | 0%           | 0           | 0         | true   
+   public.credit_purchases_stripe_session_id_key                        | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_whatsapp_connections_barbershop_id_provider_key    | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_whatsapp_connections_uazapi_instance_id_idx        | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_credit_purchases_barbershop                               | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_quality_metrics_pkey                                       | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_ai_prompt_versions_pkey                            | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_closures_pkey                                      | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_jobs_status_run_after_idx                                  | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_api_keys_barbershop_id_idx                         | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_service_redemptions_client                                | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_closures_barbershop_id_closure_date_key            | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_scheduled_messages_followup_dedupe                        | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_whatsapp_connections_status_idx                    | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_scheduled_messages_barbershop_type_created                | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_scheduled_messages_barbershop_type_status                 | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_quality_metrics_barbershop_created_idx                     | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_conversations_barbershop_id_channel_external_thread_id_key | 8192 bytes | 0%           | 0           | 0         | true   
+   public.credit_purchases_pkey                                         | 8192 bytes | 0%           | 0           | 0         | true   
+   public.checkout_onboarding_pkey                                      | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_ai_prompt_versions_barbershop_status_idx           | 8192 bytes | 0%           | 0           | 0         | true   
+   public.outbound_events_pkey                                          | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_api_keys_pkey                                      | 8192 bytes | 100%         | 1           | 0         | false  
+   public.ai_jobs_pkey                                                  | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_messages_pkey                                              | 8192 bytes | 0%           | 0           | 0         | true   
+   public.reward_redemptions_pkey                                       | 8192 bytes | 100%         | 1           | 0         | false  
+   public.appointment_services_appointment_id_position_key              | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_api_keys_revoked_at_idx                            | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_scheduled_messages_barbershop_created                     | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_appointment_services_appointment                          | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_appointment_services_service                              | 8192 bytes | 0%           | 0           | 0         | true   
+   public.service_redemptions_pkey                                      | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_messages_conversation_created_idx                          | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_service_redemptions_service                               | 8192 bytes | 0%           | 0           | 0         | true   
+   public.scheduled_messages_pkey                                       | 8192 bytes | 0%           | 0           | 0         | true   
+   public.outbound_events_status_next_run_idx                           | 8192 bytes | 0%           | 0           | 0         | true   
+   public.loyalty_rewards_pkey                                          | 8192 bytes | 100%         | 2           | 0         | false  
+   public.ai_conversations_last_message_at_idx                          | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_service_redemptions_redeemed_at                           | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_scheduled_messages_run_after                              | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_whatsapp_connections_pkey                          | 8192 bytes | 100%         | 1           | 0         | false  
+   public.ai_conversations_pkey                                         | 8192 bytes | 0%           | 0           | 0         | true   
+   public.whatsapp_inbound_events_pkey                                  | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_whatsapp_connections_barbershop_id_idx             | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_ai_settings_pkey                                   | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_conversations_barbershop_sandbox_idx                       | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_scheduled_messages_dedupe                                 | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_conversations_barbershop_status_idx                        | 8192 bytes | 0%           | 0           | 0         | true   
+   public.idx_barbershop_closures_barbershop_date                       | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_message_credits_pkey                               | 8192 bytes | 0%           | 0           | 0         | true   
+   public.whatsapp_inbound_events_provider_event_id_idx                 | 8192 bytes | 0%           | 0           | 0         | true   
+   public.appointment_services_pkey                                     | 8192 bytes | 100%         | 11          | 0         | false  
+   public.whatsapp_inbound_events_barbershop_received_idx               | 8192 bytes | 0%           | 0           | 0         | true   
+   public.ai_jobs_barbershop_status_idx                                 | 8192 bytes | 0%           | 0           | 0         | true   
+   public.barbershop_ai_runtime_pkey                                    | 8192 bytes | 0%           | 0           | 0         | true   
+
+--- CACHE HIT RATES ---

@@ -41,4 +41,8 @@ export const config = {
   // n8n outbound events (optional)
   n8nEventsWebhookUrl: optional("N8N_EVENTS_WEBHOOK_URL", ""),
   n8nEventsSecret: optional("N8N_EVENTS_SECRET", ""),
+  // Knowledge (S3 + RAG)
+  knowledgeS3Bucket: optionalNull("KNOWLEDGE_S3_BUCKET"),
+  knowledgeS3Prefix: optional("KNOWLEDGE_S3_PREFIX", "knowledge"),
+  awsRegion: optional("AWS_REGION", "us-east-1"),
 } as const;

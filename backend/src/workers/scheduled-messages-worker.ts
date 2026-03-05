@@ -198,6 +198,24 @@ async function processOne(): Promise<boolean> {
   return true;
 }
 
+/** Run one cycle: daily sweep once, then process batches up to maxBatches. Used by Lambda and by runLoop. */
+export async function runScheduledMessagesCycle(options?: { maxBatches?: number }): Promise<{ processed: number }> {
+  const maxBatches = options?.maxBatches ?? 20;
+  await runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily sweep:", e));
+  let processed = 0;
+  while (processed < maxBatches) {
+    try {
+      const did = await processOne();
+      if (!did) break;
+      processed++;
+    } catch (e) {
+      console.error("[scheduled-messages-worker] cycle error:", e);
+      break;
+    }
+  }
+  return { processed };
+}
+
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 async function runLoop(): Promise<void> {
@@ -209,19 +227,16 @@ async function runLoop(): Promise<void> {
     runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily sweep:", e));
   }, ONE_DAY_MS);
   while (true) {
-    try {
-      const did = await processOne();
-      if (!did) {
-        await new Promise((r) => setTimeout(r, POLL_MS));
-      }
-    } catch (e) {
-      console.error("[scheduled-messages-worker] loop error:", e);
-      await new Promise((r) => setTimeout(r, 5000));
+    const { processed } = await runScheduledMessagesCycle({ maxBatches: 20 });
+    if (processed === 0) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
     }
   }
 }
 
-runLoop().catch((e) => {
-  console.error("[scheduled-messages-worker] fatal:", e);
-  process.exit(1);
-});
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  runLoop().catch((e) => {
+    console.error("[scheduled-messages-worker] fatal:", e);
+    process.exit(1);
+  });
+}

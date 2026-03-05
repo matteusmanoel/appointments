@@ -50,9 +50,11 @@ Checklist e procedimentos para colocar o NavalhIA em produção e abrir vendas.
 
 ## 6. Deploy
 
-- **API**: `./scripts/aws/deploy-api.sh` (exige `ARTIFACT_BUCKET`, `DATABASE_URL`, `JWT_SECRET` no `.env`; opcional Stripe/SES).
-- **Static**: `./scripts/aws/deploy-static.sh` (usa ou cria o stack `navalhia-static-prod`; defina `VITE_API_URL` para o build).
+- **API**: `./scripts/aws/deploy-api.sh` (exige `ARTIFACT_BUCKET`, `DATABASE_URL`, `JWT_SECRET` no `.env`; opcional Stripe/SES, workers: `OPENAI_API_KEY`, `N8N_EVENTS_WEBHOOK_URL`, `N8N_EVENTS_SECRET`). Para staging: `STAGE=staging` (stack `navalhia-api-staging`).
+- **Static**: `./scripts/aws/deploy-static.sh` (usa ou cria o stack `navalhia-static-prod`; defina `VITE_API_URL` para o build). Para staging: `STAGE=staging` (stack `navalhia-static-staging`).
+- **Staging**: ver `docs/STAGING.md` (stacks separados, Stripe Test mode, domínios opcionais `staging.app.navalhia.com.br` / `staging.api.navalhia.com.br`).
 - **CI/CD**: push na `main` dispara o workflow em `.github/workflows/deploy.yml` (requer OIDC role e secrets configurados).
+- **Smoke E2E em produção**: `PLAYWRIGHT_BASE_URL=https://app.navalhia.com.br npx playwright test e2e/smoke.spec.ts` (não inicia servidor local; ver `e2e/README.md`).
 
 ---
 
@@ -81,6 +83,67 @@ Após aplicar em prod, confira que não há erros de schema em runtime (ex.: col
 
 ---
 
+## 6.2 Workers Lambda (EventBridge)
+
+O deploy da API (`deploy-api.sh`) sobe também as Lambdas dos workers, invocadas por EventBridge:
+
+- **navalhia-worker-ai-prod**: rate 1 minuto (fila `ai_jobs`).
+- **navalhia-worker-scheduled-prod**: rate 5 minutos (fila `scheduled_messages` + sweep diário).
+
+### Parâmetros opcionais no deploy
+
+No `.env` (ou parâmetros do stack) para os workers:
+
+| Parâmetro                                     | Uso                                    |
+| --------------------------------------------- | -------------------------------------- |
+| `OPENAI_API_KEY`                              | Worker AI (obrigatório para IA ativa). |
+| `N8N_EVENTS_WEBHOOK_URL`, `N8N_EVENTS_SECRET` | Envio de eventos para n8n (outbound).  |
+
+### Validação pós-deploy (CloudWatch)
+
+- **Log groups**: `/aws/lambda/navalhia-worker-ai-prod`, `/aws/lambda/navalhia-worker-scheduled-prod`.
+- No console AWS: **CloudWatch → Log groups** → abrir cada um e verificar **Log streams** recentes.
+- Confirmar que há invocações (EventBridge dispara a cada 1 min / 5 min) e que não há erros recorrentes (timeout, `OPENAI_API_KEY` ausente, falha de conexão com DB/Uazapi). Ver também `docs/WORKERS.md` e `docs/WORKERS_DEPLOY_ECONOMICO.md`.
+
+---
+
+## 6.3 Domínio customizado e API mappings (api.navalhia.com.br)
+
+Para que rotas como `POST /api/billing/checkout` funcionem em `https://api.navalhia.com.br`, o domínio deve ter **exatamente um** mapping **root** (sem `ApiMappingKey`) apontando para a API atual do stack. Mappings antigos ou com key (ex.: `api`) fazem o path chegar errado na Lambda e geram 404 em `/api/*`.
+
+- **Configurar/ajustar**: `./scripts/aws/setup-custom-domain.sh` (lista mappings, remove indesejados, garante um mapping root para o `API_ID` do stack).
+- **Diagnóstico**: `aws apigatewayv2 get-api-mappings --domain-name api.navalhia.com.br --region us-east-1` — conferir que existe um item com `ApiId` igual ao da stack e `ApiMappingKey` vazio.
+
+---
+
+## 6.4 Gate para produção (testes antes de promover)
+
+Só promover para produção quando os itens abaixo forem atendidos. Rodar **testes locais** e **E2E em staging** (quando disponível) antes de fazer deploy em prod.
+
+### Testes locais (antes de subir qualquer alteração)
+
+- [ ] **Backend**: `cd backend && npm ci && npx tsc` (sem erros). `npm test` (Vitest).
+- [ ] **Front**: `npm ci && npm run build` (sem erros). `npx playwright test e2e/smoke.spec.ts e2e/debug-prod.spec.ts` (com `CI=1` o Playwright sobe o preview automaticamente; ver `e2e/README.md`).
+- [ ] **Checkout route (opcional, exige API rodando)**: com a API em `http://localhost:3003`, `PLAYWRIGHT_BASE_URL=http://localhost:3002 npx playwright test e2e/checkout-route.spec.ts`.
+
+### E2E em staging
+
+Com staging deployado (ver `docs/STAGING.md`):
+
+- [ ] **Smoke**: `PLAYWRIGHT_BASE_URL=https://<staging-app-url> npx playwright test e2e/smoke.spec.ts`
+- [ ] **Checkout route**: `PLAYWRIGHT_BASE_URL=https://<staging-app-url> E2E_API_URL=https://<staging-api-url> npx playwright test e2e/checkout-route.spec.ts`
+- [ ] **Onboarding**: validar manualmente `/onboarding?session_id=...` (checkout com cartão 4242 em Test mode): auto-login, modal de troca de senha, tour após troca.
+
+### Checklist de gate (tudo ok antes de prod)
+
+- [ ] Landing e login renderizam sem erros de JS (smoke + debug-prod).
+- [ ] Checkout por plano mostra valor correto (Stripe Price IDs por plano).
+- [ ] Onboarding: auto-login funciona e obriga troca de senha; tour roda após troca.
+- [ ] Webhook provisiona barbearia e `billing_plan` correto (CloudWatch / logs da API).
+- [ ] SES envia e-mails para destinatários reais (Production access; ver seção SES no runbook).
+
+---
+
 ## 7. Checklist antes de abrir vendas
 
 - [ ] CORS restrito à URL do front (não usar `*`).
@@ -91,6 +154,112 @@ Após aplicar em prod, confira que não há erros de schema em runtime (ex.: col
 - [ ] API keys por estabelecimento e webhook de billing testados.
 - [ ] Docs públicas (OpenAPI/Redoc) publicadas em `/docs/` no CloudFront.
 - [ ] Fluxo de onboarding (checkout → webhook → email com senha temporária e API key) testado de ponta a ponta.
+
+---
+
+## 7.1 Checkout Stripe: preços por plano e teste em produção
+
+### Por que o checkout mostra sempre o mesmo valor (ex.: R$ 99)?
+
+O backend escolhe o **Price ID** do Stripe conforme o plano enviado no checkout (`essential`, `pro`, `premium`). Se só houver **um** Price ID configurado (por exemplo só `STRIPE_PRICE_ID` ou só `STRIPE_PRICE_ID_PRO`), todos os planos usam esse preço — por isso o valor exibido na Stripe fica igual (ex.: R$ 99) independente do plano selecionado.
+
+**Solução:** criar no Stripe **três preços recorrentes** (um por plano), por exemplo:
+
+- Essencial: R$ 97/mês
+- Profissional: R$ 197/mês
+- Premium: R$ 349/mês
+
+No deploy da API (`.env` ou parâmetros do stack), definir os três:
+
+- `STRIPE_PRICE_ID_ESSENTIAL=price_xxx`
+- `STRIPE_PRICE_ID_PRO=price_xxx`
+- `STRIPE_PRICE_ID_PREMIUM=price_xxx`
+
+O `deploy-api.sh` já envia esses parâmetros para o CloudFormation quando estão no `.env`. Após redeploy, o checkout passará a exibir o valor correto para cada plano. Para criar os preços via Stripe CLI e gerar o bloco para o `.env`, use `docs/STRIPE_CLI_PRICES.md` e `scripts/stripe-output-env.sh`. Ver também `docs/CHECKOUT_FORM.md`.
+
+### Simular primeira venda (sem pagamento real)
+
+Para validar o fluxo de “primeira venda” e primeiro acesso **sem cobrança real**:
+
+1. **Modo teste do Stripe**
+   - No Stripe Dashboard, use **Test mode** (toggle no canto superior).
+   - Configure no backend (ou stack) as chaves de **teste**: `STRIPE_SECRET_KEY=sk_test_...`, e no front `VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...`.
+   - Crie um webhook de teste apontando para `https://api.navalhia.com.br/api/billing/webhook` e use o **Signing secret** de teste no `STRIPE_WEBHOOK_SECRET`.
+
+2. **Cartão de teste**
+   - No checkout, use o cartão **4242 4242 4242 4242** (qualquer data futura, qualquer CVC). Nenhuma cobrança real é feita.
+
+3. **Fluxo esperado**
+   - Cliente preenche o formulário na landing e escolhe um plano → checkout (embutido ou redirect).
+   - Após “pagar” com 4242, o Stripe dispara `checkout.session.completed` → webhook da API cria barbershop, perfil admin, API key e grava senha temporária em `checkout_onboarding`.
+   - Se `FROM_EMAIL` estiver configurado, o e-mail de onboarding (senha temporária + API key) é enviado.
+   - Redirect para `/onboarding?session_id=...`: a página chama `GET /api/billing/session?session_id=...` e exibe e-mail e senha temporária (uma vez).
+   - Novo usuário faz login → é solicitada a troca de senha (primeiro acesso) → acessa o painel.
+
+Assim você valida: criação de conta, e-mail (opcional), onboarding, login e primeiro acesso como se fosse a primeira venda.
+
+### E-mail de onboarding não chega (SES)
+
+Se `FROM_EMAIL=no-reply@navalhia.com.br` está configurado mas o e-mail com credenciais não chega:
+
+1. **SES em sandbox**: em sandbox o SES só envia para **endereços verificados**. Adicione o e-mail de teste em **SES → Verified identities → Create identity (Email)** ou solicite **Production access** (ver seção **SES — Production access e entregabilidade** abaixo). Ver `docs/SES_NAVALHIA_DOMAIN.md`.
+2. **DKIM**: confira se os 3 registros CNAME de DKIM do domínio estão no DNS e se `get-email-identity` mostra `DkimAttributes.Status: SUCCESS`.
+3. **Logs**: a API registra `[SES] Onboarding email sent to ...` em sucesso ou `[SES] Failed to send onboarding email:` em falha. No CloudWatch, abra o log group da Lambda da API (`/aws/lambda/navalhia-api-prod`) e busque por `SES` ou `billing` para ver o erro.
+
+### SES — Production access e entregabilidade
+
+**Request Production access (passo a passo):**
+
+1. Console AWS → **Amazon SES** (região us-east-1) → **Account dashboard**.
+2. Clique em **Request production access**.
+3. Preencha: caso de uso (onboarding + recuperação de senha para clientes que assinam), volume estimado de e-mails/mês, como os destinatários optam (formulário de checkout), confirmação de que não envia spam. Aprovação costuma levar até 24–48 h.
+
+**Checklist DKIM/SPF/DMARC (entregabilidade):**
+
+- [ ] **DKIM**: os 3 registros CNAME do domínio no DNS (ver `docs/SES_NAVALHIA_DOMAIN.md`). Verificar: `aws sesv2 get-email-identity --email-identity navalhia.com.br --region us-east-1` → `DkimAttributes.Status: SUCCESS`.
+- [ ] **SPF** (opcional mas recomendado): registro TXT em `navalhia.com.br` com `v=spf1 include:amazonses.com ~all` (ou o valor sugerido pelo SES se usar outro provedor).
+- [ ] **DMARC** (opcional): TXT em `_dmarc.navalhia.com.br` com política (ex.: `v=DMARC1; p=none; rua=mailto:...`) para monitorar e depois endurecer.
+
+**Depuração de erros SES (CloudWatch):**
+
+- **MessageRejected**: destinatário inválido ou sandbox bloqueando; verificar Production access ou lista de verificados.
+- **AccountSendingPausedException**: conta pausada (abuse/complaint); abrir ticket no AWS Support.
+- **InvalidParameterValue**: `FROM_EMAIL` não verificado ou domínio sem DKIM concluído.
+- Logs da API: filtrar por `[SES]` ou `[billing]` no log group da Lambda.
+
+### Passo a passo para testar em produção
+
+Use este checklist para validar em **produção** (com moderação: preferir modo teste do Stripe e cartão 4242 para não gerar cobranças reais).
+
+1. **Infra e API**
+   - [ ] `curl -s https://api.navalhia.com.br/health` → `{"status":"ok"}`.
+   - [ ] `curl -s -X POST https://api.navalhia.com.br/api/billing/checkout -H "Content-Type: application/json" -d '{"barbershop_name":"Teste","phone":"11999999999","email":"teste@example.com"}' -i` → não retorna 404 (esperado 400 por validação ou 503 se Stripe não configurado).
+
+2. **Landing e planos**
+   - [ ] Abrir `https://app.navalhia.com.br` (ou domínio do front).
+   - [ ] Clicar em **Começar agora** / **Assinar** e abrir o modal de checkout.
+   - [ ] Selecionar cada plano (Essencial, Profissional, Premium) e, antes de pagar, **conferir no resumo da Stripe** se o valor exibido está correto (R$ 97, R$ 197, R$ 349). Se todos aparecerem iguais, revisar `STRIPE_PRICE_ID_ESSENTIAL`, `_PRO`, `_PREMIUM` no deploy.
+
+3. **Checkout e onboarding (simulação com cartão de teste)**
+   - [ ] Preencher formulário (nome da NavalhIA, telefone, e-mail) e escolher um plano.
+   - [ ] Ir para pagamento; no checkout da Stripe usar cartão **4242 4242 4242 4242** (test mode).
+   - [ ] Após conclusão, ser redirecionado para `/onboarding?session_id=...`.
+   - [ ] Na página de onboarding: ver e-mail e senha temporária (e mensagem sobre credenciais já enviadas por e-mail, se aplicável).
+   - [ ] Fazer login com esse e-mail e a senha temporária.
+   - [ ] Trocar a senha no primeiro acesso (se o fluxo exigir).
+
+4. **Funcionalidades principais no painel (após login)**
+   - [ ] **Dashboard**: resumo, gráficos, lista de agendamentos.
+   - [ ] **Agendamentos**: listar, filtrar, criar/editar agendamento.
+   - [ ] **Serviços**: listar, criar/editar serviço (nome, preço, duração).
+   - [ ] **Clientes**: listar, criar/editar cliente.
+   - [ ] **Configurações**: perfil, barbeiros, integrações; **Portal de cobrança** (botão que chama `POST /api/billing/portal` e abre o Stripe Customer Portal para gerenciar assinatura/números extras).
+   - [ ] **WhatsApp (IA)** (se configurado): status de conexão, mensagem de teste.
+
+5. **Smoke E2E (opcional)**
+   - [ ] `PLAYWRIGHT_BASE_URL=https://app.navalhia.com.br npx playwright test e2e/smoke.spec.ts` (ver `e2e/README.md`).
+
+Se algum passo falhar (ex.: checkout 404, valor errado, onboarding sem credenciais), conferir: API mappings do domínio (seção 6.3), variáveis Stripe no stack e webhook do Stripe apontando para a API com o secret correto.
 
 ---
 
@@ -115,13 +284,13 @@ Em desenvolvimento, use também `DATABASE_URL`, `JWT_SECRET` e, se quiser recebe
 Se ao conectar o WhatsApp o backend retornar erro `429` da Uazapi ("Maximum number of instances connected reached"), significa que ja existe uma instancia conectada na conta Uazapi (mesmo que voce tenha zerado o banco).
 
 Opcoes:
+
 - Desconectar/remover instancias antigas diretamente no painel da Uazapi e tentar novamente.
 - Vincular uma instancia ja existente (sem criar nova instancia):
   - Endpoint: `POST /api/integrations/whatsapp/uazapi/link-existing`
   - Body: `{ "token": "<token_da_instancia>", "instance_name": "opcional" }`
 
 Importante: para o webhook resolver corretamente o tenant quando a Uazapi enviar `instanceId`, a migration que adiciona `uazapi_instance_id` em `barbershop_whatsapp_connections` deve estar aplicada.
-
 
 ### Validação ponta a ponta (webhook → job → worker → WhatsApp)
 
@@ -141,6 +310,13 @@ Após conectar ou vincular uma instância Uazapi, valide que mensagens recebidas
 
 4. **Resultado esperado**
    - Resposta do bot no WhatsApp no mesmo chat. Se não chegar: verificar `[ai-worker] no Uazapi token` (status da conexão) ou erros de envio nos logs.
+
+### Agente de IA: base de conhecimento e versionamento (publish/rollback)
+
+- **Base de conhecimento (Premium):** na aba **Integrações → WhatsApp (IA)** o usuário pode configurar documentos para RAG (PDF, DOCX, TXT). O upload gera jobs em `barbershop_ai_knowledge_jobs`; o **worker knowledge** (Lambda ou processo separado) processa e grava chunks em `barbershop_ai_knowledge_chunks`. O ai-worker usa esses chunks ao montar o contexto da conversa. Ver `docs/WORKERS.md` (seção Worker Knowledge) e `docs/WHATSAPP_AGENTE_CONFIG.md`.
+- **Publish/versionamento:** o stepper permite **Publicar** e **Reverter** a configuração do agente (identidade, max tokens, typing simulation). As versões ficam em `barbershop_ai_agent_versions`; a ativa em uso é a publicada. Em caso de problema, o operador pode reverter pela UI ou conferir logs do ai-worker e da API.
+
+---
 
 ### Como testar em desenvolvimento
 
@@ -197,12 +373,12 @@ Quando o front (Vite) e a API rodam em portas diferentes, as requisições do pa
 
 ### Causas de falha e o que fazer
 
-| Sintoma | Causa provável | Solução |
-|--------|-----------------|--------|
-| **404** em algum endpoint (ex.: `Cannot POST /api/barbershops`) | Backend no container está com **código antigo** (rota nova ainda não existe na imagem em execução). | Reconstruir e **recriar** o container da API: `docker compose up -d --build api`. Só `docker compose build` não atualiza o container em execução. |
-| **CORS** no console do navegador (bloqueio de origem) | A origem do front (ex.: `http://localhost:3002`) não está em `CORS_ORIGIN` do backend. | No `.env` do backend (ou do Docker), defina `CORS_ORIGIN=http://localhost:3002,http://localhost:8080,...` incluindo a URL em que o Vite está rodando. |
-| **Rede / connection refused** | Backend não está rodando ou porta errada. | Subir a API: `docker compose up -d api` (ou rodar o backend localmente na porta usada em `VITE_API_URL`). Conferir: `curl -s http://localhost:3003/health`. |
-| **URL errada** (404 em tudo ou em outro host) | `VITE_API_URL` apontando para outro lugar (typo, porta ou host errado). | Ajustar no `.env`: ex. `VITE_API_URL=http://localhost:3003`. Reiniciar o dev server do Vite (`npm run dev`) para recarregar variáveis. |
+| Sintoma                                                         | Causa provável                                                                                      | Solução                                                                                                                                                     |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **404** em algum endpoint (ex.: `Cannot POST /api/barbershops`) | Backend no container está com **código antigo** (rota nova ainda não existe na imagem em execução). | Reconstruir e **recriar** o container da API: `docker compose up -d --build api`. Só `docker compose build` não atualiza o container em execução.           |
+| **CORS** no console do navegador (bloqueio de origem)           | A origem do front (ex.: `http://localhost:3002`) não está em `CORS_ORIGIN` do backend.              | No `.env` do backend (ou do Docker), defina `CORS_ORIGIN=http://localhost:3002,http://localhost:8080,...` incluindo a URL em que o Vite está rodando.       |
+| **Rede / connection refused**                                   | Backend não está rodando ou porta errada.                                                           | Subir a API: `docker compose up -d api` (ou rodar o backend localmente na porta usada em `VITE_API_URL`). Conferir: `curl -s http://localhost:3003/health`. |
+| **URL errada** (404 em tudo ou em outro host)                   | `VITE_API_URL` apontando para outro lugar (typo, porta ou host errado).                             | Ajustar no `.env`: ex. `VITE_API_URL=http://localhost:3003`. Reiniciar o dev server do Vite (`npm run dev`) para recarregar variáveis.                      |
 
 ### Checklist rápido (local)
 

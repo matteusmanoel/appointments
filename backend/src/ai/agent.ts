@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import { pool } from "../db.js";
 import * as aiTools from "./tools.js";
 import { buildSystemPrompt, normalizeProfile } from "./prompt-builder.js";
+import { retrieveKnowledge, buildKnowledgeBlock } from "./rag.js";
+import { setConversationPaused } from "./runtime-pause.js";
 
 const OPENING_MESSAGE = "Salve! 😄 Bora deixar na régua? Quer ver os serviços ou já quer agendar? ✂️";
 
@@ -301,6 +303,20 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "select_branch",
+      description: "Quando há várias filiais e o cliente escolheu uma, registra a filial para esta conversa. Chame com o barbershop_id da filial escolhida (use a lista de filiais informada no contexto).",
+      parameters: {
+        type: "object",
+        properties: {
+          barbershop_id: { type: "string", description: "UUID da filial escolhida pelo cliente" },
+        },
+        required: ["barbershop_id"],
+      },
+    },
+  },
 ];
 
 const MAX_MEMORY_MESSAGES = 30;
@@ -315,6 +331,27 @@ export type RunAgentOptions = {
   /** When set, use this profile/instructions instead of DB (e.g. for sandbox simulation). */
   sandboxDraft?: { agent_profile: unknown; additional_instructions?: string | null };
 };
+
+let selectedBarbershopColumnSupported: boolean | null = null;
+
+async function supportsSelectedBarbershopColumn(): Promise<boolean> {
+  if (selectedBarbershopColumnSupported != null) return selectedBarbershopColumnSupported;
+  try {
+    const r = await pool.query<{ ok: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'ai_conversation_runtime'
+           AND column_name = 'selected_barbershop_id'
+       ) AS ok`
+    );
+    selectedBarbershopColumnSupported = r.rows[0]?.ok === true;
+  } catch {
+    selectedBarbershopColumnSupported = false;
+  }
+  return selectedBarbershopColumnSupported;
+}
 
 export async function runAgent(
   barbershopId: string,
@@ -332,9 +369,10 @@ export async function runAgent(
     system_prompt_override: string | null;
     agent_profile: unknown;
     additional_instructions: string | null;
+    max_output_tokens: number | null;
   }>(
     `SELECT s.enabled, s.timezone, s.model, s.model_premium, s.temperature, s.system_prompt_override,
-            s.agent_profile, s.additional_instructions
+            s.agent_profile, s.additional_instructions, s.max_output_tokens
      FROM public.barbershop_ai_settings s WHERE s.barbershop_id = $1`,
     [barbershopId]
   );
@@ -344,6 +382,46 @@ export async function runAgent(
     [barbershopId]
   );
   const billingPlan = planRow.rows[0]?.billing_plan ?? "pro";
+
+  // Account-wide number mode: resolve selected_barbershop_id and effective barbershop for tools
+  type BranchInfo = { id: string; name: string };
+  let effectiveBarbershopId = barbershopId;
+  let accountBranches: BranchInfo[] = [];
+  let numberMode: "account_wide" | "per_branch" = "per_branch";
+  try {
+    let selectedId: string | null = null;
+    if (await supportsSelectedBarbershopColumn()) {
+      const runtimeRow = await pool.query<{ selected_barbershop_id: string | null }>(
+        `SELECT selected_barbershop_id FROM public.ai_conversation_runtime WHERE conversation_id = $1`,
+        [conversationId]
+      );
+      selectedId = runtimeRow.rows[0]?.selected_barbershop_id ?? null;
+    }
+    const accountRow = await pool.query<{ account_id: string | null }>(
+      "SELECT account_id FROM public.barbershops WHERE id = $1",
+      [barbershopId]
+    );
+    const accountId = accountRow.rows[0]?.account_id ?? null;
+    if (accountId) {
+      const accRow = await pool.query<{ whatsapp_number_mode: string }>(
+        "SELECT whatsapp_number_mode FROM public.accounts WHERE id = $1",
+        [accountId]
+      );
+      numberMode = accRow.rows[0]?.whatsapp_number_mode === "account_wide" ? "account_wide" : "per_branch";
+      const branchesRow = await pool.query<{ id: string; name: string }>(
+        "SELECT id, name FROM public.barbershops WHERE account_id = $1 ORDER BY name",
+        [accountId]
+      );
+      accountBranches = branchesRow.rows;
+      const allowedIds = new Set(accountBranches.map((b) => b.id));
+      if (selectedId && allowedIds.has(selectedId)) {
+        effectiveBarbershopId = selectedId;
+      }
+    }
+  } catch {
+    // Tables/columns may not exist
+  }
+
   const msgCountRow = await pool.query<{ cnt: string }>(
     "SELECT count(*)::text AS cnt FROM public.ai_messages WHERE conversation_id = $1",
     [conversationId]
@@ -419,7 +497,7 @@ export async function runAgent(
   // Always resolve client by the incoming phone so we never ask for it.
   let clientName = "";
   try {
-    const c = (await aiTools.upsertClient(barbershopId, clientPhone)) as unknown;
+    const c = (await aiTools.upsertClient(effectiveBarbershopId, clientPhone)) as unknown;
     if (c && typeof c === "object") {
       const maybeName = (c as Record<string, unknown>).name;
       if (typeof maybeName === "string" && maybeName.trim() && maybeName.trim().toLowerCase() !== "cliente") {
@@ -441,6 +519,13 @@ export async function runAgent(
     .replace(/\{\{CLIENT_NAME\}\}/g, clientName || "")
     .replace(/\{\{BARBERSHOP_NAME\}\}/g, barbershopName);
 
+  if (numberMode === "account_wide" && accountBranches.length > 1) {
+    const branchList = accountBranches.map((b) => `${b.name} (id: ${b.id})`).join("; ");
+    systemPrompt =
+      systemPrompt +
+      `\n\nFILIAIS: Esta conta tem várias filiais. Quando o cliente ainda não tiver escolhido a filial, pergunte: "Qual filial você prefere?" e liste: ${branchList}. Quando o cliente escolher, chame a ferramenta select_branch com o barbershop_id da filial escolhida. Depois use as outras ferramentas normalmente para a filial selecionada.`;
+  }
+
   const messagesRow = await pool.query<{
     role: string;
     content: string | null;
@@ -455,6 +540,52 @@ export async function runAgent(
   const lastN = history.slice(-MAX_MEMORY_MESSAGES);
   const lastUserText =
     [...lastN].reverse().find((m) => m.role === "user")?.content?.toLowerCase().trim() ?? "";
+
+  // Handoff por keyword: se cliente pedir humano, pausar conversa e enviar handoff_message
+  try {
+    const handoffRow = await pool.query<{
+      on_user_request_enabled: boolean;
+      user_request_keywords: string[] | null;
+      handoff_message: string | null;
+    }>(
+      `SELECT on_user_request_enabled, user_request_keywords, handoff_message
+       FROM public.barbershop_ai_handoff_settings WHERE barbershop_id = $1`,
+      [barbershopId]
+    );
+    const handoff = handoffRow.rows[0];
+    if (
+      handoff?.on_user_request_enabled &&
+      Array.isArray(handoff.user_request_keywords) &&
+      handoff.user_request_keywords.length > 0
+    ) {
+      const normalized = lastUserText.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      const match = handoff.user_request_keywords.some((k) => {
+        const kw = String(k).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        return kw && normalized.includes(kw);
+      });
+      if (match) {
+        await setConversationPaused(conversationId, {
+          pausedBy: "rule",
+          reason: "Cliente pediu atendimento humano (keyword)",
+        });
+        await pool.query(
+          `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
+           VALUES ($1, $2, 'paused', 'keyword', $3)`,
+          [barbershopId, conversationId, "Cliente pediu atendimento humano (keyword)"]
+        );
+        const reply =
+          (handoff.handoff_message && handoff.handoff_message.trim()) ||
+          "Um atendente vai te atender em instantes. Aguarde um momento.";
+        await pool.query(
+          `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+          [conversationId, reply]
+        );
+        return { reply, state: "handoff_requested" };
+      }
+    }
+  } catch {
+    // Table may not exist or handoff disabled
+  }
 
   const desired = (() => {
     let desiredDate: string | undefined;
@@ -569,7 +700,7 @@ export async function runAgent(
   if (/(voc[eê]s\s+t[eê]m|voces\s+tem|fazem|faz)\b/i.test(lastUserText)) {
     const asked = extractAskedService(lastUserText);
     if (asked) {
-      const servicesUnknown = await aiTools.listServices(barbershopId);
+      const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
       const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
       const askedN = normalizeLoose(asked);
       const has = services.some((s) => normalizeLoose(String(s?.name ?? "")).includes(askedN) || askedN.includes(normalizeLoose(String(s?.name ?? ""))));
@@ -609,7 +740,7 @@ export async function runAgent(
   })();
 
   if ((userSaidNoPreference || (userIsAffirmativeOnly && assistantAskedPreference)) && desired.desiredDate && desired.desiredTime) {
-    const servicesUnknown = await aiTools.listServices(barbershopId);
+    const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
     const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
     const historyUserText = normalizeLoose(
       lastN
@@ -623,7 +754,7 @@ export async function runAgent(
     });
 
     if (pickedService) {
-      const availability = (await aiTools.checkAvailability(barbershopId, {
+      const availability = (await aiTools.checkAvailability(effectiveBarbershopId, {
         date: desired.desiredDate,
         time: desired.desiredTime,
         service_id: String(pickedService.id),
@@ -653,7 +784,7 @@ export async function runAgent(
     /(hor[aá]rio|tem hor[aá]rio|dispon[ií]vel|vaga)/i.test(lastUserText) &&
     !desired.desiredTime
   ) {
-    const servicesUnknown = await aiTools.listServices(barbershopId);
+    const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
     const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
     const inferred = inferServiceKeyword(lastUserText);
     const findBy = (needle: string) => services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(needle));
@@ -684,7 +815,7 @@ export async function runAgent(
       return { reply };
     }
 
-    const slots = (await aiTools.getNextSlots(barbershopId, {
+    const slots = (await aiTools.getNextSlots(effectiveBarbershopId, {
       date: dateOnlyStr,
       service_id: String(picked.id),
       after_time: currentTimeHHmm,
@@ -718,7 +849,7 @@ export async function runAgent(
     /(primeiro|1o|primeira)\s+hor[aá]rio/i.test(lastUserText) &&
     !desired.desiredTime
   ) {
-    const servicesUnknown = await aiTools.listServices(barbershopId);
+    const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
     const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
     const inferred = inferServiceKeyword(lastUserText);
     const findBy = (needle: string) => services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(needle));
@@ -748,7 +879,7 @@ export async function runAgent(
       return { reply };
     }
 
-    const slots = (await aiTools.getNextSlots(barbershopId, {
+    const slots = (await aiTools.getNextSlots(effectiveBarbershopId, {
       date: tomorrowOnlyStr,
       service_id: String(picked.id),
       limit: 1,
@@ -798,6 +929,19 @@ export async function runAgent(
     // mostly letters/spaces (allow accents)
     return /^[A-Za-zÀ-ÖØ-öø-ÿ' ]+$/.test(t) && t.split(" ").filter(Boolean).length <= 4;
   })();
+
+  // --- RAG: inject knowledge chunks when relevant ---
+  try {
+    const ragChunks = await retrieveKnowledge(barbershopId, lastUserText, openai);
+    if (ragChunks?.length) {
+      const knowledgeBlock = buildKnowledgeBlock(ragChunks);
+      if (knowledgeBlock) {
+        systemPrompt = systemPrompt + "\n\n" + knowledgeBlock;
+      }
+    }
+  } catch (e) {
+    console.warn("[runAgent] RAG retrieval failed:", e instanceof Error ? e.message : e);
+  }
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
@@ -850,6 +994,7 @@ export async function runAgent(
   const loopMessages = [...messages];
   const maxToolRounds = 10;
   let toolErrorCount = 0;
+  let currentBarbershopId = effectiveBarbershopId;
 
   async function persistAssistant(content: string | null): Promise<void> {
     await pool.query(
@@ -865,9 +1010,11 @@ export async function runAgent(
   }
 
   for (let round = 0; round < maxToolRounds; round++) {
+    const maxTokens = settings?.max_output_tokens ?? 350;
     const completion = await openai.chat.completions.create({
       model,
       temperature,
+      max_tokens: maxTokens,
       messages: loopMessages,
       tools: OPENAI_TOOLS,
       tool_choice: "auto",
@@ -903,11 +1050,27 @@ export async function runAgent(
           }
         })();
         const callToolOnce = async (): Promise<unknown> => {
-          if (name === "list_services") return aiTools.listServices(barbershopId);
-          if (name === "list_barbers") return aiTools.listBarbers(barbershopId);
+          if (name === "select_branch") {
+            const bid = args.barbershop_id as string;
+            if (!bid || !accountBranches.some((b) => b.id === bid)) {
+              return { error: "barbershop_id inválido ou não pertence a esta conta" };
+            }
+            if (await supportsSelectedBarbershopColumn()) {
+              await pool.query(
+                `INSERT INTO public.ai_conversation_runtime (conversation_id, selected_barbershop_id, updated_at)
+                 VALUES ($1, $2, now())
+                 ON CONFLICT (conversation_id) DO UPDATE SET selected_barbershop_id = $2, updated_at = now()`,
+                [conversationId, bid]
+              );
+            }
+            currentBarbershopId = bid;
+            return { ok: true, message: "Filial selecionada. Use as outras ferramentas para esta filial." };
+          }
+          if (name === "list_services") return aiTools.listServices(currentBarbershopId);
+          if (name === "list_barbers") return aiTools.listBarbers(currentBarbershopId);
           if (name === "list_appointments")
             return aiTools.listAppointments(
-              barbershopId,
+              currentBarbershopId,
               (() => {
                 const raw = (args.date as string) ?? "";
                 const d = raw || desired.desiredDate || "";
@@ -924,7 +1087,7 @@ export async function runAgent(
             const date = desired.desiredDate || dRaw;
             const time = desired.desiredTime || tRaw;
             const isToday = date === dateOnlyStr;
-            return aiTools.checkAvailability(barbershopId, {
+            return aiTools.checkAvailability(currentBarbershopId, {
               date,
               time,
               after_time: isToday ? ((args.after_time as string) || currentTimeHHmm) : undefined,
@@ -937,7 +1100,7 @@ export async function runAgent(
             const dRaw = (args.date as string) ?? "";
             const date = desired.desiredDate || dRaw;
             const isToday = date === dateOnlyStr;
-            return aiTools.getNextSlots(barbershopId, {
+            return aiTools.getNextSlots(currentBarbershopId, {
               date,
               service_id: args.service_id as string | undefined,
               service_ids: args.service_ids as string[] | undefined,
@@ -948,7 +1111,7 @@ export async function runAgent(
           }
           if (name === "upsert_client")
             return aiTools.upsertClient(
-              barbershopId,
+              currentBarbershopId,
               (args.phone as string) ?? "",
               args.name as string | undefined,
               args.notes as string | undefined
@@ -977,24 +1140,24 @@ export async function runAgent(
               notes: args.notes as string | undefined,
             };
             if (typeof args.client_id === "string" && args.client_id) payload.client_id = args.client_id;
-            const r = await aiTools.createAppointment(barbershopId, payload);
+            const r = await aiTools.createAppointment(currentBarbershopId, payload);
             state = "appointment_created";
             return r;
           }
           if (name === "list_client_upcoming_appointments")
             return aiTools.listClientUpcomingAppointments(
-              barbershopId,
+              currentBarbershopId,
               ((args.client_phone as string) ?? clientPhone) || ""
             );
           if (name === "cancel_appointment")
             return aiTools.cancelAppointmentByAgent(
-              barbershopId,
+              currentBarbershopId,
               (args.appointment_id as string) ?? "",
               ((args.client_phone as string) ?? clientPhone) || ""
             );
           if (name === "reschedule_appointment")
             return aiTools.rescheduleAppointmentByAgent(
-              barbershopId,
+              currentBarbershopId,
               (args.appointment_id as string) ?? "",
               ((args.client_phone as string) ?? clientPhone) || "",
               {

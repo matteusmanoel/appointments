@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, type ReactNode } from "react";
+import { useSearchParams, Link } from "react-router-dom";
 import {
   ChevronDown,
   ChevronRight,
@@ -257,6 +258,24 @@ function OverviewContent() {
         API para gerenciamento no NavalhIA: agendamentos, clientes, barbeiros, serviços,
         relatórios, fidelidade e integrações (WhatsApp, ferramentas externas).
       </p>
+
+      <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 flex flex-col sm:flex-row gap-4 items-start">
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold text-foreground mb-1">Quem é você?</h2>
+          <p className="text-sm text-muted-foreground">
+            Se você só quer configurar o WhatsApp passo a passo no painel, use o tutorial. Se você vai integrar com código ou testar endpoints, continue aqui.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Link
+            to="/app/ajuda/whatsapp"
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            Sou usuário — Tutorial WhatsApp
+          </Link>
+          <span className="text-sm text-muted-foreground self-center">ou navegue pelos endpoints abaixo</span>
+        </div>
+      </div>
 
       <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4">
         <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-2">
@@ -596,13 +615,29 @@ function TryItPanel({
 }
 
 export default function Docs() {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const idFromUrl = searchParams.get("id");
+  const [selectedId, setSelectedId] = useState<string | null>(() => idFromUrl || null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(
     () => new Set(docsGroups.map((g) => g.name)),
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [response, setResponse] = useState<{ status: number; body: string } | null>(null);
   const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (idFromUrl && findEndpointById(idFromUrl)) {
+      setSelectedId(idFromUrl);
+      const group = docsGroups.find((g) => g.endpoints.some((ep) => ep.id === idFromUrl));
+      if (group) setOpenGroups((prev) => new Set(prev).add(group.name));
+    }
+  }, [idFromUrl]);
+
+  const handleSelectId = (id: string | null) => {
+    setSelectedId(id);
+    if (id) setSearchParams({ id }, { replace: true });
+    else setSearchParams({}, { replace: true });
+  };
 
   const endpoint = useMemo(
     () => (selectedId ? findEndpointById(selectedId) : undefined),
@@ -644,7 +679,7 @@ export default function Docs() {
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           selectedId={selectedId}
-          onSelect={setSelectedId}
+          onSelect={handleSelectId}
           openGroups={openGroups}
           setOpenGroups={setOpenGroups}
           searchQuery={searchQuery}

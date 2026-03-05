@@ -89,7 +89,7 @@ describe("Dashboard status block", () => {
     });
     const link = screen.getByRole("link", { name: /Conectar WhatsApp/i });
     expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute("href", "/configuracoes?tab=whatsapp");
+    expect(link).toHaveAttribute("href", "/app/integracoes?step=connect");
   });
 
   it("shows Conectado when WhatsApp is connected", async () => {

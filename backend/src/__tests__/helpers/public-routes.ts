@@ -139,6 +139,13 @@ export async function createPublicRoutesFixtures(opts: {
 export async function deletePublicRoutesFixtures(barbershopIds: string[]): Promise<void> {
   if (barbershopIds.length === 0) return;
   await pool.query(
+    `DELETE FROM public.appointment_services WHERE appointment_id IN (SELECT id FROM public.appointments WHERE barbershop_id = ANY($1::uuid[]))`,
+    [barbershopIds]
+  );
+  await pool.query(`DELETE FROM public.appointments WHERE barbershop_id = ANY($1::uuid[])`, [barbershopIds]);
+  await pool.query(`DELETE FROM public.scheduled_messages WHERE barbershop_id = ANY($1::uuid[])`, [barbershopIds]);
+  await pool.query(`DELETE FROM public.services WHERE barbershop_id = ANY($1::uuid[])`, [barbershopIds]);
+  await pool.query(
     `DELETE FROM public.barbershops WHERE id = ANY($1::uuid[]) AND slug LIKE $2`,
     [barbershopIds, `${SLUG_PREFIX}%`]
   );

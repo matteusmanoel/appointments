@@ -14,6 +14,7 @@ import {
   EntityFormDialog,
 } from "@/components/shared";
 import { toastError, withToast } from "@/lib/toast-helpers";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Form,
   FormControl,
@@ -87,6 +88,7 @@ const barberSchema = z.object({
   schedule: z.record(
     z.union([z.object({ start: z.string(), end: z.string() }), z.null()]),
   ),
+  barbershop_id: z.string().uuid().optional(),
 });
 
 type BarberFormValues = z.infer<typeof barberSchema>;
@@ -103,6 +105,7 @@ type Barber = {
 
 export default function Barbeiros() {
   const queryClient = useQueryClient();
+  const { profile, selectedScope } = useAuth();
   const [formOpen, setFormOpen] = useState(false);
   const [editingBarber, setEditingBarber] = useState<Barber | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Barber | null>(null);
@@ -125,6 +128,9 @@ export default function Barbeiros() {
         status: body.status,
         commission_percentage: body.commission_percentage,
         schedule: body.schedule,
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["barbers"] });
@@ -159,6 +165,7 @@ export default function Barbeiros() {
       status: "active",
       commission_percentage: 40,
       schedule: { ...defaultSchedule },
+      barbershop_id: "",
     },
   });
 
@@ -171,6 +178,7 @@ export default function Barbeiros() {
       status: "active",
       commission_percentage: 40,
       schedule: { ...defaultSchedule },
+      barbershop_id: "",
     });
     setFormOpen(true);
   };
@@ -231,6 +239,10 @@ export default function Barbeiros() {
         },
       );
     } else {
+      if (selectedScope === "__all__" && !values.barbershop_id) {
+        form.setError("barbershop_id", { message: "Selecione a filial." });
+        return;
+      }
       await withToast(createMutation.mutateAsync(values), {
         successMessage: "Barbeiro criado.",
         errorMessage: "Erro ao criar barbeiro.",
@@ -375,6 +387,12 @@ export default function Barbeiros() {
             icon={<Scissors className="h-12 w-12" strokeWidth={1.5} />}
             title="Nenhum barbeiro cadastrado"
             description="Cadastre os barbeiros da equipe para organizar a agenda."
+            action={
+              <Button onClick={openCreate} className="mt-2">
+                <Plus className="h-4 w-4 mr-2" />
+                Cadastrar barbeiro
+              </Button>
+            }
           />
         )}
       </div>
@@ -405,6 +423,32 @@ export default function Barbeiros() {
       >
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && !editingBarber && (
+              <FormField
+                control={form.control}
+                name="barbershop_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Filial <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <Select value={field.value || ""} onValueChange={field.onChange} required>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a filial" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {profile.barbershops.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="name"

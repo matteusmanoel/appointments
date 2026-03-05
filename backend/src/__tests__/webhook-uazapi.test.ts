@@ -33,6 +33,67 @@ describe("parseUazapiInbound", () => {
     };
     const r = parseUazapiInbound(body);
     expect(r.skip).toBe(true);
+    expect(r.handoffCandidate).toBe(true);
+  });
+
+  it("when fromMe true and to/remoteJid present returns fromPhone for conversation pause", () => {
+    const body = {
+      event: "message",
+      instance: "inst1",
+      data: {
+        message: {
+          id: "msg1",
+          from: "5511000000000@c.us",
+          to: "5511999999999@s.whatsapp.net",
+          type: "chat",
+          body: "Resposta do atendente",
+          fromMe: true,
+        },
+      },
+    };
+    const r = parseUazapiInbound(body);
+    expect(r.skip).toBe(true);
+    expect(r.fromMe).toBe(true);
+    expect(r.fromPhone).toBe("5511999999999");
+    expect(r.handoffCandidate).toBe(true);
+  });
+
+  it("when fromMe true and chat.id present uses it as fromPhone", () => {
+    const body = {
+      instance: "inst1",
+      chat: { id: "5511888877777@s.whatsapp.net" },
+      data: {
+        message: {
+          id: "m1",
+          fromMe: true,
+          type: "chat",
+          body: "ok",
+        },
+      },
+    };
+    const r = parseUazapiInbound(body);
+    expect(r.skip).toBe(true);
+    expect(r.fromMe).toBe(true);
+    expect(r.fromPhone).toBe("5511888877777");
+    expect(r.handoffCandidate).toBe(true);
+  });
+
+  it("fromMe sem texto não vira handoffCandidate", () => {
+    const body = {
+      instance: "inst1",
+      chat: { id: "5511888877777@s.whatsapp.net" },
+      data: {
+        message: {
+          id: "m1",
+          fromMe: true,
+          type: "chat",
+        },
+      },
+    };
+    const r = parseUazapiInbound(body);
+    expect(r.skip).toBe(true);
+    expect(r.fromMe).toBe(true);
+    expect(r.handoffCandidate).toBe(false);
   });
 
   it("skips when type is not chat", () => {

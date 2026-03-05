@@ -4,27 +4,32 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthError } from "@/lib/api";
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, RouterProvider, Outlet, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { UpgradeGate } from "@/components/UpgradeGate";
 import { MainLayout } from "@/components/layout/MainLayout";
+import { LoadingState } from "@/components/LoadingState";
 import Landing from "./pages/Landing";
-import Dashboard from "./pages/Dashboard";
-import Agendamentos from "./pages/Agendamentos";
-import Barbeiros from "./pages/Barbeiros";
-import Servicos from "./pages/Servicos";
-import Clientes from "./pages/Clientes";
-import Fidelidade from "./pages/Fidelidade";
-import Configuracoes from "./pages/Configuracoes";
-import Integracoes from "./pages/Integracoes";
-import Relatorios from "./pages/Relatorios";
-import Docs from "./pages/Docs";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import PublicBooking from "./pages/PublicBooking";
 import RescheduleOrCancel from "./pages/RescheduleOrCancel";
 import NotFound from "./pages/NotFound";
+
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Agendamentos = lazy(() => import("./pages/Agendamentos"));
+const Barbeiros = lazy(() => import("./pages/Barbeiros"));
+const Servicos = lazy(() => import("./pages/Servicos"));
+const Clientes = lazy(() => import("./pages/Clientes"));
+const Fidelidade = lazy(() => import("./pages/Fidelidade"));
+const Configuracoes = lazy(() => import("./pages/Configuracoes"));
+const Integracoes = lazy(() => import("./pages/Integracoes"));
+const Relatorios = lazy(() => import("./pages/Relatorios"));
+const Docs = lazy(() => import("./pages/Docs"));
+const AjudaWhatsApp = lazy(() => import("./pages/AjudaWhatsApp"));
+const WhatsAppInterno = lazy(() => import("./pages/WhatsAppInterno"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,7 +54,7 @@ const router = createBrowserRouter(
     { path: "/", element: <Landing /> },
     { path: "/login", element: <Login /> },
     { path: "/onboarding", element: <Onboarding /> },
-    { path: "/docs", element: <Docs /> },
+    { path: "/docs", element: <Suspense fallback={<LoadingState fullPage />}><Docs /></Suspense> },
     { path: "/b/:slug", element: <PublicBooking /> },
     { path: "/reagendar/:token", element: <RescheduleOrCancel /> },
     { path: "/cancelar/:token", element: <RescheduleOrCancel /> },
@@ -57,16 +62,18 @@ const router = createBrowserRouter(
       path: "/app",
       element: <AppLayout />,
       children: [
-        { index: true, element: <Dashboard /> },
+        { index: true, element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
         { path: "link", element: <Navigate to="/app/configuracoes?open=booking" replace /> },
-        { path: "agendamentos", element: <Agendamentos /> },
-        { path: "barbeiros", element: <Barbeiros /> },
-        { path: "servicos", element: <Servicos /> },
-        { path: "clientes", element: <Clientes /> },
-        { path: "fidelidade", element: <UpgradeGate featureName="Fidelidade"><Fidelidade /></UpgradeGate> },
-        { path: "integracoes", element: <UpgradeGate featureName="Integrações"><Integracoes /></UpgradeGate> },
-        { path: "configuracoes", element: <Configuracoes /> },
-        { path: "relatorios", element: <Relatorios /> },
+        { path: "agendamentos", element: <Suspense fallback={<LoadingState fullPage />}><Agendamentos /></Suspense> },
+        { path: "barbeiros", element: <Suspense fallback={<LoadingState fullPage />}><Barbeiros /></Suspense> },
+        { path: "servicos", element: <Suspense fallback={<LoadingState fullPage />}><Servicos /></Suspense> },
+        { path: "clientes", element: <Suspense fallback={<LoadingState fullPage />}><Clientes /></Suspense> },
+        { path: "fidelidade", element: <Suspense fallback={<LoadingState fullPage />}><UpgradeGate featureName="Fidelidade"><Fidelidade /></UpgradeGate></Suspense> },
+        { path: "integracoes", element: <Suspense fallback={<LoadingState fullPage />}><Integracoes /></Suspense> },
+        { path: "whatsapp-interno", element: <Suspense fallback={<LoadingState fullPage />}><WhatsAppInterno /></Suspense> },
+        { path: "configuracoes", element: <Suspense fallback={<LoadingState fullPage />}><Configuracoes /></Suspense> },
+        { path: "relatorios", element: <Suspense fallback={<LoadingState fullPage />}><Relatorios /></Suspense> },
+        { path: "ajuda/whatsapp", element: <Suspense fallback={<LoadingState fullPage />}><AjudaWhatsApp /></Suspense> },
       ],
     },
     { path: "*", element: <NotFound /> },

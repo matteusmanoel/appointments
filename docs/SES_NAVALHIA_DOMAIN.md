@@ -46,8 +46,13 @@ Redeploy da API para aplicar: `./scripts/aws/deploy-api.sh`.
 
 Para enviar para qualquer e-mail e aumentar limites:
 
-1. Console AWS → **Amazon SES** → **Account dashboard**.
+1. Console AWS → **Amazon SES** (us-east-1) → **Account dashboard**.
 2. **Request production access**.
-3. Preencha o formulário (caso de uso, volume estimado, etc.). A aprovação costuma levar até 24–48 h.
+3. Preencha: caso de uso (onboarding e recuperação de senha), volume estimado, como os destinatários optam (checkout). Aprovação costuma levar até 24–48 h.
 
 Enquanto estiver em sandbox, adicione e verifique no SES os endereços de e-mail de teste (SES → **Verified identities** → **Create identity** → tipo Email).
+
+## SPF e DMARC (opcional, melhora entregabilidade)
+
+- **SPF**: adicione um registro TXT no domínio raiz `navalhia.com.br` com valor sugerido pelo SES (ex.: `v=spf1 include:amazonses.com ~all`) para autorizar o SES a enviar em nome do domínio.
+- **DMARC**: registro TXT em `_dmarc.navalhia.com.br` (ex.: `v=DMARC1; p=none; rua=mailto:admin@navalhia.com.br`) para monitorar relatórios e depois endurecer política (`p=quarantine` ou `p=reject`).

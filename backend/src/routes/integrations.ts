@@ -310,3 +310,255 @@ integrationsRouter.post("/automations/followup/dispatch", async (req: Request, r
     client.release();
   }
 });
+
+// --- Message templates (manual/campaign) ---
+integrationsRouter.get("/automations/templates", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  try {
+    const r = await pool.query<{ id: string; name: string; body: string; created_at: string }>(
+      `SELECT id, name, body, created_at FROM public.message_templates WHERE barbershop_id = $1 ORDER BY name`,
+      [barbershopId]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.json([]);
+      return;
+    }
+    throw e;
+  }
+});
+
+const createTemplateBody = z.object({ name: z.string().min(1).max(200), body: z.string().min(1).max(4096) });
+integrationsRouter.post("/automations/templates", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const parsed = createTemplateBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const r = await pool.query<{ id: string; name: string; body: string; created_at: string }>(
+      `INSERT INTO public.message_templates (barbershop_id, name, body) VALUES ($1, $2, $3)
+       RETURNING id, name, body, created_at`,
+      [barbershopId, parsed.data.name, parsed.data.body]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(503).json({ error: "Tabela message_templates não existe. Execute as migrações." });
+      return;
+    }
+    throw e;
+  }
+});
+
+const updateTemplateBody = z.object({ name: z.string().min(1).max(200).optional(), body: z.string().min(1).max(4096).optional() });
+integrationsRouter.patch("/automations/templates/:id", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const id = req.params.id;
+  const parsed = updateTemplateBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (parsed.data.name !== undefined) {
+      updates.push(`name = $${idx++}`);
+      values.push(parsed.data.name);
+    }
+    if (parsed.data.body !== undefined) {
+      updates.push(`body = $${idx++}`);
+      values.push(parsed.data.body);
+    }
+    if (updates.length === 0) {
+      const r = await pool.query(`SELECT id, name, body, created_at FROM public.message_templates WHERE id = $1 AND barbershop_id = $2`, [id, barbershopId]);
+      if (r.rows.length === 0) {
+        res.status(404).json({ error: "Template não encontrado" });
+        return;
+      }
+      res.json(r.rows[0]);
+      return;
+    }
+    values.push(id, barbershopId);
+    const r = await pool.query(
+      `UPDATE public.message_templates SET ${updates.join(", ")} WHERE id = $${idx} AND barbershop_id = $${idx + 1} RETURNING id, name, body, created_at`,
+      values
+    );
+    if (r.rows.length === 0) {
+      res.status(404).json({ error: "Template não encontrado" });
+      return;
+    }
+    res.json(r.rows[0]);
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(503).json({ error: "Tabela message_templates não existe." });
+      return;
+    }
+    throw e;
+  }
+});
+
+integrationsRouter.delete("/automations/templates/:id", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const id = req.params.id;
+  try {
+    const r = await pool.query(
+      `DELETE FROM public.message_templates WHERE id = $1 AND barbershop_id = $2 RETURNING id`,
+      [id, barbershopId]
+    );
+    if (r.rows.length === 0) {
+      res.status(404).json({ error: "Template não encontrado" });
+      return;
+    }
+    res.status(204).send();
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(503).json({ error: "Tabela message_templates não existe." });
+      return;
+    }
+    throw e;
+  }
+});
+
+const manualScheduleBody = z.object({
+  to_phone: z.string().min(1).max(30),
+  body: z.string().min(1).max(4096),
+  run_after: z.string().datetime().optional(),
+});
+integrationsRouter.post("/automations/scheduled-messages/manual", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const parsed = manualScheduleBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  const toPhone = parsed.data.to_phone.replace(/\D/g, "");
+  if (!toPhone) {
+    res.status(400).json({ error: "Número inválido" });
+    return;
+  }
+  const runAfter = parsed.data.run_after ? new Date(parsed.data.run_after) : new Date();
+  try {
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO public.scheduled_messages (barbershop_id, type, to_phone, payload_json, status, run_after, updated_at)
+       VALUES ($1, 'manual', $2, $3, 'queued', $4, now()) RETURNING id`,
+      [barbershopId, toPhone, JSON.stringify({ body: parsed.data.body }), runAfter]
+    );
+    res.status(201).json({ id: r.rows[0].id, status: "queued", run_after: runAfter.toISOString() });
+  } catch (e) {
+    if ((e as { code?: string }).code === "23514") {
+      res.status(400).json({ error: "Tipo 'manual' não permitido. Execute a migração de manual/campaign." });
+      return;
+    }
+    throw e;
+  }
+});
+
+const createCampaignBody = z.object({
+  name: z.string().min(1).max(200),
+  body: z.string().min(1).max(4096).optional(),
+  template_id: z.string().uuid().optional(),
+  client_ids: z.array(z.string().uuid()).min(1).max(5000),
+  run_after: z.string().datetime().optional(),
+});
+integrationsRouter.post("/automations/campaigns", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const parsed = createCampaignBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  let body = parsed.data.body;
+  if (!body && parsed.data.template_id) {
+    const t = await pool.query<{ body: string }>(
+      `SELECT body FROM public.message_templates WHERE id = $1 AND barbershop_id = $2`,
+      [parsed.data.template_id, barbershopId]
+    );
+    body = t.rows[0]?.body ?? "";
+  }
+  if (!body || !body.trim()) {
+    res.status(400).json({ error: "Forneça body ou template_id com template válido" });
+    return;
+  }
+  const runAfter = parsed.data.run_after ? new Date(parsed.data.run_after) : new Date();
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const campRow = await client.query<{ id: string }>(
+      `INSERT INTO public.message_campaigns (barbershop_id, name, status, body, template_id, audience_query, run_after, updated_at)
+       VALUES ($1, $2, 'running', $3, $4, $5, $6, now()) RETURNING id`,
+      [barbershopId, parsed.data.name, body.trim(), parsed.data.template_id ?? null, JSON.stringify({ client_ids: parsed.data.client_ids }), runAfter]
+    );
+    const campaignId = campRow.rows[0].id;
+    const clientsRow = await client.query<{ id: string; phone: string }>(
+      `SELECT id, phone FROM public.clients
+       WHERE barbershop_id = $1 AND id = ANY($2::uuid[]) AND marketing_opt_out = false`,
+      [barbershopId, parsed.data.client_ids]
+    );
+    let inserted = 0;
+    for (const c of clientsRow.rows) {
+      const phoneNorm = c.phone.replace(/\D/g, "");
+      if (!phoneNorm) continue;
+      const dedupeKey = `campaign:${campaignId}:${c.id}`;
+      try {
+        const ins = await client.query(
+          `INSERT INTO public.scheduled_messages (barbershop_id, type, to_phone, payload_json, status, run_after, campaign_id, dedupe_key, updated_at)
+           VALUES ($1, 'campaign', $2, $3, 'queued', $4, $5, $6, now())`,
+          [barbershopId, phoneNorm, JSON.stringify({ body: body.trim() }), runAfter, campaignId, dedupeKey]
+        );
+        if (ins.rowCount) inserted++;
+      } catch (err) {
+        if ((err as { code?: string }).code !== "23505") throw err;
+      }
+    }
+    await client.query("COMMIT");
+    res.status(201).json({
+      campaign_id: campaignId,
+      name: parsed.data.name,
+      status: "running",
+      recipients_enqueued: inserted,
+      skipped_opt_out: parsed.data.client_ids.length - clientsRow.rows.length,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    if (isUndefinedTable(e)) {
+      res.status(503).json({ error: "Tabelas de campanha não existem. Execute as migrações." });
+      return;
+    }
+    throw e;
+  } finally {
+    client.release();
+  }
+});
+
+integrationsRouter.post("/automations/campaigns/:id/cancel", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const id = req.params.id;
+  try {
+    const r = await pool.query(
+      `UPDATE public.message_campaigns SET status = 'cancelled', updated_at = now()
+       WHERE id = $1 AND barbershop_id = $2 RETURNING id`,
+      [id, barbershopId]
+    );
+    if (r.rows.length === 0) {
+      res.status(404).json({ error: "Campanha não encontrada" });
+      return;
+    }
+    await pool.query(
+      `UPDATE public.scheduled_messages SET status = 'skipped', last_error = 'Campanha cancelada', updated_at = now()
+       WHERE campaign_id = $1 AND status = 'queued'`,
+      [id]
+    );
+    res.json({ ok: true, message: "Campanha cancelada; mensagens em fila foram canceladas." });
+  } catch (e) {
+    if (isUndefinedTable(e)) {
+      res.status(503).json({ error: "Tabelas de campanha não existem." });
+      return;
+    }
+    throw e;
+  }
+});

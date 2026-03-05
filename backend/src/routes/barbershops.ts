@@ -3,9 +3,15 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
 
+const unavailabilityIntervalSchema = z.object({
+  start: z.string().regex(/^\d{2}:\d{2}$/),
+  end: z.string().regex(/^\d{2}:\d{2}$/),
+  reason: z.string().max(200).optional(),
+});
 const dayHoursSchema = z.object({
   start: z.string().regex(/^\d{2}:\d{2}$/),
   end: z.string().regex(/^\d{2}:\d{2}$/),
+  unavailability_intervals: z.array(unavailabilityIntervalSchema).optional(),
 });
 const businessHoursSchema = z.object({
   monday: dayHoursSchema.nullable().optional(),
@@ -194,18 +200,20 @@ const createClosureBody = z.object({
   start_time: timeSchema,
   end_time: timeSchema,
   reason: z.string().max(500).optional(),
+  unavailability_intervals: z.array(unavailabilityIntervalSchema).optional(),
 });
 const updateClosureBody = z.object({
   status: closureStatusSchema.optional(),
   start_time: timeSchema.nullable(),
   end_time: timeSchema.nullable(),
   reason: z.string().max(500).optional().nullable(),
+  unavailability_intervals: z.array(unavailabilityIntervalSchema).optional(),
 });
 
 barbershopsRouter.get("/closures", requireJwt, async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const r = await pool.query(
-    `SELECT id, barbershop_id, closure_date, status, start_time, end_time, reason, created_at, updated_at
+    `SELECT id, barbershop_id, closure_date, status, start_time, end_time, reason, unavailability_intervals, created_at, updated_at
      FROM public.barbershop_closures WHERE barbershop_id = $1 ORDER BY closure_date DESC`,
     [barbershopId]
   );
@@ -219,12 +227,13 @@ barbershopsRouter.post("/closures", requireJwt, async (req: Request, res: Respon
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { closure_date, status, start_time, end_time, reason } = parsed.data;
+  const { closure_date, status, start_time, end_time, reason, unavailability_intervals } = parsed.data;
+  const intervals = unavailability_intervals ?? [];
   const r = await pool.query(
-    `INSERT INTO public.barbershop_closures (barbershop_id, closure_date, status, start_time, end_time, reason)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, barbershop_id, closure_date, status, start_time, end_time, reason, created_at, updated_at`,
-    [barbershopId, closure_date, status, start_time ?? null, end_time ?? null, reason ?? null]
+    `INSERT INTO public.barbershop_closures (barbershop_id, closure_date, status, start_time, end_time, reason, unavailability_intervals)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+     RETURNING id, barbershop_id, closure_date, status, start_time, end_time, reason, unavailability_intervals, created_at, updated_at`,
+    [barbershopId, closure_date, status, start_time ?? null, end_time ?? null, reason ?? null, JSON.stringify(intervals)]
   );
   res.status(201).json(r.rows[0]);
 });
@@ -233,7 +242,7 @@ barbershopsRouter.get("/closures/:id", requireJwt, async (req: Request, res: Res
   const barbershopId = getBarbershopId(req);
   const { id } = req.params;
   const r = await pool.query(
-    `SELECT id, barbershop_id, closure_date, status, start_time, end_time, reason, created_at, updated_at
+    `SELECT id, barbershop_id, closure_date, status, start_time, end_time, reason, unavailability_intervals, created_at, updated_at
      FROM public.barbershop_closures WHERE id = $1 AND barbershop_id = $2`,
     [id, barbershopId]
   );
@@ -252,7 +261,7 @@ barbershopsRouter.patch("/closures/:id", requireJwt, async (req: Request, res: R
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { status, start_time, end_time, reason } = parsed.data;
+  const { status, start_time, end_time, reason, unavailability_intervals } = parsed.data;
   const updates: string[] = ["updated_at = now()"];
   const values: unknown[] = [];
   let i = 1;
@@ -272,9 +281,13 @@ barbershopsRouter.patch("/closures/:id", requireJwt, async (req: Request, res: R
     updates.push(`reason = $${i++}`);
     values.push(reason);
   }
+  if (unavailability_intervals !== undefined) {
+    updates.push(`unavailability_intervals = $${i++}::jsonb`);
+    values.push(JSON.stringify(unavailability_intervals));
+  }
   if (values.length === 0) {
     const r = await pool.query(
-      `SELECT id, barbershop_id, closure_date, status, start_time, end_time, reason, created_at, updated_at
+      `SELECT id, barbershop_id, closure_date, status, start_time, end_time, reason, unavailability_intervals, created_at, updated_at
        FROM public.barbershop_closures WHERE id = $1 AND barbershop_id = $2`,
       [id, barbershopId]
     );
@@ -287,7 +300,7 @@ barbershopsRouter.patch("/closures/:id", requireJwt, async (req: Request, res: R
   }
   values.push(id, barbershopId);
   const r = await pool.query(
-    `UPDATE public.barbershop_closures SET ${updates.join(", ")} WHERE id = $${i++} AND barbershop_id = $${i} RETURNING id, barbershop_id, closure_date, status, start_time, end_time, reason, created_at, updated_at`,
+    `UPDATE public.barbershop_closures SET ${updates.join(", ")} WHERE id = $${i++} AND barbershop_id = $${i} RETURNING id, barbershop_id, closure_date, status, start_time, end_time, reason, unavailability_intervals, created_at, updated_at`,
     values
   );
   if (r.rows.length === 0) {

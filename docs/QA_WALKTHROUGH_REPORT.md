@@ -22,32 +22,39 @@ O app carregou corretamente. Dashboard usa API real para agendamentos; gráficos
 ## 3. Walkthrough por Página
 
 ### Dashboard (/)
+
 - **API:** appointmentsApi.list({ date: today })
 - **Estado vazio:** "Nenhum agendamento para hoje."
 - **BUG:** Taxa de Ocupação mostra "—" quando há agendamentos (deveria calcular %)
 - **Gráficos:** RevenueChart e TopServices usam dados mockados
 
 ### Agendamentos (/agendamentos)
+
 - **Dados:** 100% mock (barbers, appointments, timeSlots)
 - **Navegação data:** ChevronLeft/Right sem onClick
 - **CRUD:** Novo Agendamento, células Plus, MoreVertical – nenhuma ação
 
 ### Barbeiros (/barbeiros)
+
 - **API:** barbersApi.list()
 - **CRUD:** Adicionar Barbeiro e MoreVertical – sem ação
 
 ### Serviços (/servicos)
+
 - **API:** servicesApi.list()
 - **CRUD:** Adicionar Serviço e MoreVertical – sem ação
 
 ### Clientes (/clientes)
+
 - **API:** clientsApi.list(search)
 - **CRUD:** Adicionar Cliente e MoreVertical – sem ação
 
 ### Fidelidade (/fidelidade)
+
 - **Dados:** 100% mock (topClients, rewards)
 
 ### Configurações (/configuracoes)
+
 - Seções são buttons sem destino. Excluir Conta sem confirmação.
 
 ---
@@ -69,18 +76,18 @@ O app carregou corretamente. Dashboard usa API real para agendamentos; gráficos
 
 ## 6. Bugs
 
-| # | Sev | Descrição |
-|---|-----|-----------|
-| 1 | Alta | Taxa de Ocupação "—" quando há agendamentos |
-| 2 | Alta | Botões Adicionar sem ação |
-| 3 | Alta | MoreVertical sem menu |
-| 4 | Alta | Navegação data em Agendamentos não funciona |
-| 5 | Média | Agendamentos usa mock |
-| 6 | Média | Fidelidade mock |
-| 7 | Média | Configurações sem ação |
-| 8 | Média | Layout mobile: sidebar fixa |
-| 9 | Baixa | Sonner sem ThemeProvider |
-| 10 | Baixa | Título "Lovable App" |
+| #   | Sev   | Descrição                                   |
+| --- | ----- | ------------------------------------------- |
+| 1   | Alta  | Taxa de Ocupação "—" quando há agendamentos |
+| 2   | Alta  | Botões Adicionar sem ação                   |
+| 3   | Alta  | MoreVertical sem menu                       |
+| 4   | Alta  | Navegação data em Agendamentos não funciona |
+| 5   | Média | Agendamentos usa mock                       |
+| 6   | Média | Fidelidade mock                             |
+| 7   | Média | Configurações sem ação                      |
+| 8   | Média | Layout mobile: sidebar fixa                 |
+| 9   | Baixa | Sonner sem ThemeProvider                    |
+| 10  | Baixa | Título "Lovable App"                        |
 
 ---
 

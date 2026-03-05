@@ -1,13 +1,28 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { MessageCircle, Send, AlertTriangle, Loader2, FileText, ChevronDown, Activity, Trash2, Copy, RotateCcw } from "lucide-react";
+import { MessageCircle, Send, AlertTriangle, Loader2, FileText, Activity, Trash2, Copy, RotateCcw, RefreshCw, Paperclip, X } from "lucide-react";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
 import { whatsappApi, type AgentProfile } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +67,18 @@ const SCENARIOS: { label: string; messages: Array<{ role: "user" | "assistant"; 
 ];
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
+type DiagnosticAttachment = { id: string; name: string; mimeType?: string; text: string };
+type DiagnosticAssistantPayload = {
+  recommended_profile_patch?: Record<string, unknown>;
+  recommended_additional_instructions_patch?: string | null;
+  risk_notes: string[];
+  expected_outcomes: string[];
+};
+type DiagnosticMessage = {
+  role: "user" | "assistant";
+  content: string;
+  payload?: DiagnosticAssistantPayload;
+};
 
 const ANALYZER_OBJECTIVES = [
   { id: "mais vendas", label: "Mais vendas" },
@@ -70,6 +97,7 @@ export function AgentPreviewChatStep({
   isPublishing,
   isRollingBack,
   applyFeedback,
+  openDiagnosticFromInbox,
 }: {
   draftProfile: AgentProfile | Record<string, unknown>;
   draftAdditionalInstructions?: string | null;
@@ -81,24 +109,38 @@ export function AgentPreviewChatStep({
   isRollingBack: boolean;
   /** Feedback from applying diagnostic result (draft or publish). Set by parent from mutation state. */
   applyFeedback?: { type: "success" | "error"; message: string } | null;
+  /** When true, open diagnostic modal and pre-fill from sessionStorage (navalhia_diagnostic_transcript). */
+  openDiagnosticFromInbox?: boolean;
 }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [violations, setViolations] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [analyzerOpen, setAnalyzerOpen] = useState(false);
-  const [chatText, setChatText] = useState("");
   const [objectives, setObjectives] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
-  const [analyzerResult, setAnalyzerResult] = useState<{
-    recommended_profile_patch?: Record<string, unknown>;
-    recommended_additional_instructions_patch?: string | null;
-    risk_notes: string[];
-    expected_outcomes: string[];
-  } | null>(null);
+  const [diagnosticMessages, setDiagnosticMessages] = useState<DiagnosticMessage[]>([]);
+  const [diagnosticInput, setDiagnosticInput] = useState("");
+  const [diagnosticAttachments, setDiagnosticAttachments] = useState<DiagnosticAttachment[]>([]);
   const [rollbackConfirmId, setRollbackConfirmId] = useState<string | null>(null);
+  const [versionsDrawerOpen, setVersionsDrawerOpen] = useState(false);
+  const [diagnosticModalOpen, setDiagnosticModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!openDiagnosticFromInbox) return;
+    const transcript = sessionStorage.getItem("navalhia_diagnostic_transcript");
+    if (!transcript) return;
+    setDiagnosticModalOpen(true);
+    setDiagnosticMessages([{ role: "user", content: transcript }]);
+    sessionStorage.removeItem("navalhia_diagnostic_transcript");
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("openDiagnostic");
+      return next;
+    }, { replace: true });
+  }, [openDiagnosticFromInbox, setSearchParams]);
 
   const { data: health } = useQuery({
     queryKey: ["integrations", "whatsapp", "ai-health"],
@@ -161,8 +203,106 @@ export function AgentPreviewChatStep({
     excessive_emojis: "Excesso de emojis",
   };
 
+  const runAnalyzeConversation = async () => {
+    const text = messages
+      .map((m) => `${m.role === "user" ? "user" : "assistant"}: ${m.content}`)
+      .join("\n");
+    if (!text.trim()) return;
+    await sendDiagnosticMessage(text.trim(), true);
+  };
+
+  const applyDiagnosticPatch = (
+    payload: DiagnosticAssistantPayload | undefined,
+    publish: boolean
+  ) => {
+    if (!payload) return;
+    onApplyAnalyzerResult?.(
+      {
+        profile: payload.recommended_profile_patch,
+        instructions: payload.recommended_additional_instructions_patch ?? undefined,
+      },
+      publish
+    );
+    setDiagnosticModalOpen(false);
+  };
+
+  const sendDiagnosticMessage = async (
+    explicitText?: string,
+    openModalOnStart = false
+  ) => {
+    const text = (explicitText ?? diagnosticInput).trim();
+    if (!text || analyzing) return;
+    if (openModalOnStart) setDiagnosticModalOpen(true);
+
+    const userMessage: DiagnosticMessage = { role: "user", content: text };
+    const nextMessages = [...diagnosticMessages, userMessage];
+    setDiagnosticMessages(nextMessages);
+    setDiagnosticInput("");
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const res = await whatsappApi.diagnosticChat({
+        messages: nextMessages.map((m) => ({ role: m.role, content: m.content })),
+        objectives: objectives.length ? objectives : undefined,
+        attachments:
+          diagnosticAttachments.length > 0
+            ? diagnosticAttachments.map((a) => ({
+                name: a.name,
+                mime_type: a.mimeType,
+                text: a.text,
+              }))
+            : undefined,
+      });
+      setDiagnosticMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: res.reply,
+          payload: {
+            recommended_profile_patch: res.recommended_profile_patch,
+            recommended_additional_instructions_patch:
+              res.recommended_additional_instructions_patch ?? null,
+            risk_notes: res.risk_notes ?? [],
+            expected_outcomes: res.expected_outcomes ?? [],
+          },
+        },
+      ]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao diagnosticar");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleAttachFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const acceptedExtensions = ["txt", "md", "json", "csv", "log", "xml", "yaml", "yml"];
+    const readTasks = Array.from(files).map(async (file) => {
+      const ext = file.name.includes(".") ? file.name.split(".").pop()?.toLowerCase() ?? "" : "";
+      const isTextLike = file.type.startsWith("text/") || acceptedExtensions.includes(ext);
+      if (!isTextLike) {
+        throw new Error(`Arquivo ${file.name} não é texto. Use .txt, .md, .json, .csv, .log, .xml, .yaml ou .yml.`);
+      }
+      const text = await file.text();
+      return {
+        id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        mimeType: file.type || undefined,
+        text: text.slice(0, 20_000),
+      } satisfies DiagnosticAttachment;
+    });
+    try {
+      const read = await Promise.all(readTasks);
+      setDiagnosticAttachments((prev) => [...prev, ...read].slice(0, 10));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao ler anexos");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col h-full min-h-0 space-y-4">
       {health?.regression_detected && (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
@@ -184,7 +324,7 @@ export function AgentPreviewChatStep({
           )}
         </div>
       )}
-      <div className="flex flex-wrap gap-2 items-center">
+      <div className="flex flex-nowrap gap-2 items-center overflow-x-auto pb-1 scrollbar-thin shrink-0">
         {SCENARIOS.map((s) => (
           <Button
             key={s.label}
@@ -202,8 +342,38 @@ export function AgentPreviewChatStep({
             Rodar novamente
           </Button>
         )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setVersionsDrawerOpen(true)}
+          disabled={versions.length === 0}
+        >
+          Versões do chatbot
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setDiagnosticModalOpen(true)}
+        >
+          <FileText className="h-4 w-4 mr-1" />
+          Diagnóstico
+        </Button>
+        {messages.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={runAnalyzeConversation}
+            disabled={loading || analyzing}
+          >
+            {analyzing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <FileText className="h-4 w-4 mr-1" />}
+            Analisar conversa
+          </Button>
+        )}
       </div>
-      <div className="rounded-lg border bg-muted/30 overflow-hidden flex flex-col h-[280px]">
+      <div className="flex-1 min-h-[520px] flex flex-col rounded-lg border bg-muted/30 overflow-hidden">
         <div className="shrink-0 px-3 py-2 border-b bg-muted/50 text-sm font-medium flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4" />
@@ -283,16 +453,22 @@ export function AgentPreviewChatStep({
         </Alert>
       )}
       {versions.length > 0 && (
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <Label className="text-sm font-medium">Versões publicadas</Label>
-            <p className="text-xs text-muted-foreground font-normal">
-              Reverter para uma versão anterior publicada.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-0 px-4 pb-4">
-            <ul className="space-y-2">
-              {versions.map((v) => (
+        <Sheet open={versionsDrawerOpen} onOpenChange={setVersionsDrawerOpen}>
+          <SheetContent side="right" className="w-full max-w-md">
+            <SheetHeader>
+              <div className="flex items-center gap-2">
+                <RefreshCw
+                  className="h-4 w-4 text-muted-foreground"
+                  aria-hidden
+                />
+                <SheetTitle>Versões do chatbot</SheetTitle>
+              </div>
+              <SheetDescription>
+                Reverter para uma versão anterior publicada.
+              </SheetDescription>
+            </SheetHeader>
+            <ul className="mt-6 space-y-2">
+              {versions.map((v, idx) => (
                 <li
                   key={v.id}
                   className={cn(
@@ -300,9 +476,24 @@ export function AgentPreviewChatStep({
                     v.status === "active" ? "bg-primary/5 border-primary/20" : "bg-muted/30"
                   )}
                 >
-                  <div className="min-w-0">
-                    <span className="text-sm font-medium block">{formatVersionDate(v.created_at)}</span>
-                    <span className="text-xs text-muted-foreground capitalize">{v.status === "active" ? "Ativa" : "Anterior"}</span>
+                  <div className="min-w-0 flex items-center gap-2">
+                    <span className="text-sm font-medium tabular-nums">
+                      {versions.length - idx}
+                    </span>
+                    <Badge
+                      variant={v.status === "active" ? "default" : "secondary"}
+                      className={cn(
+                        "shrink-0",
+                        v.status === "active"
+                          ? "bg-primary"
+                          : "bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                      )}
+                    >
+                      {v.status === "active" ? "Publicado" : "Rascunho"}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground truncate">
+                      {formatVersionDate(v.created_at)}
+                    </span>
                   </div>
                   {v.status !== "active" && (
                     <Button
@@ -319,8 +510,8 @@ export function AgentPreviewChatStep({
                 </li>
               ))}
             </ul>
-          </CardContent>
-        </Card>
+          </SheetContent>
+        </Sheet>
       )}
       <ConfirmDialog
         open={rollbackConfirmId !== null}
@@ -337,150 +528,186 @@ export function AgentPreviewChatStep({
           }
         }}
       />
-      <Collapsible open={analyzerOpen} onOpenChange={setAnalyzerOpen} className="mt-4 border rounded-lg">
-        <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium hover:bg-muted/50">
-          <span className="flex items-center gap-2">
-            <FileText className="h-4 w-4" />
-            Diagnóstico: analisar conversa exportada
-          </span>
-          <ChevronDown className={cn("h-4 w-4 transition-transform", analyzerOpen && "rotate-180")} />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="px-3 pb-3 space-y-3">
-          <p className="text-xs text-muted-foreground">
-            Cole o texto exportado do WhatsApp (.txt) ou envie o arquivo. Escolha os objetivos e clique em Analisar.
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".txt,text/plain"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) {
-                const r = new FileReader();
-                r.onload = () => setChatText(String(r.result ?? ""));
-                r.readAsText(f);
-              }
-            }}
-          />
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-              Enviar .txt
-            </Button>
-          </div>
-          <textarea
-            className="w-full rounded border bg-background px-2 py-1.5 text-sm min-h-[80px]"
-            placeholder="Ou cole aqui o texto da conversa..."
-            value={chatText}
-            onChange={(e) => setChatText(e.target.value)}
-          />
-          <div>
-            <p className="text-xs font-medium mb-1">Objetivos</p>
-            <div className="flex flex-wrap gap-2">
-              {ANALYZER_OBJECTIVES.map((o) => (
-                <label key={o.id} className="flex items-center gap-1.5 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={objectives.includes(o.id)}
-                    onChange={(e) =>
-                      setObjectives((prev) => (e.target.checked ? [...prev, o.id] : prev.filter((x) => x !== o.id)))
-                    }
-                  />
-                  {o.label}
-                </label>
-              ))}
+      <Dialog open={diagnosticModalOpen} onOpenChange={setDiagnosticModalOpen}>
+        <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Diagnóstico com IA (Chat interno)
+            </DialogTitle>
+            <DialogDescription>
+              Converse com o LLM para revisar atendimentos e refinar o agente. Você pode enviar texto livre e anexos de conversa (arquivos de texto).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <p className="text-xs font-medium mb-1">Objetivos</p>
+              <div className="flex flex-wrap gap-2">
+                {ANALYZER_OBJECTIVES.map((o) => (
+                  <label key={o.id} className="flex items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={objectives.includes(o.id)}
+                      onChange={(e) =>
+                        setObjectives((prev) => (e.target.checked ? [...prev, o.id] : prev.filter((x) => x !== o.id)))
+                      }
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
             </div>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            disabled={!chatText.trim() || analyzing}
-            onClick={async () => {
-              setAnalyzing(true);
-              setAnalyzerResult(null);
-              try {
-                const res = await whatsappApi.analyzeChat({
-                  chat_text: chatText.trim(),
-                  objectives: objectives.length ? objectives : undefined,
-                });
-                setAnalyzerResult({
-                  recommended_profile_patch: res.recommended_profile_patch,
-                  recommended_additional_instructions_patch: res.recommended_additional_instructions_patch ?? null,
-                  risk_notes: res.risk_notes ?? [],
-                  expected_outcomes: res.expected_outcomes ?? [],
-                });
-              } catch (e) {
-                setError(e instanceof Error ? e.message : "Erro ao analisar");
-              } finally {
-                setAnalyzing(false);
-              }
-            }}
-          >
-            {analyzing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Analisar
-          </Button>
-          {analyzerResult && (
-            <div className="space-y-3 text-sm border-t pt-3">
-              {analyzerResult.expected_outcomes.length > 0 && (
-                <p><strong>Resultado esperado:</strong> {analyzerResult.expected_outcomes.join(" ")}</p>
-              )}
-              {analyzerResult.risk_notes.length > 0 && (
-                <p className="text-amber-600 dark:text-amber-500"><strong>Atenção:</strong> {analyzerResult.risk_notes.join(" ")}</p>
-              )}
-              {((analyzerResult.recommended_profile_patch && Object.keys(analyzerResult.recommended_profile_patch).length > 0) || analyzerResult.recommended_additional_instructions_patch != null) && (
-                <>
-                  <div className="rounded-md border bg-muted/40 px-2.5 py-2 font-mono text-xs space-y-1">
-                    <p className="font-sans font-medium text-muted-foreground mb-1">Alterações sugeridas</p>
-                    {formatPatchDiff(
-                      analyzerResult.recommended_profile_patch,
-                      analyzerResult.recommended_additional_instructions_patch ?? undefined,
-                      draftProfile as Record<string, unknown>
-                    ).map((line, i) => (
-                      <div key={i}>{line}</div>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => onApplyAnalyzerResult?.(
-                        {
-                          profile: analyzerResult.recommended_profile_patch,
-                          instructions: analyzerResult.recommended_additional_instructions_patch ?? undefined,
-                        },
-                        false
+            <div className="rounded-lg border bg-muted/20 overflow-hidden">
+              <ScrollArea className="h-[380px] sm:h-[420px] p-3">
+                <div className="space-y-3">
+                  {diagnosticMessages.length === 0 && (
+                    <p className="text-sm text-muted-foreground">
+                      Envie uma pergunta para o diagnóstico, por exemplo: &quot;Analise esta conversa e sugira ajustes no tom e na conversão sem perder naturalidade.&quot;
+                    </p>
+                  )}
+                  {diagnosticMessages.map((msg, idx) => (
+                    <div key={idx} className="space-y-2">
+                      <div
+                        className={cn(
+                          "rounded-lg px-3 py-2 text-sm whitespace-pre-wrap",
+                          msg.role === "user"
+                            ? "ml-auto max-w-[90%] bg-primary text-primary-foreground"
+                            : "max-w-[95%] border bg-background"
+                        )}
+                      >
+                        {msg.content}
+                      </div>
+                      {msg.role === "assistant" && msg.payload && (
+                        <div className="space-y-2">
+                          {msg.payload.expected_outcomes.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              Resultado esperado: {msg.payload.expected_outcomes.join(" ")}
+                            </p>
+                          )}
+                          {msg.payload.risk_notes.length > 0 && (
+                            <p className="text-xs text-amber-600 dark:text-amber-500">
+                              Atenção: {msg.payload.risk_notes.join(" ")}
+                            </p>
+                          )}
+                          {((msg.payload.recommended_profile_patch &&
+                            Object.keys(msg.payload.recommended_profile_patch).length > 0) ||
+                            msg.payload.recommended_additional_instructions_patch != null) && (
+                            <>
+                              <div className="rounded-lg border border-border/80 bg-muted/50 px-4 py-3 font-mono text-xs space-y-1.5 mt-2">
+                                <p className="font-sans font-semibold text-foreground mb-1.5">Alterações sugeridas</p>
+                                {formatPatchDiff(
+                                  msg.payload.recommended_profile_patch,
+                                  msg.payload.recommended_additional_instructions_patch ?? undefined,
+                                  draftProfile as Record<string, unknown>
+                                ).map((line, i) => (
+                                  <div key={i}>{line}</div>
+                                ))}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => applyDiagnosticPatch(msg.payload, false)}
+                                >
+                                  Aplicar como rascunho
+                                </Button>
+                                <Button type="button" size="sm" onClick={() => applyDiagnosticPatch(msg.payload, true)}>
+                                  Aplicar e publicar
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        </div>
                       )}
-                    >
-                      Aplicar como rascunho
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => {
-                        onApplyAnalyzerResult?.(
-                          {
-                            profile: analyzerResult.recommended_profile_patch,
-                            instructions: analyzerResult.recommended_additional_instructions_patch ?? undefined,
-                          },
-                          true
-                        );
-                      }}
-                    >
-                      Aplicar e publicar
-                    </Button>
-                  </div>
-                </>
-              )}
-              {applyFeedback && (
-                <Alert variant={applyFeedback.type === "error" ? "destructive" : "default"} className="py-2">
-                  <AlertDescription>{applyFeedback.message}</AlertDescription>
-                </Alert>
+                    </div>
+                  ))}
+                  {analyzing && (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      LLM analisando contexto...
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md,.json,.csv,.log,.xml,.yaml,.yml,text/plain,text/markdown,application/json,text/csv,text/xml,application/xml"
+              multiple
+              className="hidden"
+              onChange={(e) => void handleAttachFiles(e.target.files)}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Paperclip className="h-4 w-4 mr-1" />
+                Anexar arquivos
+              </Button>
+              {diagnosticAttachments.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDiagnosticAttachments([])}
+                >
+                  Limpar anexos
+                </Button>
               )}
             </div>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
+            {diagnosticAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {diagnosticAttachments.map((att) => (
+                  <span
+                    key={att.id}
+                    className="inline-flex items-center gap-1 rounded-full border bg-background px-2 py-1 text-xs"
+                  >
+                    {att.name}
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() =>
+                        setDiagnosticAttachments((prev) =>
+                          prev.filter((item) => item.id !== att.id)
+                        )
+                      }
+                      aria-label={`Remover ${att.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Textarea
+                value={diagnosticInput}
+                onChange={(e) => setDiagnosticInput(e.target.value)}
+                placeholder="Digite a pergunta para o LLM (ex.: identifique falhas de abordagem comercial e sugira ajustes)."
+                className="min-h-[88px]"
+              />
+              <div className="flex justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={!diagnosticInput.trim() || analyzing}
+                  onClick={() => void sendDiagnosticMessage()}
+                >
+                  {analyzing ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Send className="h-4 w-4 mr-1" />}
+                  Enviar ao LLM
+                </Button>
+              </div>
+            </div>
+            {applyFeedback && (
+              <Alert variant={applyFeedback.type === "error" ? "destructive" : "default"} className="py-2">
+                <AlertDescription>{applyFeedback.message}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db.js";
-import { setAiPaused } from "../ai/runtime-pause.js";
+import { setConversationPaused } from "../ai/runtime-pause.js";
 
 const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "";
 const accessToken = process.env.WHATSAPP_ACCESS_TOKEN ?? "";
@@ -8,6 +8,29 @@ const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID ?? "";
 const n8nChatTriggerUrl = process.env.N8N_CHAT_TRIGGER_URL ?? "";
 
 export const webhooksRouter = Router();
+
+function normalizeComparableText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function getHandoffPauseHours(barbershopId: string): Promise<number> {
+  try {
+    const r = await pool.query<{ pause_hours: number }>(
+      `SELECT pause_hours FROM public.barbershop_ai_handoff_settings WHERE barbershop_id = $1`,
+      [barbershopId]
+    );
+    const hours = r.rows[0]?.pause_hours;
+    if (typeof hours === "number" && Number.isFinite(hours) && hours > 0 && hours <= 168) {
+      return Math.floor(hours);
+    }
+    return 4;
+  } catch {
+    return 4;
+  }
+}
 
 /** Uazapi inbound webhook payload (minimal contract; adjust after capturing real payloads) */
 type UazapiWebhookBody = {
@@ -115,6 +138,7 @@ export function normalizeFromPhone(fromRaw: string): string {
 export function parseUazapiInbound(body: UazapiWebhookBody): {
   skip: boolean;
   fromMe: boolean;
+  handoffCandidate: boolean;
   instanceKey: string;
   fromPhone: string | null;
   text: string | null;
@@ -137,15 +161,10 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
     (anyBody.message as unknown) ??
     ((anyBody.event as Record<string, unknown> | undefined)?.message as unknown)) as Record<string, unknown> | undefined;
 
-  const fromMe = Boolean((msg?.fromMe ?? msg?.IsFromMe ?? (anyBody.event as Record<string, unknown> | undefined)?.IsFromMe) as unknown);
-  if (fromMe) {
-    return { skip: true, fromMe: true, instanceKey, fromPhone: null, text: null, providerEventId: undefined };
-  }
-
+  const chatObj = (anyBody.chat as Record<string, unknown> | undefined) ?? undefined;
   const messageTypeRaw =
     (msg?.type ?? msg?.Type ?? (anyBody.event as Record<string, unknown> | undefined)?.Type) as string | undefined;
   const messageType = typeof messageTypeRaw === "string" ? messageTypeRaw.toLowerCase() : undefined;
-
   const text =
     msg?.body != null
       ? String(msg.body)
@@ -157,15 +176,44 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
             ? String(msg.Text)
             : null;
 
-  // If provider supplies a type and it's clearly not a text/chat message, skip.
-  if (messageType && messageType !== "chat" && messageType !== "text" && messageType !== "conversation") {
-    return { skip: true, fromMe: false, instanceKey, fromPhone: null, text: null, providerEventId: undefined };
-  }
-  if (!text) {
-    return { skip: true, fromMe: false, instanceKey, fromPhone: null, text: null, providerEventId: undefined };
+  const fromMe = Boolean((msg?.fromMe ?? msg?.IsFromMe ?? (anyBody.event as Record<string, unknown> | undefined)?.IsFromMe) as unknown);
+  if (fromMe) {
+    // When business sends a message, get the chat's other party (customer) to pause that conversation.
+    const toRaw =
+      (msg?.to as string) ??
+      (msg?.To as string) ??
+      (msg?.remoteJid as string) ??
+      (chatObj?.id as string) ??
+      (chatObj?.wa_chatid as string) ??
+      (chatObj?.chatid as string);
+    const fromPhoneWhenMe = toRaw ? normalizeFromPhone(String(toRaw)) : null;
+    // Only consider manual handoff for real outbound text/chat messages.
+    const handoffCandidate =
+      !!text &&
+      (!messageType ||
+        messageType === "chat" ||
+        messageType === "text" ||
+        messageType === "conversation");
+    return {
+      skip: true,
+      fromMe: true,
+      handoffCandidate,
+      instanceKey,
+      fromPhone: fromPhoneWhenMe,
+      text: text ?? null,
+      providerEventId: undefined,
+    };
   }
 
-  const chatObj = (anyBody.chat as Record<string, unknown> | undefined) ?? undefined;
+  // If provider supplies a type and it's clearly not a text/chat message, skip.
+  if (messageType && messageType !== "chat" && messageType !== "text" && messageType !== "conversation") {
+    return { skip: true, fromMe: false, handoffCandidate: false, instanceKey, fromPhone: null, text: null, providerEventId: undefined };
+  }
+  if (!text) {
+    return { skip: true, fromMe: false, handoffCandidate: false, instanceKey, fromPhone: null, text: null, providerEventId: undefined };
+  }
+
+  const chatObjForCandidates = chatObj;
   const senderPnCandidate =
     (msg?.sender_pn ??
       msg?.senderPn ??
@@ -187,10 +235,10 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
     msg?.sender as unknown,
     msg?.Sender as unknown,
     (anyBody.event as Record<string, unknown> | undefined)?.Sender,
-    chatObj?.wa_chatid,
-    chatObj?.wa_lastMessageSender,
-    chatObj?.id,
-    chatObj?.chatid,
+    chatObjForCandidates?.wa_chatid,
+    chatObjForCandidates?.wa_lastMessageSender,
+    chatObjForCandidates?.id,
+    chatObjForCandidates?.chatid,
     anyBody.chatid,
   ]
     .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
@@ -218,9 +266,17 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
   const fromPhone = fromRaw ? normalizeFromPhone(String(fromRaw)) : null;
   // If we only got a LID (no phone), don't enqueue: we can't reply.
   if (!fromPhone || (fromRaw?.includes("@lid") ?? false)) {
-    return { skip: true, fromMe: false, instanceKey, fromPhone: null, text: null, providerEventId: providerEventIdStr };
+    return { skip: true, fromMe: false, handoffCandidate: false, instanceKey, fromPhone: null, text: null, providerEventId: providerEventIdStr };
   }
-  return { skip: !fromRaw || !instanceKey || !providerEventIdStr, fromMe: false, instanceKey, fromPhone, text, providerEventId: providerEventIdStr };
+  return {
+    skip: !fromRaw || !instanceKey || !providerEventIdStr,
+    fromMe: false,
+    handoffCandidate: false,
+    instanceKey,
+    fromPhone,
+    text,
+    providerEventId: providerEventIdStr,
+  };
 }
 
 /** POST /api/webhooks/uazapi — Uazapi sends events here. Respond 200 then enqueue for worker. */
@@ -229,7 +285,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
   const event = body?.event ?? "(no event)";
   const parsed = parseUazapiInbound(body);
 
-  if (parsed.skip && parsed.fromMe && parsed.instanceKey) {
+  if (parsed.skip && parsed.fromMe && parsed.handoffCandidate && parsed.instanceKey) {
     try {
       const r = await pool.query<{ barbershop_id: string }>(
         `SELECT barbershop_id FROM public.barbershop_whatsapp_connections
@@ -238,8 +294,77 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
       );
       const barbershopId = r.rows[0]?.barbershop_id;
       if (barbershopId) {
-        await setAiPaused(barbershopId, { pausedBy: "auto", reason: "Mensagem do próprio número (handoff detectado)" });
-        console.info("[uazapi webhook] handoff auto-pause barbershopId=%s", barbershopId);
+        if (parsed.fromPhone) {
+          const conv = await pool.query<{ id: string }>(
+            `SELECT id FROM public.ai_conversations
+             WHERE barbershop_id = $1 AND channel = 'whatsapp' AND external_thread_id = $2 LIMIT 1`,
+            [barbershopId, parsed.fromPhone]
+          );
+          const conversationId = conv.rows[0]?.id;
+          if (conversationId) {
+            const latestAssistant = await pool.query<{ content: string | null }>(
+              `SELECT content
+               FROM public.ai_messages
+               WHERE conversation_id = $1 AND role = 'assistant' AND created_at >= now() - interval '10 minutes'
+               ORDER BY created_at DESC
+               LIMIT 1`,
+              [conversationId]
+            );
+            const assistantText = latestAssistant.rows[0]?.content ?? "";
+            const isLikelyAiEcho =
+              !!assistantText &&
+              !!parsed.text &&
+              normalizeComparableText(assistantText) === normalizeComparableText(parsed.text);
+            if (isLikelyAiEcho) {
+              // Treat fromMe echo as "delivered" confirmation for the latest assistant message.
+              try {
+                await pool.query(
+                  `UPDATE public.ai_messages
+                   SET delivery_status = 'delivered',
+                       delivered_at = COALESCE(delivered_at, now()),
+                       provider_message_id = COALESCE(provider_message_id, $2)
+                   WHERE id = (
+                     SELECT m.id
+                     FROM public.ai_messages m
+                     WHERE m.conversation_id = $1
+                       AND m.role = 'assistant'
+                       AND m.created_at >= now() - interval '15 minutes'
+                       AND lower(regexp_replace(coalesce(m.content,''), '\\s+', ' ', 'g')) = lower(regexp_replace($3, '\\s+', ' ', 'g'))
+                     ORDER BY m.created_at DESC
+                     LIMIT 1
+                   )`,
+                  [conversationId, parsed.providerEventId ?? null, parsed.text ?? ""]
+                );
+              } catch {
+                // ignore delivery update errors
+              }
+              console.info(
+                "[uazapi webhook] fromMe ignored as assistant echo conversationId=%s barbershopId=%s",
+                conversationId,
+                barbershopId
+              );
+              res.status(200).send();
+              return;
+            }
+            const pauseHours = await getHandoffPauseHours(barbershopId);
+            await setConversationPaused(conversationId, {
+              pausedBy: "auto",
+              reason: "Mensagem do próprio número (handoff detectado)",
+              hours: pauseHours,
+            });
+            await pool.query(
+              `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
+               VALUES ($1, $2, 'paused', 'auto', $3)`,
+              [barbershopId, conversationId, "Mensagem do próprio número (handoff detectado)"]
+            );
+            console.info("[uazapi webhook] handoff conversation paused conversationId=%s barbershopId=%s", conversationId, barbershopId);
+          } else {
+            // No conversation bound to this phone: don't pause globally to avoid blocking all automation.
+            console.info("[uazapi webhook] fromMe ignored (no conversation found) barbershopId=%s", barbershopId);
+          }
+        } else {
+          console.info("[uazapi webhook] fromMe ignored (no phone) barbershopId=%s", barbershopId);
+        }
       }
     } catch (e) {
       console.error("[uazapi webhook] handoff auto-pause error:", e);

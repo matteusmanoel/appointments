@@ -23,6 +23,15 @@ export function clearToken(): void {
   localStorage.removeItem("token");
 }
 
+/** When "__all__", list endpoints request data for all barbershops in the account. Set by AuthContext. */
+let barbershopScope: "__all__" | null = null;
+export function setBarbershopScope(scope: "__all__" | null): void {
+  barbershopScope = scope;
+}
+export function getBarbershopScope(): "__all__" | null {
+  return barbershopScope;
+}
+
 /** Default request timeout (ms). Prevents infinite loading on slow/hung endpoints. */
 const DEFAULT_API_TIMEOUT_MS = 15_000;
 
@@ -98,7 +107,7 @@ export const billingApi = {
   createEmbeddedCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan: BillingPlan; extra_numbers?: number }) =>
     api<{ client_secret: string }>("/api/billing/checkout_embedded", { method: "POST", body: JSON.stringify(body) }),
   getSession: (sessionId: string) =>
-    api<{ email: string; barbershop_name?: string; temporary_password?: string; message?: string }>(
+    api<{ email: string; barbershop_name?: string; token?: string; message?: string }>(
       `/api/billing/session?session_id=${encodeURIComponent(sessionId)}`
     ),
   /** Create Stripe Customer Portal session (manage subscription, add-ons). Returns URL to open. */
@@ -117,6 +126,8 @@ export const authApi = {
     api<AuthProfile>("/api/auth/me"),
   changePassword: (body: { current_password: string; new_password: string }) =>
     api<void>("/api/auth/password", { method: "PATCH", body: JSON.stringify(body) }),
+  setFirstPassword: (newPassword: string) =>
+    api<void>("/api/auth/first-password", { method: "POST", body: JSON.stringify({ new_password: newPassword }) }),
   login: (email: string, password: string) =>
     api<{ token: string; profile: AuthProfile }>(
       "/api/auth/login",
@@ -136,7 +147,25 @@ export const authApi = {
     }),
 };
 
-export type BusinessHoursDay = { start: string; end: string } | null;
+export type DeleteBarbershopResponse = { deleted: true; redirect: "login" } | { deleted: true; switch_to: string };
+export type DeleteAccountResponse = { deleted: true; redirect: "login" };
+
+export const accountApi = {
+  deleteBarbershop: () =>
+    api<DeleteBarbershopResponse>("/api/account/barbershop", { method: "DELETE" }),
+  deleteAccount: () =>
+    api<DeleteAccountResponse>("/api/account", { method: "DELETE" }),
+};
+
+export type UnavailabilityInterval = {
+  start: string;
+  end: string;
+  reason?: string;
+};
+
+export type BusinessHoursDay =
+  | { start: string; end: string; unavailability_intervals?: UnavailabilityInterval[] }
+  | null;
 export type BusinessHours = {
   monday?: BusinessHoursDay;
   tuesday?: BusinessHoursDay;
@@ -169,6 +198,7 @@ export type BarbershopClosure = {
   start_time: string | null;
   end_time: string | null;
   reason: string | null;
+  unavailability_intervals?: UnavailabilityInterval[];
   created_at: string;
   updated_at: string;
 };
@@ -205,6 +235,7 @@ export const barbershopsApi = {
       start_time?: string;
       end_time?: string;
       reason?: string;
+      unavailability_intervals?: UnavailabilityInterval[];
     }) =>
       api("/api/barbershops/closures", {
         method: "POST",
@@ -219,6 +250,7 @@ export const barbershopsApi = {
         start_time?: string | null;
         end_time?: string | null;
         reason?: string | null;
+        unavailability_intervals?: UnavailabilityInterval[];
       }
     ) =>
       api(`/api/barbershops/closures/${id}`, {
@@ -231,9 +263,16 @@ export const barbershopsApi = {
 };
 
 export const barbersApi = {
-  list: () => api<Array<{ id: string; name: string; phone?: string; email?: string; status: string; commission_percentage: number; schedule?: unknown }>>("/api/barbers"),
+  list: () => {
+    const q = new URLSearchParams();
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    const qs = q.toString();
+    return api<Array<{ id: string; barbershop_id?: string; barbershop_name?: string; name: string; phone?: string; email?: string; status: string; commission_percentage: number; schedule?: unknown }>>(
+      qs ? `/api/barbers?${qs}` : "/api/barbers"
+    );
+  },
   get: (id: string) => api(`/api/barbers/${id}`),
-  create: (body: { name: string; phone?: string; email?: string; status?: string; commission_percentage?: number; schedule?: unknown }) =>
+  create: (body: { name: string; phone?: string; email?: string; status?: string; commission_percentage?: number; schedule?: unknown; barbershop_id?: string }) =>
     api("/api/barbers", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Record<string, unknown>) =>
     api(`/api/barbers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -241,10 +280,15 @@ export const barbersApi = {
 };
 
 export const servicesApi = {
-  list: () =>
-    api<
+  list: () => {
+    const q = new URLSearchParams();
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    const qs = q.toString();
+    return api<
       Array<{
         id: string;
+        barbershop_id?: string;
+        barbershop_name?: string;
         name: string;
         description?: string;
         price: number;
@@ -255,7 +299,8 @@ export const servicesApi = {
         points_to_earn?: number;
         points_to_redeem?: number | null;
       }>
-    >("/api/services"),
+    >(qs ? `/api/services?${qs}` : "/api/services");
+  },
   get: (id: string) => api(`/api/services/${id}`),
   create: (body: {
     name: string;
@@ -266,6 +311,7 @@ export const servicesApi = {
     is_active?: boolean;
     points_to_earn?: number;
     points_to_redeem?: number | null;
+    barbershop_id?: string;
   }) => api("/api/services", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Record<string, unknown>) =>
     api(`/api/services/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -314,12 +360,17 @@ export const loyaltyApi = {
 };
 
 export const clientsApi = {
-  list: (search?: string) =>
-    api<Array<{ id: string; name: string; phone: string; email?: string; notes?: string; total_visits: number; total_spent: number; loyalty_points: number; updated_at?: string }>>(
-      search ? `/api/clients?search=${encodeURIComponent(search)}` : "/api/clients"
-    ),
+  list: (search?: string) => {
+    const q = new URLSearchParams();
+    if (search) q.set("search", search);
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    const qs = q.toString();
+    return api<Array<{ id: string; barbershop_id?: string; barbershop_name?: string; name: string; phone: string; email?: string; notes?: string; total_visits: number; total_spent: number; loyalty_points: number; updated_at?: string }>>(
+      qs ? `/api/clients?${qs}` : "/api/clients"
+    );
+  },
   get: (id: string) => api(`/api/clients/${id}`),
-  create: (body: { name: string; phone: string; email?: string; notes?: string }) =>
+  create: (body: { name: string; phone: string; email?: string; notes?: string; barbershop_id?: string }) =>
     api("/api/clients", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Record<string, unknown>) =>
     api(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -405,6 +456,11 @@ export type AgentProfile = {
   verbosity?: "short" | "normal";
   salesStyle?: "soft" | "direct";
   hardRules?: Record<string, unknown>;
+  displayName?: string;
+  nickname?: string;
+  role?: string;
+  signMessages?: boolean;
+  signatureStyle?: "short" | "full";
 };
 
 export type AiSettings = {
@@ -417,17 +473,78 @@ export type AiSettings = {
   agent_profile?: AgentProfile | Record<string, unknown>;
   additional_instructions?: string | null;
   active_prompt_version_id?: string | null;
+  max_output_tokens?: number | null;
+  typing_simulation?: {
+    enabled?: boolean;
+    baseDelayMs?: number;
+    msPerChar?: number;
+    jitterMs?: number;
+  } | null;
   updated_at: string;
 };
 
-export type AiPromptVersion = { id: string; status: string; created_at: string };
+export type AiPromptVersion = {
+  id: string;
+  status: string;
+  created_at: string;
+  settings_snapshot?: Record<string, unknown>;
+  knowledge_snapshot?: { document_ids?: string[]; source_ids?: string[] };
+};
+
+export type WhatsAppInboxConversation = {
+  id: string;
+  client_name?: string;
+  client_phone?: string;
+  external_thread_id: string;
+  last_message_at?: string;
+  last_message?: {
+    role: "user" | "assistant" | "tool";
+    content: string;
+    created_at: string;
+  };
+  paused_until?: string | null;
+  paused_by?: string | null;
+};
+
+export type WhatsAppInboxMessage = {
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  created_at: string;
+  tool_name?: string | null;
+  provider_message_id?: string | null;
+  delivery_status?: string | null;
+  delivered_at?: string | null;
+};
 
 export const whatsappApi = {
   get: () => api<WhatsAppConnection>("/api/integrations/whatsapp"),
+  getNumberMode: () =>
+    api<{
+      mode: "account_wide" | "per_branch";
+      primary_barbershop_id?: string;
+      barbershops: Array<{ id: string; name: string }>;
+    }>("/api/integrations/whatsapp/number-mode"),
+  updateNumberMode: (body: {
+    mode: "account_wide" | "per_branch";
+    primary_barbershop_id?: string | null;
+  }) =>
+    api<{ mode: string; primary_barbershop_id?: string }>("/api/integrations/whatsapp/number-mode", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   assume: () =>
     api<{ ok: boolean; message: string }>("/api/integrations/whatsapp/assume", { method: "POST" }),
   resume: () =>
     api<{ ok: boolean; message: string }>("/api/integrations/whatsapp/resume", { method: "POST" }),
+  assumeConversation: (conversationId: string) =>
+    api<{ ok: boolean; message: string }>(`/api/integrations/whatsapp/conversations/${conversationId}/assume`, {
+      method: "POST",
+    }),
+  resumeConversation: (conversationId: string) =>
+    api<{ ok: boolean; message: string }>(`/api/integrations/whatsapp/conversations/${conversationId}/resume`, {
+      method: "POST",
+    }),
   getUsage: () =>
     api<{ used: number; limit: number; softExceeded: boolean; hardExceeded: boolean; billingPlan: string }>(
       "/api/integrations/whatsapp/usage"
@@ -487,6 +604,22 @@ export const whatsappApi = {
       expected_outcomes: string[];
       current_profile: AgentProfile;
     }>("/api/integrations/whatsapp/ai-analyze-chat", { method: "POST", body: JSON.stringify(params) }),
+  diagnosticChat: (params: {
+    messages: Array<{ role: "user" | "assistant"; content: string }>;
+    objectives?: string[];
+    attachments?: Array<{ name: string; mime_type?: string; text: string }>;
+  }) =>
+    api<{
+      reply: string;
+      recommended_profile_patch?: Record<string, unknown>;
+      recommended_additional_instructions_patch?: string | null;
+      risk_notes: string[];
+      expected_outcomes: string[];
+      current_profile: AgentProfile;
+    }>("/api/integrations/whatsapp/ai-diagnostic-chat", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
   getAiHealth: () =>
     api<{
       period_days: number;
@@ -496,31 +629,156 @@ export const whatsappApi = {
       last_24h: { total: number; with_violations: number };
       regression_detected: boolean;
     }>("/api/integrations/whatsapp/ai-health"),
+  listConversations: (params?: { limit?: number; search?: string; status?: "ai" | "manual"; updated_since?: string; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.search) q.set("search", params.search);
+    if (params?.status) q.set("status", params.status);
+    if (params?.updated_since) q.set("updated_since", params.updated_since);
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return api<{ conversations: WhatsAppInboxConversation[] }>(
+      `/api/integrations/whatsapp/conversations${qs ? `?${qs}` : ""}`
+    );
+  },
+  getConversationMessages: (conversationId: string, params?: { limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return api<{ messages: WhatsAppInboxMessage[] }>(
+      `/api/integrations/whatsapp/conversations/${conversationId}/messages${qs ? `?${qs}` : ""}`
+    );
+  },
+  syncConversationMessages: (conversationId: string) =>
+    api<{ inserted: number; last_synced_at: string }>(
+      `/api/integrations/whatsapp/conversations/${conversationId}/sync`,
+      { method: "POST" }
+    ),
+  sendConversationMessage: (conversationId: string, text: string) =>
+    api<{ ok: boolean; message_id: string }>(
+      `/api/integrations/whatsapp/conversations/${conversationId}/send-manual`,
+      { method: "POST", body: JSON.stringify({ text }) }
+    ),
+  getConversationContact: (conversationId: string) =>
+    api<{
+      contact: { id: string; name?: string; phone?: string; notes?: string } | null;
+      fallback_phone?: string;
+    }>(`/api/integrations/whatsapp/conversations/${conversationId}/contact`),
+  patchConversationContact: (
+    conversationId: string,
+    body: { name?: string; phone?: string; notes?: string }
+  ) =>
+    api<{
+      contact?: { id: string; name?: string; phone?: string; notes?: string };
+    }>(`/api/integrations/whatsapp/conversations/${conversationId}/contact`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  startConversation: (params: { client_id?: string; phone?: string }) =>
+    api<{ conversation_id: string; created: boolean; external_thread_id: string }>(
+      "/api/integrations/whatsapp/conversations/start",
+      { method: "POST", body: JSON.stringify(params) }
+    ),
+  deleteConversation: (conversationId: string) =>
+    api<{ ok: boolean }>(`/api/integrations/whatsapp/conversations/${conversationId}`, {
+      method: "DELETE",
+    }),
+  knowledge: {
+    getConfig: () =>
+      api<{ storage_configured: boolean }>("/api/integrations/whatsapp/knowledge/config"),
+    listSources: () =>
+      api<Array<{ id: string; name: string; enabled: boolean; created_at: string; updated_at: string }>>(
+        "/api/integrations/whatsapp/knowledge/sources"
+      ),
+    createSource: (name: string) =>
+      api<{ id: string; name: string; enabled: boolean; created_at: string }>(
+        "/api/integrations/whatsapp/knowledge/sources",
+        { method: "POST", body: JSON.stringify({ name }) }
+      ),
+    updateSource: (id: string, body: { name?: string; enabled?: boolean }) =>
+      api<{ id: string; name: string; enabled: boolean; created_at: string; updated_at: string }>(
+        `/api/integrations/whatsapp/knowledge/sources/${id}`,
+        { method: "PATCH", body: JSON.stringify(body) }
+      ),
+    listDocuments: (sourceId?: string) => {
+      const q = sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : "";
+      return api<Array<{
+        id: string;
+        barbershop_id: string;
+        source_id: string | null;
+        title: string;
+        original_filename: string;
+        mime_type: string;
+        size_bytes: number | null;
+        status: string;
+        last_error: string | null;
+        created_at: string;
+        updated_at: string;
+      }>>(`/api/integrations/whatsapp/knowledge/documents${q}`);
+    },
+    createDocument: (body: {
+      title: string;
+      original_filename: string;
+      mime_type: string;
+      source_id?: string | null;
+    }) =>
+      api<{
+        id: string;
+        title: string;
+        original_filename: string;
+        mime_type: string;
+        status: string;
+        upload_url: string;
+        s3_key: string;
+      }>("/api/integrations/whatsapp/knowledge/documents", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    completeDocument: (id: string, body?: { checksum_sha256?: string; size_bytes?: number }) =>
+      api<{ id: string; status: string }>(
+        `/api/integrations/whatsapp/knowledge/documents/${id}/complete`,
+        { method: "POST", body: JSON.stringify(body ?? {}) }
+      ),
+    deleteDocument: (id: string) =>
+      api<void>(`/api/integrations/whatsapp/knowledge/documents/${id}`, { method: "DELETE" }),
+  },
 };
 
 export const reportsApi = {
-  revenueByDay: (params: { from: string; to: string }) =>
-    api<Array<{ date: string; revenue: number; appointments: number }>>(
-      `/api/reports/revenue_by_day?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}`
-    ),
+  revenueByDay: (params: { from: string; to: string }) => {
+    const q = new URLSearchParams({ from: params.from, to: params.to });
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    return api<Array<{ date: string; revenue: number; appointments: number }>>(
+      `/api/reports/revenue_by_day?${q.toString()}`
+    );
+  },
   topServices: (params: { from: string; to: string; limit?: number }) => {
     const q = new URLSearchParams({ from: params.from, to: params.to });
     if (params.limit != null) q.set("limit", String(params.limit));
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
     return api<Array<{ service_id: string; service_name: string; count: number; revenue: number }>>(
       `/api/reports/top_services?${q.toString()}`
     );
   },
-  mvpMetrics: () =>
-    api<{
+  mvpMetrics: () => {
+    const q = new URLSearchParams();
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    const qs = q.toString();
+    return api<{
       noShowRate7d: number;
       noShowRate30d: number;
       reminders: { sent: number; failed: number; skipped: number };
       followUps: { sent: number; failed: number; skipped: number };
-    }>("/api/reports/mvp-metrics"),
-  commissionsByBarber: (params: { from: string; to: string }) =>
-    api<Array<{ barber_id: string; barber_name: string; total_commission: number }>>(
-      `/api/reports/commissions_by_barber?from=${encodeURIComponent(params.from)}&to=${encodeURIComponent(params.to)}`
-    ),
+    }>(qs ? `/api/reports/mvp-metrics?${qs}` : "/api/reports/mvp-metrics");
+  },
+  commissionsByBarber: (params: { from: string; to: string }) => {
+    const q = new URLSearchParams({ from: params.from, to: params.to });
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    return api<Array<{ barber_id: string; barber_name: string; barbershop_id?: string; barbershop_name?: string; total_commission: number }>>(
+      `/api/reports/commissions_by_barber?${q.toString()}`
+    );
+  },
 };
 
 export const publicApi = {
@@ -607,6 +865,8 @@ export type AppointmentListItem = {
   service_name: string;
   service_ids?: string[];
   service_names?: string[];
+  barbershop_id?: string;
+  barbershop_name?: string;
 };
 
 export const appointmentsApi = {
@@ -620,6 +880,7 @@ export const appointmentsApi = {
     if (params?.search) q.set("search", params.search);
     if (params?.limit != null) q.set("limit", String(params.limit));
     if (params?.offset != null) q.set("offset", String(params.offset));
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
     const qs = q.toString();
     return api<AppointmentListItem[]>(qs ? `/api/appointments?${qs}` : "/api/appointments");
   },
@@ -631,6 +892,7 @@ export const appointmentsApi = {
     scheduled_date: string;
     scheduled_time: string;
     notes?: string;
+    barbershop_id?: string;
   }) => api<AppointmentListItem & { service_ids?: string[]; service_names?: string[] }>("/api/appointments", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: {
     status?: string;

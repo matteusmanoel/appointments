@@ -13,13 +13,14 @@ import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
+import { markSetupTourTrigger } from "@/lib/setup-tour";
 
 interface ChangePasswordModalProps {
   open: boolean;
 }
 
 export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
-  const { refetchProfile } = useAuth();
+  const { refetchProfile, profile } = useAuth();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -37,15 +38,22 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
     }
     setLoading(true);
     try {
-      await authApi.changePassword({
-        current_password: currentPassword,
-        new_password: newPassword,
-      });
-      toastSuccess("Senha alterada. Faça login novamente se necessário.");
+      if (profile?.must_change_password) {
+        // First access: user may have logged in via onboarding token and doesn't know the temporary password.
+        await authApi.setFirstPassword(newPassword);
+        toastSuccess("Senha definida com sucesso.");
+      } else {
+        await authApi.changePassword({
+          current_password: currentPassword,
+          new_password: newPassword,
+        });
+        toastSuccess("Senha alterada. Faça login novamente se necessário.");
+      }
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
       await refetchProfile();
+      markSetupTourTrigger();
     } catch (e) {
       toastError(e instanceof Error ? e.message : "Erro ao alterar senha");
     } finally {
@@ -63,21 +71,23 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
         <DialogHeader>
           <DialogTitle>Altere sua senha</DialogTitle>
           <DialogDescription>
-            Se você recebeu uma senha temporária por e-mail ou é seu primeiro acesso, use-a como senha atual. Por segurança, defina uma nova senha.
+            Por segurança, defina uma nova senha para sua conta. No primeiro acesso, você pode definir a senha sem precisar da senha temporária.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="current-password">Senha atual (temporária ou atual)</Label>
-            <Input
-              id="current-password"
-              type="password"
-              autoComplete="current-password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-            />
-          </div>
+          {!profile?.must_change_password && (
+            <div className="space-y-2">
+              <Label htmlFor="current-password">Senha atual</Label>
+              <Input
+                id="current-password"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="new-password">Nova senha</Label>
             <Input

@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
-import { FileDown, Columns } from "lucide-react";
+import { FileDown, Columns, Search } from "lucide-react";
 import {
   appointmentsApi,
   barbersApi,
@@ -19,21 +19,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  FiltersBar,
+  FiltersBarField,
+} from "@/components/appointments/FiltersBar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { LoadingState } from "@/components/LoadingState";
 import { EmptyState } from "@/components/EmptyState";
 import { buildCsv, downloadCsv } from "@/lib/csv";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  FiltersBar,
-  FiltersBarField,
-  BarbersMultiSelect,
-} from "@/components/appointments/FiltersBar";
 
 const COLUMN_IDS = [
   "data",
@@ -152,7 +152,7 @@ export default function Relatorios() {
     from.setMonth(from.getMonth() - 1);
     return { from, to };
   });
-  const [barberIds, setBarberIds] = useState<string[]>([]);
+  const [filterSearch, setFilterSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
   const [visibleColumns, setVisibleColumns] = useState<(typeof COLUMN_IDS)[number][]>(() =>
     getStoredColumns(profileId),
@@ -176,25 +176,20 @@ export default function Relatorios() {
       "reports",
       fromStr,
       toStr,
-      barberIds.length === 1 ? barberIds[0] : barberIds.length > 1 ? "multi" : null,
+      filterSearch,
       statusFilter,
     ],
     queryFn: () =>
       appointmentsApi.list({
         from: fromStr,
         to: toStr,
-        barber_id: barberIds.length === 1 ? barberIds[0] : undefined,
         status: statusFilter !== "__all__" ? statusFilter : undefined,
+        search: filterSearch.trim() || undefined,
       }),
     enabled: !!fromStr && !!toStr,
   });
 
-  const appointments =
-    barberIds.length >= 2
-      ? appointmentsRaw.filter(
-          (a) => a.barber_id && barberIds.includes(a.barber_id),
-        )
-      : appointmentsRaw;
+  const appointments = appointmentsRaw;
 
   const toggleColumn = (colId: (typeof COLUMN_IDS)[number]) => {
     setVisibleColumns((prev) =>
@@ -250,11 +245,17 @@ export default function Relatorios() {
         }
         right={
           <div className="flex flex-wrap items-end gap-2">
-            <BarbersMultiSelect
-              barbers={barbers.map((b) => ({ id: b.id, name: b.name }))}
-              selectedIds={barberIds}
-              onChange={setBarberIds}
-            />
+            <FiltersBarField label="Buscar" width="barber">
+              <div className="relative min-w-[160px]">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Cliente, barbeiro ou serviço"
+                  value={filterSearch}
+                  onChange={(e) => setFilterSearch(e.target.value)}
+                  className="pl-8 h-10 w-full"
+                />
+              </div>
+            </FiltersBarField>
             <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm" className="gap-2">

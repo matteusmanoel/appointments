@@ -96,4 +96,26 @@ describe("WhatsApp AI routes", () => {
     expect(res.body).toHaveProperty("risk_notes");
     expect(res.body).toHaveProperty("expected_outcomes");
   });
+
+  it("POST /api/integrations/whatsapp/ai-diagnostic-chat returns assistant reply", async () => {
+    if (!barbershopId || !token) return;
+    const res = await request(app)
+      .post("/api/integrations/whatsapp/ai-diagnostic-chat")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        messages: [{ role: "user", content: "Analise e sugira melhorias para aumentar conversão sem exagerar emojis." }],
+        objectives: ["mais vendas", "menos emoji"],
+        attachments: [
+          {
+            name: "conversa.txt",
+            mime_type: "text/plain",
+            text: "user: oi\nassistant: Olá! Tudo bem?",
+          },
+        ],
+      })
+      .expect(200);
+    expect(typeof res.body.reply).toBe("string");
+    expect(res.body).toHaveProperty("risk_notes");
+    expect(res.body).toHaveProperty("expected_outcomes");
+  });
 });

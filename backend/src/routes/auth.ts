@@ -21,6 +21,10 @@ const changePasswordBody = z.object({
   new_password: z.string().min(8, "Nova senha deve ter no mínimo 8 caracteres"),
 });
 
+const firstPasswordBody = z.object({
+  new_password: z.string().min(8, "Nova senha deve ter no mínimo 8 caracteres"),
+});
+
 function generateTempPassword(): string {
   const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
   let s = "";
@@ -226,6 +230,41 @@ authRouter.patch("/password", requireJwt, async (req: Request, res: Response): P
     return;
   }
   const password_hash = await bcrypt.hash(new_password, 10);
+  await pool.query(
+    "UPDATE public.profiles SET password_hash = $1, must_change_password = false, updated_at = now() WHERE id = $2",
+    [password_hash, profileId]
+  );
+  res.status(204).send();
+});
+
+/**
+ * First access: set a new password without knowing the temporary password.
+ * Only allowed when must_change_password = true.
+ */
+authRouter.post("/first-password", requireJwt, async (req: Request, res: Response): Promise<void> => {
+  const profileId = req.auth?.profileId;
+  if (!profileId) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const parsed = firstPasswordBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  const r = await pool.query<{ must_change_password: boolean }>(
+    "SELECT must_change_password FROM public.profiles WHERE id = $1",
+    [profileId]
+  );
+  if (r.rows.length === 0) {
+    res.status(401).json({ error: "Profile not found" });
+    return;
+  }
+  if (!r.rows[0].must_change_password) {
+    res.status(400).json({ error: "Senha já foi definida para esta conta" });
+    return;
+  }
+  const password_hash = await bcrypt.hash(parsed.data.new_password, 10);
   await pool.query(
     "UPDATE public.profiles SET password_hash = $1, must_change_password = false, updated_at = now() WHERE id = $2",
     [password_hash, profileId]

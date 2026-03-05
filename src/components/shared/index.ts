@@ -3,4 +3,8 @@ export { ConfirmDialog } from "./ConfirmDialog";
 export { EntityActionsMenu } from "./EntityActionsMenu";
 export type { EntityAction } from "./EntityActionsMenu";
 export { EntityFormDialog } from "./EntityFormDialog";
+export { EntitySelectWithCreate } from "./EntitySelectWithCreate";
+export type { EntitySelectWithCreateProps } from "./EntitySelectWithCreate";
+export { EntityMultiSelectWithCreate } from "./EntityMultiSelectWithCreate";
+export type { EntityMultiSelectWithCreateProps } from "./EntityMultiSelectWithCreate";
 export { ThemeToggle } from "./ThemeToggle";

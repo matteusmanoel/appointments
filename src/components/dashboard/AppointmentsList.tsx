@@ -138,7 +138,7 @@ export function AppointmentsList({ range }: AppointmentsListProps) {
         </div>
         <Link
           to={agendamentosUrl}
-          className="text-sm font-medium text-primary hover:underline shrink-0"
+          className="text-sm font-bold text-primary hover:underline shrink-0 "
         >
           Ver todos
         </Link>

@@ -10,10 +10,11 @@ test.describe("Capture landing screenshots", () => {
   });
 
   test("capture dashboard screenshot", async ({ page }) => {
+    test.skip(process.env.E2E_DASHBOARD_EMAIL == null || process.env.E2E_DASHBOARD_PASSWORD == null, "Requer E2E_DASHBOARD_EMAIL e E2E_DASHBOARD_PASSWORD.");
     const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3002";
     await page.goto(`${baseURL}/login`, { waitUntil: "networkidle", timeout: 15000 });
-    await page.getByRole("textbox", { name: /email/i }).fill("admin@navalhia.com.br");
-    await page.locator('input[type="password"]').fill("admin123");
+    await page.getByRole("textbox", { name: /email/i }).fill(process.env.E2E_DASHBOARD_EMAIL!);
+    await page.locator('input[type="password"]').fill(process.env.E2E_DASHBOARD_PASSWORD!);
     await page.getByRole("button", { name: /entrar|login/i }).click();
     await expect(page).toHaveURL(/\/(app|dashboard)/, { timeout: 15000 });
     await page.waitForLoadState("networkidle");

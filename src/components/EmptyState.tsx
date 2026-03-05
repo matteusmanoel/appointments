@@ -6,6 +6,8 @@ interface EmptyStateProps {
   title: string;
   description?: string;
   className?: string;
+  /** Optional action (e.g. button or link) to guide the user */
+  action?: ReactNode;
 }
 
 export function EmptyState({
@@ -13,6 +15,7 @@ export function EmptyState({
   title,
   description,
   className,
+  action,
 }: EmptyStateProps) {
   return (
     <div
@@ -28,6 +31,7 @@ export function EmptyState({
       {description && (
         <p className="text-sm text-muted-foreground max-w-sm">{description}</p>
       )}
+      {action && <div className="mt-1">{action}</div>}
     </div>
   );
 }

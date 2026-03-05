@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { authApi, type BillingPlan, type AuthProfileBarbershop } from "@/lib/api";
-import { setToken, clearToken, getToken } from "@/lib/api";
+import { setToken, clearToken, getToken, setBarbershopScope } from "@/lib/api";
 
 export type Profile = {
   id: string;
@@ -19,20 +19,25 @@ type AuthState = {
   error: string | null;
   /** Set when switchBarbershop fails; clear with clearSwitchError. */
   switchError: string | null;
+  /** When "__all__", list APIs request all barbershops in the account. */
+  selectedScope: "__all__" | null;
 };
 
 const SELECTED_BARBERSHOP_KEY = "selected_barbershop_id";
+const SELECTED_SCOPE_KEY = "barbershop_scope";
 
-const initialState: AuthState = { profile: null, loading: true, error: null, switchError: null };
+const initialState: AuthState = { profile: null, loading: true, error: null, switchError: null, selectedScope: null };
 
 const AuthContext = createContext<AuthState & {
   login: (email: string, password: string) => Promise<void>;
+  loginWithToken: (token: string) => Promise<void>;
   logout: () => void;
   refetchProfile: () => void;
   switchBarbershop: (barbershopId: string) => Promise<void>;
+  setSelectedScope: (scope: "__all__" | null) => void;
   switchingBarbershop: boolean;
   clearSwitchError: () => void;
-}>(null as unknown as AuthState & { login: () => Promise<void>; logout: () => void; refetchProfile: () => void; switchBarbershop: (id: string) => Promise<void>; switchingBarbershop: boolean; clearSwitchError: () => void });
+}>(null as unknown as AuthState & { login: () => Promise<void>; loginWithToken: () => Promise<void>; logout: () => void; refetchProfile: () => void; switchBarbershop: (id: string) => Promise<void>; setSelectedScope: (s: "__all__" | null) => void; switchingBarbershop: boolean; clearSwitchError: () => void });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>(initialState);
@@ -74,16 +79,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Hidratar estado do storage antes do paint para evitar tela branca (Landing/Login retornam null quando loading)
   useLayoutEffect(() => {
     const stored = localStorage.getItem("profile");
+    const scopeStored = localStorage.getItem(SELECTED_SCOPE_KEY);
+    const selectedScope = scopeStored === "__all__" ? "__all__" : null;
     if (stored) {
       try {
         const profile = JSON.parse(stored) as Profile;
-        setState((s) => ({ ...s, profile, loading: false }));
+        setState((s) => ({ ...s, profile, loading: false, selectedScope }));
       } catch {
-        setState((s) => ({ ...s, loading: false }));
+        setState((s) => ({ ...s, loading: false, selectedScope }));
       }
     } else {
-      setState((s) => ({ ...s, loading: false }));
+      setState((s) => ({ ...s, loading: false, selectedScope }));
     }
+    setBarbershopScope(selectedScope);
   }, []);
 
   useEffect(() => {
@@ -117,16 +125,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const loginWithToken = useCallback(async (token: string) => {
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      setToken(token);
+      const profile = await authApi.me();
+      localStorage.setItem("profile", JSON.stringify(profile));
+      setState((s) => ({ ...s, profile, loading: false, error: null }));
+      restoredBarbershopRef.current = false;
+      await refetchProfile(true);
+    } catch (e) {
+      clearToken();
+      localStorage.removeItem("profile");
+      const message = e instanceof Error ? e.message : "Falha no login";
+      setState((s) => ({ ...s, profile: null, loading: false, error: message }));
+      throw e;
+    }
+  }, [refetchProfile]);
+
   const logout = useCallback(() => {
     clearToken();
     localStorage.removeItem("profile");
     localStorage.removeItem(SELECTED_BARBERSHOP_KEY);
+    localStorage.removeItem(SELECTED_SCOPE_KEY);
+    setBarbershopScope(null);
     restoredBarbershopRef.current = false;
-    setState((s) => ({ ...s, profile: null }));
+    setState((s) => ({ ...s, profile: null, selectedScope: null }));
   }, []);
 
   const switchBarbershop = useCallback(async (barbershopId: string) => {
-    setState((s) => ({ ...s, switchError: null }));
+    setState((s) => ({ ...s, switchError: null, selectedScope: null }));
+    setBarbershopScope(null);
+    localStorage.removeItem(SELECTED_SCOPE_KEY);
     setSwitchingBarbershop(true);
     try {
       const { token } = await authApi.switchBarbershop(barbershopId);
@@ -147,8 +177,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({ ...s, switchError: null }));
   }, []);
 
+  const setSelectedScope = useCallback((scope: "__all__" | null) => {
+    if (scope) {
+      localStorage.setItem(SELECTED_SCOPE_KEY, scope);
+      setBarbershopScope(scope);
+    } else {
+      localStorage.removeItem(SELECTED_SCOPE_KEY);
+      setBarbershopScope(null);
+    }
+    setState((s) => ({ ...s, selectedScope: scope }));
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ ...state, login, logout, refetchProfile, switchBarbershop, switchingBarbershop, clearSwitchError }}>
+    <AuthContext.Provider value={{ ...state, login, loginWithToken, logout, refetchProfile, switchBarbershop, setSelectedScope, switchingBarbershop, clearSwitchError }}>
       {children}
     </AuthContext.Provider>
   );

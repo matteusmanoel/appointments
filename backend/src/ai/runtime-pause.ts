@@ -16,22 +16,86 @@ export async function setAiPaused(
 ): Promise<void> {
   const hours = opts.hours ?? (opts.pausedBy === "auto" ? PAUSE_HOURS_AUTO : 4);
   const until = new Date(Date.now() + hours * 60 * 60 * 1000);
-  await pool.query(
-    `INSERT INTO public.barbershop_ai_runtime (barbershop_id, paused_until, paused_reason, paused_by, updated_at)
-     VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (barbershop_id) DO UPDATE SET paused_until = $2, paused_reason = $3, paused_by = $4, updated_at = now()`,
-    [barbershopId, until, opts.reason ?? null, opts.pausedBy]
-  );
+  try {
+    await pool.query(
+      `INSERT INTO public.barbershop_ai_runtime (barbershop_id, paused_until, paused_reason, paused_by, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (barbershop_id) DO UPDATE SET paused_until = $2, paused_reason = $3, paused_by = $4, updated_at = now()`,
+      [barbershopId, until, opts.reason ?? null, opts.pausedBy]
+    );
+  } catch (e) {
+    if (isUndefinedTable(e)) return;
+    throw e;
+  }
+}
+
+/**
+ * Pause a single conversation (handoff por conversa).
+ */
+export async function setConversationPaused(
+  conversationId: string,
+  opts: { pausedBy: "auto" | "manual" | "rule"; reason?: string; hours?: number }
+): Promise<void> {
+  const hours = opts.hours ?? (opts.pausedBy === "auto" ? PAUSE_HOURS_AUTO : 4);
+  const until = new Date(Date.now() + hours * 60 * 60 * 1000);
+  try {
+    await pool.query(
+      `INSERT INTO public.ai_conversation_runtime (conversation_id, paused_until, paused_by, paused_reason, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (conversation_id) DO UPDATE SET paused_until = $2, paused_by = $3, paused_reason = $4, updated_at = now()`,
+      [conversationId, until, opts.pausedBy, opts.reason ?? null]
+    );
+  } catch (e) {
+    if (isUndefinedTable(e)) return;
+    throw e;
+  }
+}
+
+/**
+ * Clear conversation pause (resume).
+ */
+export async function clearConversationPause(conversationId: string): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE public.ai_conversation_runtime SET paused_until = NULL, paused_by = NULL, paused_reason = NULL, updated_at = now() WHERE conversation_id = $1`,
+      [conversationId]
+    );
+  } catch (e) {
+    if (isUndefinedTable(e)) return;
+    throw e;
+  }
+}
+
+/**
+ * Returns true if this conversation is currently paused (paused_until > now()).
+ */
+export async function isConversationPaused(conversationId: string): Promise<boolean> {
+  try {
+    const r = await pool.query<{ paused_until: Date | null }>(
+      `SELECT paused_until FROM public.ai_conversation_runtime WHERE conversation_id = $1`,
+      [conversationId]
+    );
+    const until = r.rows[0]?.paused_until;
+    return until != null && until.getTime() > Date.now();
+  } catch (e) {
+    if (isUndefinedTable(e)) return false;
+    throw e;
+  }
 }
 
 /**
  * Clear IA pause (resume).
  */
 export async function clearAiPause(barbershopId: string): Promise<void> {
-  await pool.query(
-    `UPDATE public.barbershop_ai_runtime SET paused_until = NULL, paused_reason = NULL, paused_by = NULL, updated_at = now() WHERE barbershop_id = $1`,
-    [barbershopId]
-  );
+  try {
+    await pool.query(
+      `UPDATE public.barbershop_ai_runtime SET paused_until = NULL, paused_reason = NULL, paused_by = NULL, updated_at = now() WHERE barbershop_id = $1`,
+      [barbershopId]
+    );
+  } catch (e) {
+    if (isUndefinedTable(e)) return;
+    throw e;
+  }
 }
 
 /**

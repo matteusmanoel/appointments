@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
 
 const categoryEnum = z.enum(["corte", "barba", "combo", "tratamento", "adicional"]);
 const createBody = z.object({
@@ -14,6 +14,7 @@ const createBody = z.object({
   is_active: z.boolean().optional(),
   points_to_earn: z.number().int().min(0).optional(),
   points_to_redeem: z.number().int().min(0).nullable().optional(),
+  barbershop_id: z.string().uuid().optional(),
 });
 const updateBody = createBody.partial();
 
@@ -25,20 +26,48 @@ const serviceColumns =
   "id, barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active, points_to_earn, points_to_redeem, created_at, updated_at";
 
 servicesRouter.get("/", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const ids = "all" in scope ? scope.all : [scope.single];
   const r = await pool.query(
-    `SELECT ${serviceColumns} FROM public.services WHERE barbershop_id = $1 ORDER BY name`,
-    [barbershopId]
+    `SELECT s.id, s.barbershop_id, s.name, s.description, s.price, s.duration_minutes, s.commission_percentage, s.category, s.is_active, s.points_to_earn, s.points_to_redeem, s.created_at, s.updated_at
+     ${"all" in scope ? ", bs.name AS barbershop_name" : ""}
+     FROM public.services s
+     ${"all" in scope ? "JOIN public.barbershops bs ON bs.id = s.barbershop_id" : ""}
+     WHERE s.barbershop_id = ANY($1::uuid[]) ORDER BY s.name`,
+    [ids]
   );
   res.json(r.rows);
 });
 
 servicesRouter.post("/", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
   const parsed = createBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
+  }
+  let barbershopId: string;
+  if ("all" in scope) {
+    const bodyBarbershopId = parsed.data.barbershop_id;
+    if (!bodyBarbershopId || !scope.all.includes(bodyBarbershopId)) {
+      res.status(400).json({ error: "barbershop_id obrigatório e deve ser uma filial da sua conta" });
+      return;
+    }
+    barbershopId = bodyBarbershopId;
+  } else {
+    barbershopId = scope.single;
   }
   const { name, description, price, duration_minutes, commission_percentage, category, is_active, points_to_earn, points_to_redeem } = parsed.data;
   const r = await pool.query(
@@ -62,10 +91,17 @@ servicesRouter.post("/", async (req: Request, res: Response): Promise<void> => {
 });
 
 servicesRouter.get("/:id", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const ids = "all" in scope ? scope.all : [scope.single];
   const r = await pool.query(
-    `SELECT ${serviceColumns} FROM public.services WHERE id = $1 AND barbershop_id = $2`,
-    [req.params.id, barbershopId]
+    `SELECT ${serviceColumns} FROM public.services WHERE id = $1 AND barbershop_id = ANY($2::uuid[])`,
+    [req.params.id, ids]
   );
   if (r.rows.length === 0) {
     res.status(404).json({ error: "Service not found" });
@@ -75,7 +111,14 @@ servicesRouter.get("/:id", async (req: Request, res: Response): Promise<void> =>
 });
 
 servicesRouter.patch("/:id", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const ids = "all" in scope ? scope.all : [scope.single];
   const parsed = updateBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
@@ -93,16 +136,16 @@ servicesRouter.patch("/:id", async (req: Request, res: Response): Promise<void> 
   }
   if (updates.length === 0) {
     const r = await pool.query(
-      `SELECT ${serviceColumns} FROM public.services WHERE id = $1 AND barbershop_id = $2`,
-      [req.params.id, barbershopId]
+      `SELECT ${serviceColumns} FROM public.services WHERE id = $1 AND barbershop_id = ANY($2::uuid[])`,
+      [req.params.id, ids]
     );
     if (r.rows.length === 0) res.status(404).json({ error: "Service not found" });
     else res.json(r.rows[0]);
     return;
   }
-  values.push(req.params.id, barbershopId);
+  values.push(req.params.id, ids);
   const r = await pool.query(
-    `UPDATE public.services SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} AND barbershop_id = $${i + 1} RETURNING *`,
+    `UPDATE public.services SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} AND barbershop_id = ANY($${i + 1}::uuid[]) RETURNING *`,
     values
   );
   if (r.rows.length === 0) {
@@ -113,10 +156,17 @@ servicesRouter.patch("/:id", async (req: Request, res: Response): Promise<void> 
 });
 
 servicesRouter.delete("/:id", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const ids = "all" in scope ? scope.all : [scope.single];
   const r = await pool.query(
-    "DELETE FROM public.services WHERE id = $1 AND barbershop_id = $2 RETURNING id",
-    [req.params.id, barbershopId]
+    "DELETE FROM public.services WHERE id = $1 AND barbershop_id = ANY($2::uuid[]) RETURNING id",
+    [req.params.id, ids]
   );
   if (r.rows.length === 0) {
     res.status(404).json({ error: "Service not found" });

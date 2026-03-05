@@ -1,4 +1,4 @@
-# n8n — Uso da Product API (substituição do Base44)
+![1771858679621](image/N8N_PRODUCT_API_SETUP/1771858679621.png)# n8n — Uso da Product API (substituição do Base44)
 
 Os fluxos originais (`n8n-ia-barbeiro.json`, `n8n-mcp-barbeiro.json`) chamam a API externa **Base44**. Para o produto on-prem, as tools do MCP devem chamar a **Product API** do NavalhIA.
 
@@ -17,14 +17,14 @@ Os fluxos originais (`n8n-ia-barbeiro.json`, `n8n-mcp-barbeiro.json`) chamam a A
 
 ## Mapeamento Base44 → Product API
 
-| Tool (nome no agente) | Método Base44 | Product API |
-|-----------------------|---------------|-------------|
-| Listar serviços | GET entities/Service | `GET /api/tools/list_services?barbershop_id=<id>` |
-| Listar barbeiros | GET entities/Barber | `GET /api/tools/list_barbers?barbershop_id=<id>` |
-| Listar agendamentos | GET entities/Appointment?date= | `GET /api/tools/list_appointments?date=yyyy-MM-dd&barbershop_id=<id>` |
-| Buscar/criar cliente | GET/POST entities/Client | `POST /api/tools/upsert_client` (body: phone, name?, notes?) |
-| Atualizar cliente | PUT entities/Client/:id | Usar `upsert_client` (mesmo telefone atualiza) |
-| Criar agendamento | POST entities/Appointment | `POST /api/tools/create_appointment` (body: client_id, barber_id, service_id, date, time, notes?, client_phone?, client_name?) |
+| Tool (nome no agente) | Método Base44                  | Product API                                                                                                                    |
+| --------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Listar serviços       | GET entities/Service           | `GET /api/tools/list_services?barbershop_id=<id>`                                                                              |
+| Listar barbeiros      | GET entities/Barber            | `GET /api/tools/list_barbers?barbershop_id=<id>`                                                                               |
+| Listar agendamentos   | GET entities/Appointment?date= | `GET /api/tools/list_appointments?date=yyyy-MM-dd&barbershop_id=<id>`                                                          |
+| Buscar/criar cliente  | GET/POST entities/Client       | `POST /api/tools/upsert_client` (body: phone, name?, notes?)                                                                   |
+| Atualizar cliente     | PUT entities/Client/:id        | Usar `upsert_client` (mesmo telefone atualiza)                                                                                 |
+| Criar agendamento     | POST entities/Appointment      | `POST /api/tools/create_appointment` (body: client_id, barber_id, service_id, date, time, notes?, client_phone?, client_name?) |
 
 ## Cabeçalhos em todas as requisições
 

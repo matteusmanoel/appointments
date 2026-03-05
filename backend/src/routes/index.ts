@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authRouter } from "./auth.js";
+import { accountRouter } from "./account.js";
 import { billingRouter } from "./billing.js";
 import { barbershopsRouter } from "./barbershops.js";
 import { barbersRouter } from "./barbers.js";
@@ -16,6 +17,7 @@ import { integrationsRouter } from "./integrations.js";
 export const apiRouter = Router();
 
 apiRouter.use("/auth", authRouter);
+apiRouter.use("/account", accountRouter);
 apiRouter.use("/billing", billingRouter);
 apiRouter.use("/integrations", integrationsRouter);
 apiRouter.use("/barbershops", barbershopsRouter);

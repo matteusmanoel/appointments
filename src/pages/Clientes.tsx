@@ -21,6 +21,7 @@ import {
   EntityFormDialog,
 } from "@/components/shared";
 import { toastError, withToast } from "@/lib/toast-helpers";
+import { useAuth } from "@/contexts/AuthContext";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
 import {
@@ -34,6 +35,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const clientSchema = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
@@ -49,6 +57,7 @@ const clientSchema = z.object({
       "E-mail inválido",
     ),
   notes: z.string().optional(),
+  barbershop_id: z.string().uuid().optional(),
 });
 
 type ClientFormValues = z.infer<typeof clientSchema>;
@@ -67,6 +76,7 @@ type Client = {
 
 export default function Clientes() {
   const queryClient = useQueryClient();
+  const { profile, selectedScope } = useAuth();
   const [searchInput, setSearchInput] = useState("");
   const search = useDebouncedValue(searchInput, 300);
 
@@ -90,6 +100,9 @@ export default function Clientes() {
         phone: body.phone,
         email: body.email || undefined,
         notes: body.notes || undefined,
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["clients"] });
@@ -122,12 +135,13 @@ export default function Clientes() {
       phone: "",
       email: "",
       notes: "",
+      barbershop_id: "",
     },
   });
 
   const openCreate = () => {
     setEditingClient(null);
-    form.reset({ name: "", phone: "", email: "", notes: "" });
+    form.reset({ name: "", phone: "", email: "", notes: "", barbershop_id: "" });
     setFormOpen(true);
   };
 
@@ -160,6 +174,10 @@ export default function Clientes() {
         },
       );
     } else {
+      if (selectedScope === "__all__" && !values.barbershop_id) {
+        form.setError("barbershop_id", { message: "Selecione a filial." });
+        return;
+      }
       await withToast(createMutation.mutateAsync(values), {
         successMessage: "Cliente criado.",
         errorMessage: "Erro ao criar cliente.",
@@ -311,6 +329,12 @@ export default function Clientes() {
             icon={<User className="h-12 w-12" strokeWidth={1.5} />}
             title="Nenhum cliente encontrado"
             description="Cadastre clientes para agendar atendimentos e acumular pontos de fidelidade."
+            action={
+              <Button onClick={openCreate} className="mt-2">
+                <Plus className="h-4 w-4 mr-2" />
+                Cadastrar cliente
+              </Button>
+            }
           />
         )}
       </div>
@@ -340,6 +364,38 @@ export default function Clientes() {
       >
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && !editingClient && (
+              <FormField
+                control={form.control}
+                name="barbershop_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Filial <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <Select
+                      value={field.value || ""}
+                      onValueChange={field.onChange}
+                      required
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a filial" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {profile.barbershops.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="name"

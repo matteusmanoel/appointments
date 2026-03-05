@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { authApi } from "@/lib/api";
 import { toastSuccess, toastError } from "@/lib/toast-helpers";
+import { Info } from "lucide-react";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -24,6 +25,8 @@ export default function Login() {
   const { login, error, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const isFirstAccess = searchParams.get("first_access") === "1";
 
   useEffect(() => {
     if (error) toastError("Falha no login", undefined, error);
@@ -65,6 +68,15 @@ export default function Login() {
           <h1 className="text-2xl font-semibold text-foreground">NavalhIA</h1>
           <p className="text-sm text-muted-foreground mt-1">Entre com sua conta</p>
         </div>
+        {isFirstAccess && (
+          <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 flex gap-2 text-left">
+            <Info className="w-5 h-5 shrink-0 text-primary mt-0.5" />
+            <div className="text-sm text-muted-foreground">
+              <p className="font-medium text-foreground mb-0.5">Primeiro acesso após o pagamento?</p>
+              <p>Use o <strong>e-mail informado no checkout</strong> e a <strong>senha temporária</strong> enviada para esse e-mail. Confira também a pasta de spam.</p>
+            </div>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label htmlFor="email">Email <span className="text-destructive">*</span></Label>
@@ -118,6 +130,15 @@ export default function Login() {
               Informe o e-mail da sua conta. Se existir, enviaremos uma senha temporária. No próximo login você poderá definir uma nova senha.
             </DialogDescription>
           </DialogHeader>
+          {isFirstAccess && (
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 flex gap-2 text-left">
+              <Info className="w-5 h-5 shrink-0 text-primary mt-0.5" />
+              <div className="text-sm text-muted-foreground">
+                <p className="font-medium text-foreground mb-0.5">Primeiro acesso após o pagamento?</p>
+                <p>Use o <strong>e-mail informado no checkout</strong> e a <strong>senha temporária</strong> enviada para esse e-mail. Confira também a pasta de spam.</p>
+              </div>
+            </div>
+          )}
           <form onSubmit={handleForgotSubmit} className="space-y-4">
             <div>
               <Label htmlFor="forgot-email">Email</Label>

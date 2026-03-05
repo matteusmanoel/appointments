@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
+import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -22,12 +22,15 @@ import {
   Trash2,
   Lock,
   Building2,
+  BookOpen,
+  HelpCircle,
+  FileCode2,
 } from "lucide-react";
 import {
+  accountApi,
   authApi,
   barbershopsApi,
   billingApi,
-  whatsappApi,
   integrationsApi,
   reportsApi,
   getDefaultBusinessHours,
@@ -37,8 +40,6 @@ import {
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
 import { ConfirmDialog, EntityFormDialog } from "@/components/shared";
 import { LoadingState } from "@/components/LoadingState";
-import { WhatsAppSetupStepperModal } from "@/components/whatsapp/WhatsAppSetupStepperModal";
-import { ConnectTab } from "@/components/whatsapp/ConnectTab";
 import { toastError, toastSuccess, withToast } from "@/lib/toast-helpers";
 import {
   Form,
@@ -75,7 +76,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { hasPro, hasPremium } from "@/lib/plan";
 import { CheckoutModal } from "@/components/CheckoutModal";
 import { format, subDays } from "date-fns";
-
+import { ptBR } from "date-fns/locale";
+import { DatePicker } from "@/components/ui/date-picker";
 const settingsSections = [
   {
     id: "business",
@@ -134,6 +136,20 @@ const DAY_LABELS: { key: keyof BusinessHours; label: string }[] = [
   { key: "sunday", label: "Domingo" },
 ];
 
+/** Safe format for closure_date; avoids "Invalid time value" when date is invalid. */
+function formatClosureDateSafe(closureDate: string | null | undefined): string {
+  if (closureDate == null || closureDate === "") return "—";
+  try {
+    const dateOnly = closureDate.includes("T") ? closureDate.slice(0, 10) : closureDate.trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return closureDate.slice(0, 10) || "—";
+    const d = new Date(dateOnly + "T12:00:00");
+    if (Number.isNaN(d.getTime())) return dateOnly;
+    return format(d, "d MMM yyyy", { locale: ptBR });
+  } catch {
+    return closureDate.slice(0, 10) || "—";
+  }
+}
+
 function PaymentsCommissionsModal({
   open,
   onOpenChange,
@@ -156,7 +172,10 @@ function PaymentsCommissionsModal({
       open={open}
       onOpenChange={onOpenChange}
       title="Pagamentos e Comissões"
-      description="No MVP, o pagamento do atendimento não está integrado; a assinatura NavalhIA é via Stripe."
+      description="
+          Configure a porcentagem de comissão de cada barbeiro em Barbeiros. A
+          comissão é calculada sobre o valor do agendamento e exibida no
+          relatório e no modal do agendamento."
       footer={
         <>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -167,11 +186,6 @@ function PaymentsCommissionsModal({
       }
     >
       <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Configure a porcentagem de comissão de cada barbeiro em Barbeiros. A
-          comissão é calculada sobre o valor do agendamento e exibida no
-          relatório e no modal do agendamento.
-        </p>
         <div>
           <Label className="text-sm font-medium">
             Comissão prevista (últimos 30 dias)
@@ -210,49 +224,22 @@ export default function Configuracoes() {
   const [slugEdit, setSlugEdit] = useState("");
   const [deleteAccountConfirmOpen, setDeleteAccountConfirmOpen] =
     useState(false);
+  const [deleteBarbershopConfirmOpen, setDeleteBarbershopConfirmOpen] =
+    useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
   const [closureFormOpen, setClosureFormOpen] = useState(false);
   const [editingClosure, setEditingClosure] =
     useState<BarbershopClosure | null>(null);
-  const [whatsappOpen, setWhatsappOpen] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
-  const [whatsappPhone, setWhatsappPhone] = useState("");
-  const [webhookWarning, setWebhookWarning] = useState("");
-  const [testTo, setTestTo] = useState("");
-  const [testText, setTestText] = useState("");
   const [hoursState, setHoursState] = useState<BusinessHours>(
     getDefaultBusinessHours(),
   );
   const [linkCopied, setLinkCopied] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [portalLoading, setPortalLoading] = useState(false);
-  const [waPolicyAccepted, setWaPolicyAccepted] = useState(false);
+  const [showUnitsUpgradeModal, setShowUnitsUpgradeModal] = useState(false);
 
-  const { profile, refetchProfile, switchBarbershop } = useAuth();
+  const { profile, refetchProfile, switchBarbershop, logout } = useAuth();
 
-  useEffect(() => {
-    if (whatsappOpen && profile?.barbershop_id) {
-      try {
-        setWaPolicyAccepted(localStorage.getItem(`navalhia_wa_policy_${profile.barbershop_id}_v1`) === "1");
-      } catch {
-        setWaPolicyAccepted(false);
-      }
-    } else {
-      setWaPolicyAccepted(false);
-    }
-  }, [whatsappOpen, profile?.barbershop_id]);
-
-  const handleOpenBillingPortal = async () => {
-    setPortalLoading(true);
-    try {
-      const { url } = await billingApi.createPortalSession();
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch (e) {
-      toastError(e instanceof Error ? e.message : "Erro ao abrir portal de cobrança");
-    } finally {
-      setPortalLoading(false);
-    }
-  };
   const canUseWhatsAppAndNotifications = hasPro(profile);
   const isPremium = hasPremium(profile);
   const [unitsOpen, setUnitsOpen] = useState(false);
@@ -263,34 +250,6 @@ export default function Configuracoes() {
     queryFn: () => barbershopsApi.get(),
     retry: false,
     staleTime: 2 * 60 * 1000,
-  });
-
-  const { data: whatsappConnection, isLoading: whatsappLoading } = useQuery({
-    queryKey: ["integrations", "whatsapp"],
-    queryFn: () => whatsappApi.get(),
-    enabled: whatsappOpen,
-    retry: false,
-  });
-
-  const whatsappStatusQuery = useQuery({
-    queryKey: ["integrations", "whatsapp", "status"],
-    queryFn: () => whatsappApi.status(),
-    enabled:
-      whatsappOpen &&
-      (whatsappConnection?.status === "connecting" ||
-        whatsappConnection?.status === "connected"),
-    retry: false,
-    refetchInterval: (query) =>
-      query.state.data?.status === "connecting" && !query.state.error
-        ? 3000
-        : false,
-  });
-
-  const { data: whatsappUsage } = useQuery({
-    queryKey: ["integrations", "whatsapp", "usage"],
-    queryFn: () => whatsappApi.getUsage(),
-    enabled: whatsappOpen && !!whatsappConnection?.connected,
-    retry: false,
   });
 
   const patchMutation = useMutation({
@@ -322,56 +281,6 @@ export default function Configuracoes() {
     }
   }, [searchParams, setSearchParams]);
 
-  const whatsappStartMutation = useMutation({
-    mutationFn: (phone?: string) => whatsappApi.start(phone),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp"] });
-      queryClient.invalidateQueries({
-        queryKey: ["integrations", "whatsapp", "status"],
-      });
-      if (data?.webhook_warning) setWebhookWarning(data.webhook_warning);
-      else setWebhookWarning("");
-    },
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao conectar"),
-  });
-
-  const whatsappDisconnectMutation = useMutation({
-    mutationFn: () => whatsappApi.disconnect(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp"] });
-      toastSuccess("WhatsApp desconectado.");
-    },
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao desconectar"),
-  });
-
-  const whatsappSendTestMutation = useMutation({
-    mutationFn: (params?: { number?: string; text?: string }) =>
-      whatsappApi.sendTest(params),
-    onSuccess: () => toastSuccess("Mensagem de teste enviada."),
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao enviar teste"),
-  });
-  const whatsappAssumeMutation = useMutation({
-    mutationFn: () => whatsappApi.assume(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp"] });
-      toastSuccess("IA pausada. Você pode atender manualmente.");
-    },
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao pausar IA"),
-  });
-  const whatsappResumeMutation = useMutation({
-    mutationFn: () => whatsappApi.resume(),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp"] });
-      toastSuccess("IA retomada.");
-    },
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao retomar IA"),
-  });
-
   const { data: closuresList = [], isLoading: closuresLoading } = useQuery({
     queryKey: ["barbershops", "closures"],
     queryFn: () => barbershopsApi.closures.list(),
@@ -385,6 +294,11 @@ export default function Configuracoes() {
       start_time?: string;
       end_time?: string;
       reason?: string;
+      unavailability_intervals?: {
+        start: string;
+        end: string;
+        reason?: string;
+      }[];
     }) => barbershopsApi.closures.create(body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["barbershops", "closures"] });
@@ -408,6 +322,11 @@ export default function Configuracoes() {
         start_time?: string | null;
         end_time?: string | null;
         reason?: string | null;
+        unavailability_intervals?: {
+          start: string;
+          end: string;
+          reason?: string;
+        }[];
       };
     }) => barbershopsApi.closures.update(id, body),
     onSuccess: () => {
@@ -431,12 +350,18 @@ export default function Configuracoes() {
       toastError(e instanceof Error ? e.message : "Erro ao remover"),
   });
 
+  const unavailabilityIntervalSchema = z.object({
+    start: z.string().regex(/^\d{2}:\d{2}$/, "HH:mm"),
+    end: z.string().regex(/^\d{2}:\d{2}$/, "HH:mm"),
+    reason: z.string().max(200).optional(),
+  });
   const closureFormSchema = z.object({
     closure_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data yyyy-MM-dd"),
     status: z.enum(["closed", "open_partial"]),
     start_time: z.string().optional(),
     end_time: z.string().optional(),
     reason: z.string().max(500).optional(),
+    unavailability_intervals: z.array(unavailabilityIntervalSchema).optional(),
   });
   type ClosureFormValues = z.infer<typeof closureFormSchema>;
   const closureFormDefault: ClosureFormValues = {
@@ -445,10 +370,16 @@ export default function Configuracoes() {
     start_time: "",
     end_time: "",
     reason: "",
+    unavailability_intervals: [],
   };
   const closureForm = useForm<ClosureFormValues>({
     resolver: zodResolver(closureFormSchema),
     defaultValues: closureFormDefault,
+  });
+
+  const closureIntervals = useFieldArray({
+    control: closureForm.control,
+    name: "unavailability_intervals",
   });
 
   useEffect(() => {
@@ -459,6 +390,14 @@ export default function Configuracoes() {
         start_time: editingClosure.start_time?.slice(0, 5) ?? "",
         end_time: editingClosure.end_time?.slice(0, 5) ?? "",
         reason: editingClosure.reason ?? "",
+        unavailability_intervals:
+          (editingClosure.unavailability_intervals?.length ?? 0) > 0
+            ? editingClosure.unavailability_intervals!.map((i) => ({
+                start: i.start?.slice(0, 5) ?? "12:00",
+                end: i.end?.slice(0, 5) ?? "13:00",
+                reason: i.reason ?? "",
+              }))
+            : [],
       });
     } else if (closureFormOpen && !editingClosure) {
       closureForm.reset(closureFormDefault);
@@ -471,6 +410,20 @@ export default function Configuracoes() {
   };
 
   const onSubmitClosureForm = (values: ClosureFormValues) => {
+    const intervals =
+      values.unavailability_intervals
+        ?.filter(
+          (i) =>
+            i.start &&
+            i.end &&
+            /^\d{2}:\d{2}$/.test(i.start) &&
+            /^\d{2}:\d{2}$/.test(i.end),
+        )
+        .map((i) => ({
+          start: i.start,
+          end: i.end,
+          reason: i.reason || undefined,
+        })) ?? [];
     if (editingClosure) {
       updateClosureMutation.mutate({
         id: editingClosure.id,
@@ -479,6 +432,7 @@ export default function Configuracoes() {
           start_time: values.start_time || null,
           end_time: values.end_time || null,
           reason: values.reason || null,
+          unavailability_intervals: intervals,
         },
       });
     } else {
@@ -488,6 +442,7 @@ export default function Configuracoes() {
         start_time: values.start_time || undefined,
         end_time: values.end_time || undefined,
         reason: values.reason || undefined,
+        unavailability_intervals: intervals.length > 0 ? intervals : undefined,
       });
     }
   };
@@ -497,7 +452,11 @@ export default function Configuracoes() {
     slug: z
       .string()
       .optional()
-      .refine((v) => !v || (v.length >= 2 && v.length <= 80 && /^[a-z0-9-]+$/.test(v)), "Slug: apenas letras minúsculas, números e hífens (2–80 caracteres)"),
+      .refine(
+        (v) =>
+          !v || (v.length >= 2 && v.length <= 80 && /^[a-z0-9-]+$/.test(v)),
+        "Slug: apenas letras minúsculas, números e hífens (2–80 caracteres)",
+      ),
   });
   type NewUnitFormValues = z.infer<typeof newUnitSchema>;
   const newUnitForm = useForm<NewUnitFormValues>({
@@ -505,7 +464,8 @@ export default function Configuracoes() {
     defaultValues: { name: "", slug: "" },
   });
   const createBranchMutation = useMutation({
-    mutationFn: (body: { name: string; slug?: string }) => barbershopsApi.createBranch(body),
+    mutationFn: (body: { name: string; slug?: string }) =>
+      barbershopsApi.createBranch(body),
     onSuccess: async (created) => {
       setNewUnitModalOpen(false);
       setUnitsOpen(false);
@@ -514,7 +474,8 @@ export default function Configuracoes() {
       await switchBarbershop(created.id);
       toastSuccess("Nova unidade criada. Você está nela agora.");
     },
-    onError: (e) => toastError(e instanceof Error ? e.message : "Erro ao criar unidade"),
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao criar unidade"),
   });
   const onSubmitNewUnit = (values: NewUnitFormValues) => {
     createBranchMutation.mutate({
@@ -643,6 +604,20 @@ export default function Configuracoes() {
     });
   };
 
+  const deleteBarbershopMutation = useMutation({
+    mutationFn: () => accountApi.deleteBarbershop(),
+    onError: (e) => {
+      toastError("Não foi possível excluir a unidade.", e);
+    },
+  });
+
+  const deleteAccountMutation = useMutation({
+    mutationFn: () => accountApi.deleteAccount(),
+    onError: (e) => {
+      toastError("Não foi possível excluir a conta.", e);
+    },
+  });
+
   return (
     <>
       <div className="animate-fade-in">
@@ -653,44 +628,105 @@ export default function Configuracoes() {
           </p>
         </div>
 
-        <div className="space-y-4 max-w-3xl">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           <button
             type="button"
-            className="w-full stat-card flex items-center gap-4 text-left hover:border-accent/50 transition-colors"
+            className="stat-card flex flex-col items-center gap-3 text-center p-6 hover:border-accent/50 transition-colors"
             onClick={openBusiness}
           >
-            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <Store className="w-6 h-6 text-primary" />
+            <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Store className="w-8 h-8 text-primary" />
             </div>
-            <div className="flex-1">
-              <h3 className="font-medium text-foreground">Dados da NavalhIA</h3>
-              <p className="text-sm text-muted-foreground">
+            <div className="min-w-0">
+              <h3 className="font-semibold text-base text-foreground">
+                Dados da NavalhIA
+              </h3>
+              <p className="text-muted-foreground mt-0.5 text-sm">
                 Nome, endereço e informações de contato
               </p>
             </div>
             <ChevronRight className="w-5 h-5 text-muted-foreground" />
           </button>
 
-          {isPremium && (
+          {isPremium ? (
             <button
               type="button"
-              className="w-full stat-card flex items-center gap-4 text-left transition-colors hover:border-accent/50"
+              className="stat-card flex flex-col items-center gap-3 text-center p-6 transition-colors hover:border-accent/50"
               onClick={() => setUnitsOpen(true)}
             >
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <Building2 className="w-6 h-6 text-primary" />
+              <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Building2 className="w-8 h-8 text-primary" />
               </div>
-              <div className="flex-1 text-left">
-                <h3 className="font-medium text-foreground">
+              <div className="min-w-0 text-center">
+                <h3 className="font-semibold text-base text-foreground">
                   Unidades (filiais)
                 </h3>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-muted-foreground mt-0.5 text-sm">
                   Gerencie e adicione novas unidades da sua conta.
                 </p>
               </div>
               <ChevronRight className="w-5 h-5 text-muted-foreground" />
             </button>
+          ) : (
+            <button
+              type="button"
+              className="stat-card flex flex-col items-center gap-3 text-center p-6 transition-colors hover:border-accent/50"
+              onClick={() => setShowUnitsUpgradeModal(true)}
+            >
+              <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Building2 className="w-8 h-8 text-primary" />
+              </div>
+              <div className="min-w-0 text-center">
+                <h3 className="font-semibold text-base text-foreground">
+                  Unidades (filiais)
+                  <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-primary">
+                    <Lock className="h-3 w-3" />
+                    (Plano Premium)
+                  </span>
+                </h3>
+                <p className="text-muted-foreground mt-0.5 text-sm">
+                  Gerencie e adicione novas unidades da sua conta.
+                </p>
+              </div>
+              <Lock className="w-5 h-5 text-muted-foreground shrink-0" />
+            </button>
           )}
+
+          <Link
+            to="/app/ajuda/whatsapp"
+            className="stat-card flex flex-col items-center gap-3 text-center p-6 hover:border-accent/50 transition-colors no-underline text-foreground"
+          >
+            <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <HelpCircle className="w-8 h-8 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-base text-foreground">
+                Tutorial WhatsApp
+              </h3>
+              <p className="text-muted-foreground mt-0.5 text-sm">
+                Passo a passo para conectar e configurar o assistente de IA.
+              </p>
+            </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground" />
+          </Link>
+
+          <Link
+            to="/docs"
+            className="stat-card flex flex-col items-center gap-3 text-center p-6 hover:border-accent/50 transition-colors no-underline text-foreground"
+          >
+            <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <FileCode2 className="w-8 h-8 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-base text-foreground">
+                Documentação da API
+              </h3>
+              <p className="text-muted-foreground mt-0.5 text-sm">
+                Referência dos endpoints para integrações e desenvolvedores.
+              </p>
+            </div>
+            <ChevronRight className="w-5 h-5 text-muted-foreground" />
+          </Link>
 
           {settingsSections
             .filter((s) => s.id !== "business")
@@ -699,14 +735,14 @@ export default function Configuracoes() {
                 section.id === "whatsapp" && !canUseWhatsAppAndNotifications;
               const handleClick =
                 section.id === "hours"
-                  ? openHours
+                  ? () => navigate("/app/integracoes?step=hours")
                   : section.id === "booking"
                     ? openBooking
                     : section.id === "security"
                       ? () => setSecurityOpen(true)
                       : section.id === "whatsapp"
                         ? canUseWhatsAppAndNotifications
-                          ? () => setWhatsappOpen(true)
+                          ? () => navigate("/app/integracoes")
                           : () => setShowUpgradeModal(true)
                         : section.id === "payments"
                           ? () => setPaymentsOpen(true)
@@ -715,14 +751,14 @@ export default function Configuracoes() {
                 <button
                   key={section.id}
                   type="button"
-                  className={`w-full stat-card flex items-center gap-4 text-left transition-colors ${section.id === "hours" || section.id === "booking" || section.id === "security" || section.id === "whatsapp" || section.id === "payments" ? "hover:border-accent/50" : "opacity-90"}`}
+                  className={`stat-card flex flex-col items-center gap-3 text-center p-6 transition-colors ${section.id === "hours" || section.id === "booking" || section.id === "security" || section.id === "whatsapp" || section.id === "payments" ? "hover:border-accent/50" : "opacity-90"}`}
                   onClick={handleClick}
                 >
-                  <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <section.icon className="w-6 h-6 text-primary" />
+                  <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <section.icon className="w-8 h-8 text-primary" />
                   </div>
-                  <div className="flex-1 text-left">
-                    <h3 className="font-medium text-foreground">
+                  <div className="flex-1 min-w-0 text-center">
+                    <h3 className="font-semibold text-base text-foreground">
                       {section.title}
                       {isProOnly && (
                         <span className="ml-2 inline-flex items-center gap-1 text-xs font-normal text-primary">
@@ -731,7 +767,7 @@ export default function Configuracoes() {
                         </span>
                       )}
                     </h3>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-muted-foreground mt-0.5 text-sm">
                       {section.description}
                     </p>
                     {section.id !== "hours" &&
@@ -754,16 +790,39 @@ export default function Configuracoes() {
             })}
         </div>
 
-        <div className="mt-12 max-w-3xl">
+        <div className="mt-12 max-w-3xl space-y-4">
           <h2 className="text-lg font-semibold text-foreground mb-4">
             Zona de Perigo
           </h2>
           <div className="stat-card border-destructive/20">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-3">
               <div>
-                <h3 className="font-medium text-foreground">Encerrar Conta</h3>
+                <h3 className="font-medium text-foreground">
+                  Excluir unidade (filial)
+                </h3>
                 <p className="text-sm text-muted-foreground">
-                  Esta ação é irreversível e excluirá todos os seus dados.
+                  Remove esta barbearia e todos os dados vinculados a ela.
+                  Irreversível.
+                </p>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setDeleteBarbershopConfirmOpen(true)}
+              >
+                Excluir unidade
+              </Button>
+            </div>
+          </div>
+          <div className="stat-card border-destructive/20">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <h3 className="font-medium text-foreground">
+                  Excluir conta inteira
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Remove todas as filiais, assinatura e dados da conta. Apenas o
+                  dono da conta pode fazer isso.
                 </p>
               </div>
               <Button
@@ -771,7 +830,7 @@ export default function Configuracoes() {
                 size="sm"
                 onClick={() => setDeleteAccountConfirmOpen(true)}
               >
-                Excluir Conta
+                Excluir conta
               </Button>
             </div>
           </div>
@@ -900,9 +959,7 @@ export default function Configuracoes() {
                     {b.name || "Unidade"}
                   </p>
                   {b.slug && (
-                    <p className="text-xs text-muted-foreground">
-                      /b/{b.slug}
-                    </p>
+                    <p className="text-xs text-muted-foreground">/b/{b.slug}</p>
                   )}
                 </div>
                 {b.id === profile?.barbershop_id && (
@@ -1127,6 +1184,17 @@ export default function Configuracoes() {
         }
       >
         <div className="space-y-0 min-w-0">
+          <p className="text-sm text-muted-foreground mb-4">
+            Você também pode configurar horários e exceções na página{" "}
+            <Link
+              to="/app/integracoes?step=hours"
+              className="text-primary font-medium underline underline-offset-2 hover:no-underline"
+              onClick={() => setHoursOpen(false)}
+            >
+              Integrações
+            </Link>
+            .
+          </p>
           {DAY_LABELS.map(({ key, label }) => {
             const day = hoursState[key];
             const isOpen =
@@ -1213,7 +1281,9 @@ export default function Configuracoes() {
                   className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-sm"
                 >
                   <div className="min-w-0">
-                    <span className="font-medium">{c.closure_date}</span>
+                    <span className="font-medium" title={c.closure_date}>
+                      {formatClosureDateSafe(c.closure_date)}
+                    </span>
                     <span className="text-muted-foreground ml-2">
                       {c.status === "closed" ? "Fechado" : "Aberto parcial"}
                       {c.reason ? ` · ${c.reason}` : ""}
@@ -1311,7 +1381,18 @@ export default function Configuracoes() {
                   <FormItem>
                     <FormLabel>Data</FormLabel>
                     <FormControl>
-                      <Input type="date" {...field} />
+                      <DatePicker
+                        value={
+                          field.value && /^\d{4}-\d{2}-\d{2}$/.test(field.value)
+                            ? new Date(field.value + "T12:00:00")
+                            : null
+                        }
+                        onChange={(d) =>
+                          d && field.onChange(format(d, "yyyy-MM-dd"))
+                        }
+                        placeholder="Selecione a data"
+                        triggerVariant="compact"
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1320,8 +1401,11 @@ export default function Configuracoes() {
             )}
             {editingClosure && (
               <div className="text-sm text-muted-foreground">
-                Data: <strong>{editingClosure.closure_date}</strong> (não
-                editável)
+                Data:{" "}
+                <strong title={editingClosure.closure_date}>
+                  {formatClosureDateSafe(editingClosure.closure_date)}
+                </strong>{" "}
+                (não editável)
               </div>
             )}
             <FormField
@@ -1330,20 +1414,24 @@ export default function Configuracoes() {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Status</FormLabel>
-                  <select
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                  <Select
                     value={field.value}
-                    onChange={(e) =>
-                      field.onChange(
-                        e.target.value as "closed" | "open_partial",
-                      )
+                    onValueChange={(v) =>
+                      field.onChange(v as "closed" | "open_partial")
                     }
                   >
-                    <option value="closed">Fechado (dia todo)</option>
-                    <option value="open_partial">
-                      Aberto parcial (informe horário abaixo)
-                    </option>
-                  </select>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="closed">Fechado (dia todo)</SelectItem>
+                      <SelectItem value="open_partial">
+                        Aberto parcial (informe horário abaixo)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}
@@ -1403,59 +1491,72 @@ export default function Configuracoes() {
                 </FormItem>
               )}
             />
+            {closureForm.watch("status") === "open_partial" && (
+              <div className="space-y-2">
+                <Label>Intervalos de indisponibilidade (ex.: almoço)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Bloqueie horários dentro do expediente em que não há
+                  atendimento.
+                </p>
+                {closureIntervals.fields.map((field, index) => (
+                  <div
+                    key={field.id}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2"
+                  >
+                    <Input
+                      type="time"
+                      className="w-[100px]"
+                      {...closureForm.register(
+                        `unavailability_intervals.${index}.start`,
+                      )}
+                    />
+                    <span className="text-muted-foreground">até</span>
+                    <Input
+                      type="time"
+                      className="w-[100px]"
+                      {...closureForm.register(
+                        `unavailability_intervals.${index}.end`,
+                      )}
+                    />
+                    <Input
+                      placeholder="Motivo (opcional)"
+                      className="flex-1 min-w-[120px]"
+                      {...closureForm.register(
+                        `unavailability_intervals.${index}.reason`,
+                      )}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => closureIntervals.remove(index)}
+                      aria-label="Remover"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    closureIntervals.append({
+                      start: "12:00",
+                      end: "13:00",
+                      reason: "",
+                    })
+                  }
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Adicionar intervalo
+                </Button>
+              </div>
+            )}
           </form>
         </Form>
       </EntityFormDialog>
-
-      <WhatsAppSetupStepperModal
-        open={whatsappOpen}
-        onOpenChange={(open) => {
-          setWhatsappOpen(open);
-          if (!open) {
-            setWebhookWarning("");
-            setTestTo("");
-            setTestText("");
-          }
-        }}
-        onOpenHours={() => {
-          setWhatsappOpen(false);
-          setHoursOpen(true);
-        }}
-        whatsappConnected={!!(whatsappConnection?.connected || whatsappStatusQuery.data?.connected)}
-        canUseWhatsApp={canUseWhatsAppAndNotifications}
-        connectStepContent={
-          <ConnectTab
-            loading={whatsappLoading}
-            connection={whatsappConnection ?? null}
-            statusData={whatsappStatusQuery.data ?? null}
-            usage={whatsappUsage ?? null}
-            webhookWarning={webhookWarning}
-            testTo={testTo}
-            setTestTo={setTestTo}
-            testText={testText}
-            setTestText={setTestText}
-            whatsappPhone={whatsappPhone}
-            setWhatsappPhone={setWhatsappPhone}
-            onAssume={() => whatsappAssumeMutation.mutate()}
-            onResume={() => whatsappResumeMutation.mutate()}
-            onStart={(phone) => whatsappStartMutation.mutate(phone)}
-            onDisconnect={() => whatsappDisconnectMutation.mutate()}
-            onSendTest={(params) => whatsappSendTestMutation.mutate(params)}
-            onOpenBillingPortal={canUseWhatsAppAndNotifications ? handleOpenBillingPortal : undefined}
-            portalLoading={portalLoading}
-            canUseWhatsApp={canUseWhatsAppAndNotifications}
-            assumePending={whatsappAssumeMutation.isPending}
-            resumePending={whatsappResumeMutation.isPending}
-            startPending={whatsappStartMutation.isPending}
-            disconnectPending={whatsappDisconnectMutation.isPending}
-            sendTestPending={whatsappSendTestMutation.isPending}
-            formatPhoneBR={formatPhoneBR}
-            parsePhoneBR={parsePhoneBR}
-            hasAcceptedPolicy={waPolicyAccepted}
-            barbershopId={profile?.barbershop_id ?? null}
-          />
-        }
-      />
 
       <EntityFormDialog
         open={securityOpen}
@@ -1541,15 +1642,47 @@ export default function Configuracoes() {
       </EntityFormDialog>
 
       <ConfirmDialog
+        open={deleteBarbershopConfirmOpen}
+        onOpenChange={setDeleteBarbershopConfirmOpen}
+        title="Excluir unidade (filial)"
+        description="Todos os dados desta barbearia (agendamentos, clientes, barbeiros, serviços, configurações) serão apagados de forma permanente. Não é possível desfazer."
+        confirmLabel="Excluir unidade"
+        cancelLabel="Cancelar"
+        variant="destructive"
+        onConfirm={async () => {
+          try {
+            const data = await deleteBarbershopMutation.mutateAsync(undefined);
+            setDeleteBarbershopConfirmOpen(false);
+            if ("switch_to" in data && data.switch_to) {
+              await switchBarbershop(data.switch_to);
+              queryClient.invalidateQueries();
+              navigate("/app/configuracoes", { replace: true });
+            } else {
+              logout();
+              navigate("/login", { replace: true });
+            }
+          } catch {
+            // Error already handled by mutation onError
+          }
+        }}
+      />
+      <ConfirmDialog
         open={deleteAccountConfirmOpen}
         onOpenChange={setDeleteAccountConfirmOpen}
-        title="Excluir conta"
-        description="Esta funcionalidade ainda não está disponível. Entre em contato com o suporte para encerrar sua conta."
-        confirmLabel="Entendi"
-        cancelLabel="Fechar"
-        variant="default"
-        onConfirm={() => {
-          toastSuccess("Em breve esta opção estará disponível.");
+        title="Excluir conta inteira"
+        description="Todas as filiais, assinaturas e dados da sua conta serão apagados de forma permanente. Apenas o dono da conta pode fazer isso. Não é possível desfazer."
+        confirmLabel="Excluir conta"
+        cancelLabel="Cancelar"
+        variant="destructive"
+        onConfirm={async () => {
+          try {
+            await deleteAccountMutation.mutateAsync(undefined);
+            setDeleteAccountConfirmOpen(false);
+            logout();
+            navigate("/login", { replace: true });
+          } catch {
+            // Error already handled by mutation onError
+          }
         }}
       />
 
@@ -1557,6 +1690,11 @@ export default function Configuracoes() {
         open={showUpgradeModal}
         onOpenChange={setShowUpgradeModal}
         initialPlan="pro"
+      />
+      <CheckoutModal
+        open={showUnitsUpgradeModal}
+        onOpenChange={setShowUnitsUpgradeModal}
+        initialPlan="premium"
       />
     </>
   );

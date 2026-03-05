@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,10 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Check, Loader2, Wifi, AlertCircle, ShieldAlert } from "lucide-react";
+import { Check, Loader2, AlertCircle, ShieldAlert, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { whatsappApi } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
 
 export type ConnectTabProps = {
   loading: boolean;
@@ -54,6 +56,19 @@ export type ConnectTabProps = {
   hasAcceptedPolicy?: boolean;
   /** ID do estabelecimento para persistir aceite por tenant (localStorage). */
   barbershopId?: string | null;
+  /** Modo do número (só quando há múltiplas filiais). */
+  numberMode?: {
+    mode: "account_wide" | "per_branch";
+    primary_barbershop_id?: string | null;
+    barbershops: Array<{ id: string; name: string }>;
+  } | null;
+  onNumberModeChange?: (mode: "account_wide" | "per_branch", primaryBarbershopId?: string | null) => void;
+  numberModeLoading?: boolean;
+  numberModeSaving?: boolean;
+  /** Chamado quando a barra de progresso atinge o timeout (para refetch do status/QR). */
+  onRefetchStatus?: () => void;
+  /** Tempo em segundos até considerar timeout e disparar refetch. Padrão 60. */
+  connectionTimeoutSeconds?: number;
 };
 
 export function ConnectTab({
@@ -85,28 +100,77 @@ export function ConnectTab({
   parsePhoneBR,
   hasAcceptedPolicy = false,
   barbershopId,
+  numberMode = null,
+  onNumberModeChange,
+  numberModeLoading = false,
+  numberModeSaving = false,
+  onRefetchStatus,
+  connectionTimeoutSeconds = 60,
 }: ConnectTabProps) {
   const [acceptedPolicy, setAcceptedPolicy] = useState(hasAcceptedPolicy);
   const [acceptedUse, setAcceptedUse] = useState(false);
-  const [connectivityResult, setConnectivityResult] = useState<{
-    api: string;
-    uazapi: { ok: boolean; error?: string };
-  } | null>(null);
-
-  const connectivityMutation = useMutation({
-    mutationFn: () => whatsappApi.getConnectivity(),
-    onSuccess: (data) => setConnectivityResult(data),
-    onError: () =>
-      setConnectivityResult({
-        api: "error",
-        uazapi: { ok: false, error: "Falha ao chamar a API" },
-      }),
-  });
+  /** Percentual restante (100 → 0) para barra regressiva ao aguardar pareamento */
+  const [connectingRemainingPct, setConnectingRemainingPct] = useState(100);
+  const connectCycleStartRef = useRef<number>(0);
+  /** Após fim da barra: exibir resultado do refetch (sucesso ou erro) */
+  const [refetchResult, setRefetchResult] = useState<"success" | "error" | null>(null);
+  const [refetchResultMessage, setRefetchResultMessage] = useState<string | null>(null);
+  const refetchTriggeredByBarRef = useRef(false);
 
   const isConnected = !!(connection?.connected || statusData?.connected);
   const isConnecting =
     !isConnected &&
     (statusData?.status === "connecting" || connection?.status === "connecting");
+
+  // Limpar resultado do refetch após alguns segundos
+  useEffect(() => {
+    if (!refetchResult) return;
+    const t = setTimeout(() => setRefetchResult(null), 8000);
+    return () => clearTimeout(t);
+  }, [refetchResult]);
+
+  // Barra regressiva: 100 → 0 a cada connectionTimeoutSeconds; ao chegar em 0 dispara refetch e marca que foi pela barra
+  useEffect(() => {
+    if (!isConnecting) {
+      setConnectingRemainingPct(100);
+      return;
+    }
+    connectCycleStartRef.current = Date.now();
+    const durationMs = connectionTimeoutSeconds * 1000;
+    const interval = setInterval(() => {
+      const start = connectCycleStartRef.current;
+      const elapsed = Date.now() - start;
+      const remainingPct = Math.max(0, 100 - (elapsed / durationMs) * 100);
+      setConnectingRemainingPct(remainingPct);
+      if (remainingPct <= 0 && onRefetchStatus) {
+        refetchTriggeredByBarRef.current = true;
+        onRefetchStatus();
+        connectCycleStartRef.current = Date.now();
+        setConnectingRemainingPct(100);
+      }
+    }, 150);
+    return () => clearInterval(interval);
+  }, [isConnecting, connectionTimeoutSeconds, onRefetchStatus]);
+
+  // Quando isConnecting deixa de ser true e o refetch foi disparado pela barra: sinalizar resultado ao usuário
+  const prevConnectingRef = useRef(false);
+  useEffect(() => {
+    const wasConnecting = prevConnectingRef.current;
+    prevConnectingRef.current = isConnecting;
+    if (wasConnecting && !isConnecting && refetchTriggeredByBarRef.current) {
+      refetchTriggeredByBarRef.current = false;
+      if (connection?.connected || statusData?.connected) {
+        setRefetchResult("success");
+        setRefetchResultMessage("Conexão estabelecida!");
+      } else {
+        setRefetchResult("error");
+        setRefetchResultMessage(
+          connection?.last_error?.trim() ||
+            "Ainda não conectado. Escaneie o QR Code ou tente novamente."
+        );
+      }
+    }
+  }, [isConnecting, connection?.connected, connection?.last_error, statusData?.connected, statusData?.status]);
 
   useEffect(() => {
     if (acceptedPolicy && acceptedUse && barbershopId) {
@@ -143,44 +207,73 @@ export function ConnectTab({
               A conexão é feita por QR (pareamento com seu número) e está sujeita às políticas do WhatsApp. Recomendamos usar um número dedicado para automação. O sistema é para atendimento a quem te procurar e reativação de clientes que já passaram pelo seu estabelecimento — não para disparos promocionais em massa.
             </p>
           </CardHeader>
-          {connectRequiresAccept && (
-            <CardContent className="space-y-3 pt-0">
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  id="accept-policy"
-                  checked={acceptedPolicy}
-                  onCheckedChange={(c) => setAcceptedPolicy(!!c)}
-                />
-                <Label htmlFor="accept-policy" className="text-sm font-normal cursor-pointer leading-tight">
-                  Li e concordo que a conexão é por QR, sujeita às políticas do WhatsApp, e que posso haver restrições no uso do número.
-                </Label>
-              </div>
-              <div className="flex items-start gap-3">
-                <Checkbox
-                  id="accept-use"
-                  checked={acceptedUse}
-                  onCheckedChange={(c) => setAcceptedUse(!!c)}
-                />
-                <Label htmlFor="accept-use" className="text-sm font-normal cursor-pointer leading-tight">
-                  Usarei apenas para atendimento a quem me procurar e reativação de clientes existentes (não para campanhas promocionais em massa).
-                </Label>
-              </div>
-            </CardContent>
-          )}
+          <CardContent className="space-y-3 pt-0">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="accept-policy"
+                checked={acceptedPolicy}
+                onCheckedChange={(c) => setAcceptedPolicy(!!c)}
+              />
+              <Label htmlFor="accept-policy" className="text-sm font-normal cursor-pointer leading-tight">
+                Li e concordo que a conexão é por QR, sujeita às políticas do WhatsApp, e que posso haver restrições no uso do número.
+              </Label>
+            </div>
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="accept-use"
+                checked={acceptedUse}
+                onCheckedChange={(c) => setAcceptedUse(!!c)}
+              />
+              <Label htmlFor="accept-use" className="text-sm font-normal cursor-pointer leading-tight">
+                Usarei apenas para atendimento a quem me procurar e reativação de clientes existentes (não para campanhas promocionais em massa).
+              </Label>
+            </div>
+          </CardContent>
         </Card>
       )}
 
-      {/* Status atual */}
+      {/* Status atual + Ações rápidas (integrado) */}
       <Card className="border-border/60 bg-card/50">
         <CardHeader className="pb-2">
           <h3 className="text-sm font-semibold text-foreground">Status atual</h3>
+          <p className="text-xs text-muted-foreground font-normal mt-0.5">
+            Conecte com <strong>WhatsApp Business</strong> (QR ou código), pause a IA para atender manualmente ou retome o atendente.
+          </p>
         </CardHeader>
-        <CardContent className="space-y-2">
+        <CardContent className="space-y-3">
+          {refetchResult && (
+            <div
+              className={cn(
+                "rounded-lg border p-3 text-sm flex items-center gap-2",
+                refetchResult === "success"
+                  ? "border-green-600/50 bg-green-600/10 text-green-800 dark:text-green-200"
+                  : "border-destructive/50 bg-destructive/10 text-destructive"
+              )}
+            >
+              {refetchResult === "success" ? (
+                <Check className="h-4 w-4 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 shrink-0" />
+              )}
+              <span>{refetchResultMessage ?? (refetchResult === "success" ? "Conexão estabelecida!" : "Erro ao conectar.")}</span>
+            </div>
+          )}
           {isConnected ? (
             <>
-              <div className="flex items-center gap-2 text-success">
-                <Check className="h-5 w-5 shrink-0" />
-                <span className="font-medium">Conectado</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
+                  variant="default"
+                  className="gap-1.5 bg-green-600 hover:bg-green-600 border-green-700 text-white"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  Conectado
+                </Badge>
+                {connection?.ai_paused_until && new Date(connection.ai_paused_until).getTime() > Date.now() && (
+                  <Badge variant="secondary" className="gap-1.5 text-amber-700 dark:text-amber-400 border-amber-500/50">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    IA pausada
+                  </Badge>
+                )}
               </div>
               {connection?.whatsapp_phone && (
                 <p className="text-sm text-muted-foreground">
@@ -189,7 +282,7 @@ export function ConnectTab({
               )}
               {connection?.ai_paused_until && new Date(connection.ai_paused_until).getTime() > Date.now() && (
                 <p className="text-sm text-amber-600 dark:text-amber-500">
-                  IA pausada até{" "}
+                  Pausada até{" "}
                   {new Date(connection.ai_paused_until).toLocaleTimeString("pt-BR", {
                     hour: "2-digit",
                     minute: "2-digit",
@@ -220,161 +313,204 @@ export function ConnectTab({
               {webhookWarning && (
                 <p className="text-xs text-amber-600 dark:text-amber-500">{webhookWarning}</p>
               )}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {connection?.ai_paused_until && new Date(connection.ai_paused_until).getTime() > Date.now() ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={onResume}
+                    disabled={resumePending}
+                  >
+                    {resumePending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    Retomar IA
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={onAssume}
+                    disabled={assumePending}
+                  >
+                    {assumePending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    Assumir atendimento
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={onDisconnect}
+                  disabled={disconnectPending}
+                >
+                  {disconnectPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Desconectar
+                </Button>
+                {canUseWhatsApp && onOpenBillingPortal && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={onOpenBillingPortal}
+                    disabled={portalLoading}
+                  >
+                    {portalLoading ? "Abrindo..." : "Adicionar novo número"}
+                  </Button>
+                )}
+              </div>
             </>
           ) : isConnecting ? (
-            <p className="text-sm text-muted-foreground">Conectando… Aguarde o pareamento.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="secondary"
+                className="gap-1.5 bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/40"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Conectando…
+              </Badge>
+              <span className="text-sm text-muted-foreground">
+                Aguardando pareamento. Escaneie o QR Code com o WhatsApp Business.
+              </span>
+            </div>
           ) : (
             <>
-              <p className="text-sm text-muted-foreground">Desconectado</p>
-              {connection?.last_error && (
-                <p className="text-sm text-destructive">{connection.last_error}</p>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Ações rápidas */}
-      <Card className="border-border/60 bg-card/50">
-        <CardHeader className="pb-2">
-          <h3 className="text-sm font-semibold text-foreground">Ações rápidas</h3>
-          <p className="text-xs text-muted-foreground font-normal mt-0.5">
-            Conectar, pausar a IA para atender manualmente ou retomar o atendente.
-          </p>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          {isConnected ? (
-            <>
-              {connection?.ai_paused_until && new Date(connection.ai_paused_until).getTime() > Date.now() ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={onResume}
-                  disabled={resumePending}
-                >
-                  {resumePending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Retomar IA
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge
                   variant="outline"
-                  onClick={onAssume}
-                  disabled={assumePending}
+                  className="gap-1.5 text-muted-foreground border-muted-foreground/40"
                 >
-                  {assumePending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Assumir atendimento
-                </Button>
+                  <XCircle className="h-3.5 w-3.5" />
+                  Desconectado
+                </Badge>
+              </div>
+              {connection?.last_error && (
+                <p className="text-sm text-destructive flex items-center gap-1.5">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {connection.last_error}
+                </p>
               )}
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={onDisconnect}
-                disabled={disconnectPending}
-              >
-                {disconnectPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Desconectar
-              </Button>
-              {canUseWhatsApp && onOpenBillingPortal && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={onOpenBillingPortal}
-                  disabled={portalLoading}
-                >
-                  {portalLoading ? "Abrindo..." : "Adicionar novo número"}
-                </Button>
-              )}
-            </>
-          ) : !isConnecting ? (
-            <>
-              <div className="w-full space-y-2">
-                <Label htmlFor="connect-phone" className="text-xs text-muted-foreground">
-                  Número (opcional — para código de pareamento em vez de QR)
-                </Label>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 <Input
                   id="connect-phone"
                   type="tel"
-                  placeholder="(11) 99999-9999"
+                  placeholder="Número (opcional)"
                   value={formatPhoneBR(whatsappPhone)}
                   onChange={(e) =>
                     setWhatsappPhone(parsePhoneBR(e.target.value).slice(0, 11))
                   }
-                  className="h-9"
+                  className="h-9 w-32 sm:w-40"
                 />
+                <Button
+                  onClick={() => onStart(whatsappPhone.trim() || undefined)}
+                  disabled={!canConnect}
+                >
+                  {startPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Conectar WhatsApp
+                </Button>
               </div>
-              <Button
-                onClick={() => onStart(whatsappPhone.trim() || undefined)}
-                disabled={!canConnect}
-              >
-                {startPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                Conectar WhatsApp
-              </Button>
             </>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {/* Diagnóstico: conectividade */}
-      <Card className="border-border/60 bg-card/50">
-        <CardHeader className="pb-2">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Wifi className="h-4 w-4" />
-            Diagnóstico
-          </h3>
-          <p className="text-xs text-muted-foreground font-normal mt-0.5">
-            Testar se a API e a Uazapi estão acessíveis.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setConnectivityResult(null);
-              connectivityMutation.mutate();
-            }}
-            disabled={connectivityMutation.isPending}
-          >
-            {connectivityMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-            ) : (
-              "Testar conectividade"
-            )}
-          </Button>
-          {connectivityResult && (
-            <div
-              className={cn(
-                "rounded-lg border p-3 text-sm",
-                connectivityResult.uazapi.ok
-                  ? "border-success/50 bg-success/5"
-                  : "border-destructive/50 bg-destructive/5"
-              )}
-            >
-              <p className="font-medium">
-                API: {connectivityResult.api === "ok" ? "OK" : "Erro"}
-              </p>
-              <p className="text-muted-foreground mt-1">
-                Uazapi:{" "}
-                {connectivityResult.uazapi.ok
-                  ? "OK"
-                  : connectivityResult.uazapi.error ?? "Indisponível"}
-              </p>
-            </div>
           )}
         </CardContent>
       </Card>
+
+      {/* Número do WhatsApp por filial — só quando há múltiplas filiais */}
+      {numberMode && numberMode.barbershops.length > 1 && (
+        <Card className="border-border/60 bg-card/50">
+          <CardHeader className="pb-2">
+            <h3 className="text-sm font-semibold text-foreground">Número do WhatsApp por filial</h3>
+            <p className="text-xs text-muted-foreground font-normal mt-0.5">
+              Escolha se o mesmo número atende todas as filiais ou se cada filial tem seu próprio número.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  id="mode-account-wide"
+                  name="number-mode"
+                  checked={numberMode.mode === "account_wide"}
+                  onChange={() =>
+                    onNumberModeChange?.(
+                      "account_wide",
+                      numberMode.primary_barbershop_id ?? numberMode.barbershops[0]?.id
+                    )
+                  }
+                  disabled={numberModeSaving}
+                  className="h-4 w-4"
+                />
+                <Label htmlFor="mode-account-wide" className="cursor-pointer font-normal">
+                  Mesmo número em todas as filiais
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  id="mode-per-branch"
+                  name="number-mode"
+                  checked={numberMode.mode === "per_branch"}
+                  onChange={() => onNumberModeChange?.("per_branch", null)}
+                  disabled={numberModeSaving}
+                  className="h-4 w-4"
+                />
+                <Label htmlFor="mode-per-branch" className="cursor-pointer font-normal">
+                  Número dedicado por filial
+                </Label>
+              </div>
+            </div>
+            {numberMode.mode === "account_wide" && (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  A IA perguntará no chat qual filial o cliente prefere e usará essa filial para agendamentos.
+                </p>
+                <div className="space-y-1">
+                  <Label className="text-xs">Filial onde o WhatsApp está conectado (primária)</Label>
+                  <select
+                    value={numberMode.primary_barbershop_id ?? numberMode.barbershops[0]?.id ?? ""}
+                    onChange={(e) => onNumberModeChange?.("account_wide", e.target.value || null)}
+                    disabled={numberModeSaving}
+                    className="flex h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  >
+                    {numberMode.barbershops.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+            {numberMode.mode === "per_branch" && (
+              <p className="text-xs text-muted-foreground">
+                Troque a filial no seletor &quot;Todas as filiais / Unidade&quot; no topo da página e conecte o
+                WhatsApp de cada filial separadamente.
+              </p>
+            )}
+            {numberModeSaving && (
+              <p className="text-xs text-amber-600 dark:text-amber-500 flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Salvando…
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Pareamento (QR / código) — só quando conectando */}
       {isConnecting && (
         <Card className="border-border/60 bg-card/50">
           <CardHeader className="pb-2">
-            <h3 className="text-sm font-semibold text-foreground">Pareamento</h3>
+            <h3 className="text-sm font-semibold text-foreground">Conectar com WhatsApp Business</h3>
             <p className="text-xs text-muted-foreground font-normal mt-0.5">
-              Escaneie o QR Code no WhatsApp do celular ou use o código de pareamento.
+              Use o app <strong>WhatsApp Business</strong> no celular (não use o WhatsApp pessoal). Siga os passos abaixo:
             </p>
           </CardHeader>
-          <CardContent className="flex flex-col items-center gap-3">
+          <CardContent className="space-y-5">
+            <ol className="list-decimal list-inside space-y-2 text-sm text-foreground">
+              <li>Abra o app <strong>WhatsApp Business</strong> no celular.</li>
+              <li>Toque no menu <strong>(⋮)</strong> ou em <strong>Configurações</strong>.</li>
+              <li>Toque em <strong>Aparelhos conectados</strong> ou <strong>Dispositivos vinculados</strong>.</li>
+              <li>Toque em <strong>Conectar um dispositivo</strong>.</li>
+              <li>Escaneie o QR Code abaixo com a câmera do celular (ou use o código de pareamento).</li>
+            </ol>
+
             {statusData?.qr ? (
               <img
                 src={
@@ -382,19 +518,34 @@ export function ConnectTab({
                     ? statusData.qr
                     : `data:image/png;base64,${statusData.qr}`
                 }
-                alt="QR Code WhatsApp"
-                className="w-48 h-48 object-contain rounded-lg border border-border"
+                alt="QR Code para pareamento no WhatsApp Business"
+                className="w-48 h-48 object-contain rounded-lg border border-border mx-auto block"
               />
             ) : (
-              <div className="w-48 h-48 bg-muted animate-pulse rounded-lg" />
+              <div className="w-48 h-48 bg-muted animate-pulse rounded-lg mx-auto" />
             )}
             {statusData?.pairingCode && (
-              <p className="text-sm text-muted-foreground">
-                Código: <strong className="font-mono">{statusData.pairingCode}</strong>
+              <p className="text-sm text-muted-foreground text-center">
+                Código de pareamento: <strong className="font-mono">{statusData.pairingCode}</strong>
               </p>
             )}
+
+            {onRefetchStatus && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Aguardando pareamento… O QR é atualizado automaticamente.</span>
+                  <span className="tabular-nums">
+                    {connectingRemainingPct <= 0
+                      ? "Atualizando…"
+                      : `${Math.ceil((connectionTimeoutSeconds * connectingRemainingPct) / 100)}s`}
+                  </span>
+                </div>
+                <Progress value={connectingRemainingPct} className="h-2" />
+              </div>
+            )}
+
             {webhookWarning && (
-              <p className="text-xs text-amber-600 dark:text-amber-500 text-center max-w-sm">
+              <p className="text-xs text-amber-600 dark:text-amber-500 text-center max-w-sm mx-auto">
                 {webhookWarning}
               </p>
             )}

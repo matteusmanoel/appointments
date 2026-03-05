@@ -18,6 +18,7 @@ import {
   EntityFormDialog,
 } from "@/components/shared";
 import { toastSuccess, toastError, withToast } from "@/lib/toast-helpers";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Form,
   FormControl,
@@ -63,6 +64,7 @@ const serviceSchema = z.object({
   points_to_redeem: z
     .union([z.coerce.number().int().min(0), z.literal("")])
     .optional(),
+  barbershop_id: z.string().uuid().optional(),
 });
 
 type ServiceFormValues = z.infer<typeof serviceSchema>;
@@ -84,6 +86,7 @@ type CreateServicePayload = Parameters<typeof servicesApi.create>[0];
 
 export default function Servicos() {
   const queryClient = useQueryClient();
+  const { profile, selectedScope } = useAuth();
   const [formOpen, setFormOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Service | null>(null);
@@ -98,7 +101,20 @@ export default function Servicos() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (body: CreateServicePayload) => servicesApi.create(body),
+    mutationFn: (body: CreateServicePayload) =>
+      servicesApi.create({
+        name: body.name,
+        description: body.description,
+        price: body.price,
+        duration_minutes: body.duration_minutes,
+        category: body.category,
+        is_active: body.is_active,
+        points_to_earn: body.points_to_earn,
+        points_to_redeem: body.points_to_redeem,
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["services"] });
       setFormOpen(false);
@@ -134,6 +150,7 @@ export default function Servicos() {
       is_active: true,
       points_to_earn: 0,
       points_to_redeem: "",
+      barbershop_id: "",
     },
   });
 
@@ -148,6 +165,7 @@ export default function Servicos() {
       is_active: true,
       points_to_earn: 0,
       points_to_redeem: "",
+      barbershop_id: "",
     });
     setFormOpen(true);
   };
@@ -192,6 +210,10 @@ export default function Servicos() {
         },
       );
     } else {
+      if (selectedScope === "__all__" && !values.barbershop_id) {
+        form.setError("barbershop_id", { message: "Selecione a filial." });
+        return;
+      }
       await withToast(
         createMutation.mutateAsync({
           name: values.name,
@@ -205,6 +227,7 @@ export default function Servicos() {
             values.points_to_redeem === ""
               ? undefined
               : (values.points_to_redeem ?? undefined),
+          barbershop_id: values.barbershop_id || undefined,
         }),
         {
           successMessage: "Serviço criado.",
@@ -405,6 +428,12 @@ export default function Servicos() {
             icon={<Package className="h-12 w-12" strokeWidth={1.5} />}
             title="Nenhum serviço cadastrado"
             description="Cadastre seu primeiro serviço para começar a oferecer aos clientes."
+            action={
+              <Button onClick={openCreate} className="mt-2">
+                <Plus className="h-4 w-4 mr-2" />
+                Cadastrar serviço
+              </Button>
+            }
           />
         )}
       </div>
@@ -434,6 +463,32 @@ export default function Servicos() {
       >
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && !editingService && (
+              <FormField
+                control={form.control}
+                name="barbershop_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Filial <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <Select value={field.value || ""} onValueChange={field.onChange} required>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a filial" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {profile.barbershops.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="name"

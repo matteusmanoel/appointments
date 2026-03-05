@@ -13,10 +13,8 @@ import { TrendingUp } from "lucide-react";
 import { reportsApi } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
-import { format, subDays } from "date-fns";
+import { format, subDays, isValid, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-
-const WEEKDAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 function getLast7Days() {
   const to = new Date();
@@ -31,6 +29,15 @@ type RangeValue = { from: Date | null; to: Date | null } | null;
 
 interface RevenueChartProps {
   range?: RangeValue;
+}
+
+// Helper to parse and validate a date string as yyyy-MM-dd
+function safeParseDate(dateStr: string): Date | null {
+  if (!dateStr || typeof dateStr !== "string") return null;
+  // Accept only yyyy-MM-dd
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const d = parseISO(dateStr);
+  return isValid(d) ? d : null;
 }
 
 export function RevenueChart({ range }: RevenueChartProps) {
@@ -54,15 +61,28 @@ export function RevenueChart({ range }: RevenueChartProps) {
     queryFn: () => reportsApi.revenueByDay({ from: fromStr, to: toStr }),
   });
 
-  const data = rows.map((r) => {
-    const d = new Date(r.date + "T12:00:00");
-    const dayOfWeek = d.getDay();
-    return {
-      name: WEEKDAY_LABELS[dayOfWeek] ?? r.date,
-      revenue: Number(r.revenue),
-      appointments: r.appointments,
-    };
-  });
+  // Defensive handling for "Invalid time value"
+  const data = rows
+    .map((r) => {
+      // Ensure r.date is valid and format only if it is
+      // Accept only yyyy-MM-dd or ISO date portion (e.g., 2023-12-01)
+      const dateObj = safeParseDate(r.date);
+      if (!dateObj) return null;
+      const d = new Date(r.date + "T12:00:00");
+      if (!isValid(d)) return null;
+      let dateLabel = "";
+      try {
+        dateLabel = format(d, "dd/MM/yyyy", { locale: ptBR });
+      } catch {
+        return null;
+      }
+      return {
+        name: dateLabel,
+        revenue: Number(r.revenue),
+        appointments: r.appointments,
+      };
+    })
+    .filter((v) => v !== null);
 
   if (error) {
     return (
@@ -132,28 +152,30 @@ export function RevenueChart({ range }: RevenueChartProps) {
               </defs>
               <CartesianGrid
                 strokeDasharray="3 3"
-                stroke="hsl(210 15% 88%)"
+                stroke="hsl(var(--border))"
                 vertical={false}
               />
               <XAxis
                 dataKey="name"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: "hsl(220 10% 45%)", fontSize: 12 }}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
               />
               <YAxis
                 axisLine={false}
                 tickLine={false}
-                tick={{ fill: "hsl(220 10% 45%)", fontSize: 12 }}
+                tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
                 tickFormatter={(value) => `R$${value}`}
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "hsl(220 10% 96%)",
-                  border: "1px solid hsl(220 10% 90%)",
+                  backgroundColor: "hsl(var(--muted))",
+                  border: "1px solid hsl(var(--border))",
                   borderRadius: "8px",
-                  boxShadow: "0 4px 12px hsl(220 30% 15% / 0.08)",
+                  boxShadow: "0 4px 12px hsl(var(--foreground) / 0.08)",
+                  color: "hsl(var(--foreground))",
                 }}
+                labelFormatter={(label) => label}
                 formatter={(value: number) => [
                   `R$ ${value.toLocaleString("pt-BR")}`,
                   "Receita",

@@ -54,6 +54,10 @@ Parameters:
     Type: String
     Default: ""
     Description: Stripe Price ID for Premium plan
+  StripePriceIdExtraNumber:
+    Type: String
+    Default: ""
+    Description: Stripe Price ID for extra WhatsApp number add-on (optional)
   FromEmail:
     Type: String
     Default: ""
@@ -88,6 +92,27 @@ Parameters:
     Type: String
     Default: ""
     Description: n8n chat trigger URL for WhatsApp bot replies (optional)
+  OpenAiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: OpenAI API key for AI worker Lambda (optional; leave empty to disable)
+  N8nEventsWebhookUrl:
+    Type: String
+    Default: ""
+    Description: n8n outbound events webhook URL for AI worker (optional)
+  N8nEventsSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Secret for n8n outbound events (optional)
+  KnowledgeS3Bucket:
+    Type: String
+    Default: ""
+    Description: S3 bucket for knowledge base documents (optional; leave empty to disable RAG)
+
+Conditions:
+  HasKnowledgeBucket: !Not [!Equals [!Ref KnowledgeS3Bucket, ""]]
 
 Resources:
   ApiLogGroup:
@@ -156,6 +181,7 @@ Resources:
           STRIPE_PRICE_ID_ESSENTIAL: !Ref StripePriceIdEssential
           STRIPE_PRICE_ID_PRO: !Ref StripePriceIdPro
           STRIPE_PRICE_ID_PREMIUM: !Ref StripePriceIdPremium
+          STRIPE_PRICE_ID_EXTRA_NUMBER: !Ref StripePriceIdExtraNumber
           FROM_EMAIL: !Ref FromEmail
           APP_URL: !Ref AppUrl
           UAZAPI_BASE_URL: !Ref UazapiBaseUrl
@@ -181,7 +207,8 @@ Resources:
       ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
       IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations"
-      PayloadFormatVersion: "2.0"
+      # 1.0 required for custom domain (api.navalhia.com.br): with 2.0, rawPath does not include the full path and Express gets wrong path → 404 on e.g. POST /api/billing/checkout
+      PayloadFormatVersion: "1.0"
       TimeoutInMillis: 29000
 
   ApiGatewayPermission:
@@ -241,6 +268,241 @@ Resources:
         - Name: FunctionName
           Value: !Ref ApiFunction
       TreatMissingData: notBreaching
+
+  # --- Workers (Lambda + EventBridge) ---
+  WorkerAiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/navalhia-worker-ai-${Stage}"
+      RetentionInDays: 14
+  WorkerScheduledLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/navalhia-worker-scheduled-${Stage}"
+      RetentionInDays: 14
+  WorkerKnowledgeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/navalhia-worker-knowledge-${Stage}"
+      RetentionInDays: 14
+
+  WorkerAiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "navalhia-worker-ai-${Stage}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+  WorkerScheduledRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "navalhia-worker-scheduled-${Stage}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+  WorkerKnowledgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "navalhia-worker-knowledge-${Stage}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+  WorkerAiRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: WorkerAiRole
+    Properties:
+      PolicyName: navalhia-worker-ai-logs
+      Roles: [!Ref WorkerAiRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !GetAtt WorkerAiLogGroup.Arn
+  WorkerScheduledRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: WorkerScheduledRole
+    Properties:
+      PolicyName: navalhia-worker-scheduled-logs
+      Roles: [!Ref WorkerScheduledRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !GetAtt WorkerScheduledLogGroup.Arn
+  WorkerKnowledgeRolePolicy:
+    Type: AWS::IAM::Policy
+    DependsOn: WorkerKnowledgeRole
+    Properties:
+      PolicyName: navalhia-worker-knowledge
+      Roles: [!Ref WorkerKnowledgeRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !GetAtt WorkerKnowledgeLogGroup.Arn
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: !If
+              - HasKnowledgeBucket
+              - !Sub "arn:aws:s3:::${KnowledgeS3Bucket}/*"
+              - "arn:aws:s3:::no-such-bucket-placeholder"
+
+  WorkerAiFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerAiRolePolicy
+    Properties:
+      FunctionName: !Sub "navalhia-worker-ai-${Stage}"
+      Runtime: nodejs20.x
+      Handler: dist/workers/lambda-ai.handler
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      Timeout: 180
+      MemorySize: 512
+      Role: !GetAtt WorkerAiRole.Arn
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          DATABASE_SSL: "true"
+          DATABASE_POOL_MAX: "2"
+          JWT_SECRET: !Ref JwtSecret
+          APP_ENCRYPTION_KEY: !Ref AppEncryptionKey
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          UAZAPI_BASE_URL: !Ref UazapiBaseUrl
+          N8N_EVENTS_WEBHOOK_URL: !Ref N8nEventsWebhookUrl
+          N8N_EVENTS_SECRET: !Ref N8nEventsSecret
+          AI_WORKER_CONCURRENCY: "1"
+          AI_JOB_MAX_ATTEMPTS: "5"
+          AI_JOB_BACKOFF_BASE_SECONDS: "2"
+
+  WorkerScheduledFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerScheduledRolePolicy
+    Properties:
+      FunctionName: !Sub "navalhia-worker-scheduled-${Stage}"
+      Runtime: nodejs20.x
+      Handler: dist/workers/lambda-scheduled.handler
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt WorkerScheduledRole.Arn
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          DATABASE_SSL: "true"
+          DATABASE_POOL_MAX: "2"
+          JWT_SECRET: !Ref JwtSecret
+          JWT_EXPIRES_IN: !Ref JwtExpiresIn
+          APP_ENCRYPTION_KEY: !Ref AppEncryptionKey
+          UAZAPI_BASE_URL: !Ref UazapiBaseUrl
+
+  WorkerKnowledgeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerKnowledgeRolePolicy
+    Properties:
+      FunctionName: !Sub "navalhia-worker-knowledge-${Stage}"
+      Runtime: nodejs20.x
+      Handler: dist/workers/lambda-knowledge.handler
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      Timeout: 300
+      MemorySize: 512
+      Role: !GetAtt WorkerKnowledgeRole.Arn
+      Environment:
+        Variables:
+          NODE_ENV: production
+          DATABASE_URL: !Ref DatabaseUrl
+          DATABASE_SSL: "true"
+          DATABASE_POOL_MAX: "2"
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          KNOWLEDGE_S3_BUCKET: !Ref KnowledgeS3Bucket
+          AWS_REGION: !Ref AWS::Region
+
+  WorkerAiScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "navalhia-worker-ai-${Stage}"
+      Description: Invoke AI worker every minute
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: worker-ai
+          Arn: !GetAtt WorkerAiFunction.Arn
+  WorkerScheduledScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "navalhia-worker-scheduled-${Stage}"
+      Description: Invoke scheduled-messages worker every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: worker-scheduled
+          Arn: !GetAtt WorkerScheduledFunction.Arn
+  WorkerKnowledgeScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "navalhia-worker-knowledge-${Stage}"
+      Description: Invoke knowledge worker every 5 minutes
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: worker-knowledge
+          Arn: !GetAtt WorkerKnowledgeFunction.Arn
+
+  WorkerAiSchedulePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: WorkerAiScheduleRule
+    Properties:
+      FunctionName: !Ref WorkerAiFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WorkerAiScheduleRule.Arn
+  WorkerScheduledSchedulePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: WorkerScheduledScheduleRule
+    Properties:
+      FunctionName: !Ref WorkerScheduledFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WorkerScheduledScheduleRule.Arn
+  WorkerKnowledgeSchedulePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: WorkerKnowledgeScheduleRule
+    Properties:
+      FunctionName: !Ref WorkerKnowledgeFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WorkerKnowledgeScheduleRule.Arn
 
 Outputs:
   ApiUrl:

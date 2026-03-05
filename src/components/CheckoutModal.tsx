@@ -212,7 +212,11 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       onOpenChange={(o) => (!loading ? onOpenChange(o) : undefined)}
     >
       <DialogContent
-        className="max-w-md sm:max-w-lg max-h-[90dvh] overflow-y-auto w-[calc(100vw-2rem)] sm:w-full pb-[max(1rem,env(safe-area-inset-bottom))]"
+        className={
+          step === "embedded"
+            ? "max-w-md sm:max-w-2xl md:max-w-4xl max-h-[90dvh] overflow-hidden w-[calc(100vw-2rem)] sm:w-full pb-0 flex flex-col p-0"
+            : "max-w-md sm:max-w-lg max-h-[90dvh] overflow-y-auto w-[calc(100vw-2rem)] sm:w-full pb-[max(1rem,env(safe-area-inset-bottom))]"
+        }
         onPointerDownOutside={(e) => loading && e.preventDefault()}
         onEscapeKeyDown={() => !loading && onOpenChange(false)}
       >
@@ -423,35 +427,56 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
             </form>
           </>
         ) : clientSecret && stripePromise ? (
-          <div className="space-y-4">
-            <DialogHeader>
-              <DialogTitle>Finalize sua assinatura</DialogTitle>
-              <DialogDescription>
-                Preencha os dados de pagamento abaixo. Após confirmar, você
-                acessa o painel.
-              </DialogDescription>
-            </DialogHeader>
-            <EmbeddedCheckoutProvider
-              stripe={stripePromise}
-              options={{
-                clientSecret,
-                onComplete: () => {
-                  // Stripe redirects to return_url, so we don't need to do anything here
-                },
-              }}
+          <div className="flex flex-col md:flex-row -m-6 sm:-m-6 md:max-h-[85vh]">
+            {/* Coluna esquerda: identidade visual (fundo cinza + logo) */}
+            <div
+              className="hidden md:flex md:w-56 lg:w-64 shrink-0 flex-col items-center justify-center gap-4 px-6 py-8 rounded-l-lg text-center"
+              style={{ backgroundColor: "#1a1a1a" }}
             >
-              <EmbeddedCheckout />
-            </EmbeddedCheckoutProvider>
-            <div className="flex flex-col gap-2">
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleFallbackRedirect}
-                disabled={loading}
+              <img
+                src="/logo-named-transparent-white.svg"
+                alt="NavalhIA"
+                className="w-full max-w-[180px] h-auto object-contain"
+              />
+              <p className="text-xs text-white/80 font-medium tracking-wide">
+                Agende. Automatize. Cresça.
+              </p>
+            </div>
+            {/* Coluna direita: Stripe Embedded Checkout */}
+            <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-4">
+              {/* Mobile: logo e slogan acima do formulário */}
+              <div className="md:hidden flex flex-col items-center gap-2 pb-2 border-b border-border">
+                <img src="/logo-app.svg" alt="NavalhIA" className="h-9 w-auto object-contain" />
+                <p className="text-xs text-muted-foreground">Agende. Automatize. Cresça.</p>
+              </div>
+              <DialogHeader className="md:text-left">
+                <DialogTitle>Finalize sua assinatura</DialogTitle>
+                <DialogDescription>
+                  Preencha os dados de pagamento abaixo. Após confirmar, você acessa o painel.
+                </DialogDescription>
+              </DialogHeader>
+              <EmbeddedCheckoutProvider
+                stripe={stripePromise}
+                options={{
+                  clientSecret,
+                  onComplete: () => {
+                    // Stripe redirects to return_url
+                  },
+                }}
               >
-                Abrir pagamento em nova aba
-              </Button>
+                <EmbeddedCheckout />
+              </EmbeddedCheckoutProvider>
+              <div className="flex flex-col gap-2">
+                {error && <p className="text-sm text-destructive">{error}</p>}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleFallbackRedirect}
+                  disabled={loading}
+                >
+                  Abrir pagamento em nova aba
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}

@@ -5,6 +5,7 @@ import { sendText } from "../integrations/uazapi/client.js";
 import { runAgent, detectViolations } from "../ai/agent.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
+import { ensureCriticalSchema } from "../db/ensure-schema.js";
 import OpenAI from "openai";
 
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
@@ -14,6 +15,11 @@ const FALLBACK_MESSAGE =
   "Desculpe, o atendimento automático está temporariamente indisponível. Tente novamente em instantes ou entre em contato diretamente.";
 
 const MAX_EMOJIS_PER_MESSAGE = 2;
+
+function isUndefinedTableOrColumn(e: unknown): boolean {
+  const code = (e as { code?: string })?.code;
+  return code === "42P01" || code === "42703";
+}
 
 function sanitizeOutgoingText(text: string): string {
   // Never leak internal IDs to WhatsApp, even if the model outputs them.
@@ -51,27 +57,67 @@ async function getNextJob(): Promise<{
   payload_json: { fromPhone: string; text: string; provider_event_id?: string };
   attempts: number;
 } | null> {
-  const r = await pool.query<{
+  const primarySql = `UPDATE public.ai_jobs
+     SET status = 'processing', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
+     WHERE id = (
+      SELECT j.id
+      FROM public.ai_jobs j
+      WHERE j.status = 'queued'
+        AND j.run_after <= now()
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.barbershop_ai_runtime r
+          WHERE r.barbershop_id = j.barbershop_id
+            AND r.paused_until > now()
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.ai_conversation_runtime cr
+          WHERE cr.conversation_id = j.conversation_id
+            AND cr.paused_until > now()
+        )
+      ORDER BY j.created_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+     )
+     RETURNING id, barbershop_id, conversation_id, payload_json, attempts`;
+  const fallbackSql = `UPDATE public.ai_jobs
+     SET status = 'processing', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
+     WHERE id = (
+      SELECT j.id
+      FROM public.ai_jobs j
+      WHERE j.status = 'queued'
+        AND j.run_after <= now()
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.barbershop_ai_runtime r
+          WHERE r.barbershop_id = j.barbershop_id
+            AND r.paused_until > now()
+        )
+      ORDER BY j.created_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+     )
+     RETURNING id, barbershop_id, conversation_id, payload_json, attempts`;
+  let r;
+  try {
+    r = await pool.query<{
     id: string;
     barbershop_id: string;
     conversation_id: string;
     payload_json: unknown;
     attempts: number;
-  }>(
-    `UPDATE public.ai_jobs
-     SET status = 'processing', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
-     WHERE id = (
-       SELECT j.id FROM public.ai_jobs j
-       LEFT JOIN public.barbershop_ai_runtime r ON r.barbershop_id = j.barbershop_id AND r.paused_until > now()
-       WHERE j.status = 'queued' AND j.run_after <= now() AND r.barbershop_id IS NULL
-       ORDER BY j.created_at ASC
-       LIMIT 1
-       FOR UPDATE SKIP LOCKED
-     )
-     RETURNING id, barbershop_id, conversation_id, payload_json, attempts`
-  ,
-    [WORKER_ID]
-  );
+    }>(primarySql, [WORKER_ID]);
+  } catch (e) {
+    if (!isUndefinedTableOrColumn(e)) throw e;
+    r = await pool.query<{
+      id: string;
+      barbershop_id: string;
+      conversation_id: string;
+      payload_json: unknown;
+      attempts: number;
+    }>(fallbackSql, [WORKER_ID]);
+  }
   const row = r.rows[0];
   if (!row) return null;
   const payload = row.payload_json as { fromPhone?: string; text?: string; provider_event_id?: string };
@@ -153,6 +199,23 @@ async function updateConversationLastMessage(conversationId: string): Promise<vo
   );
 }
 
+function extractProviderMessageId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const any = payload as Record<string, unknown>;
+  const candidates = [
+    any.id,
+    any.messageId,
+    any.message_id,
+    any.msgId,
+    any.key && typeof any.key === "object" ? (any.key as Record<string, unknown>).id : null,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+    if (typeof c === "number") return String(c);
+  }
+  return null;
+}
+
 async function processOneJob(): Promise<boolean> {
   const job = await getNextJob();
   if (!job) return false;
@@ -208,14 +271,41 @@ async function processOneJob(): Promise<boolean> {
 
     const token = await getUazapiToken(barbershopId);
     if (token) {
+      let typingSimulation: { enabled?: boolean; baseDelayMs?: number; msPerChar?: number; jitterMs?: number } | null = null;
+      try {
+        const tsRow = await pool.query<{ typing_simulation: unknown }>(
+          `SELECT typing_simulation FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+          [barbershopId]
+        );
+        const raw = tsRow.rows[0]?.typing_simulation;
+        if (raw && typeof raw === "object" && raw !== null) {
+          typingSimulation = raw as { enabled?: boolean; baseDelayMs?: number; msPerChar?: number; jitterMs?: number };
+        }
+      } catch {
+        // ignore
+      }
+      const baseDelayMs = typingSimulation?.enabled ? (typingSimulation.baseDelayMs ?? 300) : 0;
+      const msPerChar = typingSimulation?.enabled ? (typingSimulation.msPerChar ?? 20) : 0;
+      const jitterMs = typingSimulation?.enabled ? (typingSimulation.jitterMs ?? 100) : 0;
+
       // Allow the model to send multiple WhatsApp messages using a delimiter.
       const parts = String(reply ?? "")
         .split("[[MSG]]")
         .map((p) => sanitizeOutgoingText(p))
         .filter((p) => p.length > 0);
       const toSend = parts.length ? parts : [sanitizeOutgoingText(reply)];
-      for (const part of toSend.slice(0, 3)) {
-        await sendText({ token, number: fromPhone, text: part });
+      for (const part of toSend) {
+        if (baseDelayMs > 0 || msPerChar > 0) {
+          const delay = baseDelayMs + part.length * msPerChar + (jitterMs > 0 ? Math.floor(Math.random() * jitterMs) : 0);
+          if (delay > 0) await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
+        }
+        const sent = await sendText({ token, number: fromPhone, text: part });
+        const providerMessageId = extractProviderMessageId(sent);
+        await pool.query(
+          `INSERT INTO public.ai_messages (conversation_id, role, content, provider_message_id, delivery_status)
+           VALUES ($1, 'assistant', $2, $3, 'sent')`,
+          [conversationId, part, providerMessageId]
+        );
       }
       console.info("[ai-worker] jobId=%s sent to fromPhone=%s", jobId, fromPhone);
     } else {
@@ -232,29 +322,38 @@ async function processOneJob(): Promise<boolean> {
   }
 }
 
+/** Run one cycle: process up to maxJobs, dispatch outbound events once. Used by Lambda and by runLoop. */
+export async function runAiWorkerCycle(options?: { maxJobs?: number }): Promise<{ processed: number }> {
+  const maxJobs = options?.maxJobs ?? 10;
+  let processed = 0;
+  while (processed < maxJobs) {
+    const did = await processOneJob();
+    if (!did) break;
+    processed++;
+  }
+  await dispatchOutboundEvents().catch((e) => console.error("[ai-worker] outbound dispatch:", e));
+  return { processed };
+}
+
 async function runLoop(): Promise<void> {
   const concurrency = Math.max(1, config.aiWorkerConcurrency ?? 5);
   console.info(`[ai-worker] started ${WORKER_ID} concurrency=${concurrency}`);
 
-  let lastOutbound = 0;
   while (true) {
-    let processed = 0;
-    for (let i = 0; i < concurrency; i++) {
-      const did = await processOneJob();
-      if (did) processed++;
-    }
-    const now = Date.now();
-    if (now - lastOutbound >= OUTBOUND_INTERVAL_MS) {
-      lastOutbound = now;
-      dispatchOutboundEvents().catch((e) => console.error("[ai-worker] outbound dispatch:", e));
-    }
+    const { processed } = await runAiWorkerCycle({ maxJobs: concurrency });
     if (processed === 0) {
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
   }
 }
 
-runLoop().catch((e) => {
-  console.error("[ai-worker] fatal:", e);
-  process.exit(1);
-});
+if (!process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  ensureCriticalSchema()
+    .catch((e) => console.warn("[ai-worker] ensureCriticalSchema failed:", e))
+    .finally(() => {
+      runLoop().catch((e) => {
+    console.error("[ai-worker] fatal:", e);
+    process.exit(1);
+      });
+    });
+}

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
-import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
 import { barbershopHasAutomation, cancelReminderForAppointment, scheduleReminderForAppointment } from "../outbound/scheduled-messages.js";
 
 const statusEnum = z.enum(["pending", "confirmed", "completed", "cancelled", "no_show"]);
@@ -13,6 +13,7 @@ const createBody = z.object({
   scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduled_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
   notes: z.string().optional(),
+  barbershop_id: z.string().uuid().optional(),
 }).refine((d) => d.service_ids?.length ?? (d.service_id ? 1 : 0) >= 1, { message: "service_id or service_ids (min 1) required" });
 const updateBody = z.object({
   status: statusEnum.optional(),
@@ -57,7 +58,13 @@ export const appointmentsRouter = Router();
 appointmentsRouter.use(requireJwt);
 
 appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
   const date = req.query.date as string | undefined;
   const from = req.query.from as string | undefined;
   const to = req.query.to as string | undefined;
@@ -66,20 +73,26 @@ appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> =
   const search = req.query.search as string | undefined;
   const limit = req.query.limit != null ? Math.min(Math.max(0, parseInt(String(req.query.limit), 10)), 500) : undefined;
   const offset = req.query.offset != null ? Math.max(0, parseInt(String(req.query.offset), 10)) : undefined;
+
+  const isAll = "all" in scope && Array.isArray((scope as { all?: string[] }).all);
+  const barbershopIds: string[] = isAll ? (scope as { all: string[] }).all : [(scope as { single: string }).single];
+
   let query = `
     SELECT a.id, a.barbershop_id, a.client_id, a.barber_id, a.service_id, a.scheduled_date, a.scheduled_time,
            a.duration_minutes, a.price, a.commission_amount, a.status, a.notes, a.created_at, a.updated_at,
            c.name AS client_name, c.phone AS client_phone,
            b.name AS barber_name,
+           ${isAll ? "bs.name AS barbershop_name," : ""}
            (SELECT COALESCE(array_agg(aps.service_id ORDER BY aps.position), ARRAY[]::uuid[]) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_ids,
            (SELECT COALESCE(array_agg(COALESCE(aps.service_name, s.name) ORDER BY aps.position), ARRAY[]::text[]) FROM public.appointment_services aps LEFT JOIN public.services s ON s.id = aps.service_id WHERE aps.appointment_id = a.id) AS service_names
     FROM public.appointments a
     JOIN public.clients c ON c.id = a.client_id
     JOIN public.barbers b ON b.id = a.barber_id
     LEFT JOIN public.services s ON s.id = a.service_id
-    WHERE a.barbershop_id = $1
+    ${isAll ? "JOIN public.barbershops bs ON bs.id = a.barbershop_id" : ""}
+    WHERE a.barbershop_id = ANY($1::uuid[])
   `;
-  const params: unknown[] = [barbershopId];
+  const params: unknown[] = [barbershopIds];
   let paramIdx = 2;
   if (from && to) {
     params.push(from, to);
@@ -105,9 +118,9 @@ appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> =
   }
   if (search && search.trim()) {
     const term = `%${search.trim()}%`;
-    params.push(term, term);
-    query += ` AND (c.name ILIKE $${paramIdx} OR c.phone ILIKE $${paramIdx + 1})`;
-    paramIdx += 2;
+    params.push(term, term, term, term);
+    query += ` AND (c.name ILIKE $${paramIdx} OR c.phone ILIKE $${paramIdx + 1} OR b.name ILIKE $${paramIdx + 2} OR EXISTS (SELECT 1 FROM public.appointment_services aps LEFT JOIN public.services s ON s.id = aps.service_id WHERE aps.appointment_id = a.id AND COALESCE(aps.service_name, s.name) ILIKE $${paramIdx + 3}))`;
+    paramIdx += 4;
   }
   query += " ORDER BY a.scheduled_date, a.scheduled_time";
   if (limit != null) {
@@ -124,11 +137,28 @@ appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> =
 });
 
 appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
   const parsed = createBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
+  }
+  let barbershopId: string;
+  if ("all" in scope) {
+    const bodyBarbershopId = parsed.data.barbershop_id;
+    if (!bodyBarbershopId || !scope.all.includes(bodyBarbershopId)) {
+      res.status(400).json({ error: "barbershop_id obrigatório e deve ser uma filial da sua conta" });
+      return;
+    }
+    barbershopId = bodyBarbershopId;
+  } else {
+    barbershopId = scope.single;
   }
   const { client_id, barber_id, scheduled_date, scheduled_time, notes } = parsed.data;
   const serviceIds: string[] = parsed.data.service_ids?.length

@@ -1,4 +1,8 @@
-# Integração WhatsApp (Meta Cloud API)
+# Integração WhatsApp (Meta Cloud API) — Legado
+
+> **Aviso:** Este documento descreve a integração via **Meta Cloud API** (webhook do Facebook/Meta). O produto NavalhIA utiliza atualmente **UAZAPI** (conexão por QR/código) como integração padrão. Use este doc apenas para referência ou ambientes que ainda usem Meta Cloud API.
+>
+> Para a integração oficial, veja [WHATSAPP_UAZAPI.md](WHATSAPP_UAZAPI.md).
 
 ## Visão geral
 
@@ -13,7 +17,7 @@
    - Exemplos: `https://api.seudominio.com`, `https://api.navalhia.com.br.com`.
 
 2. **Opções de exposição**
-   - **VPS/servidor**: domínio apontando para o IP, TLS com certificado (ex.: Let’s Encrypt via Caddy/Nginx).
+   - **VPS/servidor**: domínio apontando para o IP, TLS com certificado (ex.: Let's Encrypt via Caddy/Nginx).
    - **Túnel**: Cloudflare Tunnel ou similar, expondo o backend sem IP público no servidor.
 
 3. **Porta**

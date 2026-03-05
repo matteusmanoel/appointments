@@ -20,6 +20,7 @@ import {
 } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import {
   Calendar as CalendarIcon,
@@ -41,6 +42,7 @@ import {
   List,
   LayoutGrid,
   Pencil,
+  Search,
 } from "lucide-react";
 import {
   appointmentsApi,
@@ -56,6 +58,8 @@ import {
   ConfirmDialog,
   EntityActionsMenu,
   EntityFormDialog,
+  EntitySelectWithCreate,
+  EntityMultiSelectWithCreate,
 } from "@/components/shared";
 import { LoadingState } from "@/components/LoadingState";
 import { EmptyState } from "@/components/EmptyState";
@@ -83,10 +87,11 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
-import { formatPhoneBR } from "@/lib/input-masks";
+import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { DatePicker } from "@/components/ui/date-picker";
+import { DateHourPicker } from "@/components/ui/date-hour-picker";
 import { MonthPicker } from "@/components/ui/month-picker";
 import { YearPicker } from "@/components/ui/year-picker";
 import { Badge } from "@/components/ui/badge";
@@ -94,7 +99,6 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import {
   FiltersBar,
   FiltersBarField,
-  BarbersMultiSelect,
 } from "@/components/appointments/FiltersBar";
 
 const TIME_SLOTS = [
@@ -188,14 +192,67 @@ const appointmentFormSchema = z.object({
     .enum(["pending", "confirmed", "completed", "cancelled", "no_show"])
     .optional(),
   price: z.number().min(0).optional(),
+  barbershop_id: z.string().uuid().optional(),
 });
 
 type AppointmentFormValues = z.infer<typeof appointmentFormSchema>;
+
+const clientCreateSchema = z.object({
+  name: z.string().min(1, "Nome é obrigatório"),
+  phone: z
+    .string()
+    .min(10, "Telefone deve ter pelo menos 10 dígitos")
+    .refine((v) => /^\d+$/.test(v), "Use apenas números"),
+  email: z
+    .string()
+    .optional()
+    .refine(
+      (v) => !v || v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v),
+      "E-mail inválido",
+    ),
+  notes: z.string().optional(),
+  barbershop_id: z.string().uuid().optional(),
+});
+
+const barberCreateSchema = z.object({
+  name: z.string().min(1, "Nome é obrigatório"),
+  phone: z.string().optional(),
+  email: z.string().optional(),
+  status: z.enum(["active", "inactive", "break"]),
+  commission_percentage: z.coerce.number().min(0).max(100),
+  barbershop_id: z.string().uuid().optional(),
+});
+
+const defaultBarberSchedule: Record<
+  string,
+  { start: string; end: string } | null
+> = {
+  monday: { start: "09:00", end: "19:00" },
+  tuesday: { start: "09:00", end: "19:00" },
+  wednesday: { start: "09:00", end: "19:00" },
+  thursday: { start: "09:00", end: "19:00" },
+  friday: { start: "09:00", end: "19:00" },
+  saturday: { start: "09:00", end: "18:00" },
+  sunday: null,
+};
+
+const serviceCreateSchema = z.object({
+  name: z.string().min(1, "Nome é obrigatório"),
+  description: z.string().optional(),
+  price: z.coerce.number().min(0.01, "Preço deve ser maior que zero"),
+  duration_minutes: z.coerce.number().min(1, "Duração mínima 1 min"),
+  category: z
+    .enum(["corte", "combo", "barba", "adicional", "tratamento"])
+    .optional()
+    .default("corte"),
+  barbershop_id: z.string().uuid().optional(),
+});
 
 export default function Agendamentos() {
   const queryClient = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
+  const { profile, selectedScope } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [priceManuallyEdited, setPriceManuallyEdited] = useState(false);
   const isMobile = useIsMobile();
@@ -211,12 +268,10 @@ export default function Agendamentos() {
   ) as "grade" | "lista";
   const fromParam = searchParams.get("from");
   const toParam = searchParams.get("to");
-  const barberParam = searchParams.get("barber_id") ?? "__all__";
-  const listBarbersParam = searchParams.get("barbers");
+  const searchParam = searchParams.get("search") ?? "";
   const statusParam = searchParams.get("status") ?? "__all__";
   const gradeViewParam = searchParams.get("grade_view") ?? "day";
   const gradeDateParam = searchParams.get("date");
-  const gradeBarbersParam = searchParams.get("barbers");
   const gradeStatusParam = searchParams.get("status");
 
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
@@ -233,19 +288,22 @@ export default function Agendamentos() {
         ? "year"
         : "day",
   );
-  const [gradeBarberIds, setGradeBarberIds] = useState<string[]>(() => {
-    if (gradeBarbersParam && gradeBarbersParam.trim()) {
-      return gradeBarbersParam
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-    return [];
-  });
+  const filterSearch = searchParam;
+  const setFilterSearch = (v: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (v.trim()) next.set("search", v.trim());
+      else next.delete("search");
+      return next;
+    });
+  };
   const [gradeStatus, setGradeStatus] = useState<string>(
     gradeStatusParam ?? "__all__",
   );
   const [formOpen, setFormOpen] = useState(false);
+  const [createClientOpen, setCreateClientOpen] = useState(false);
+  const [createBarberOpen, setCreateBarberOpen] = useState(false);
+  const [createServiceOpen, setCreateServiceOpen] = useState(false);
   const [appointmentModalMode, setAppointmentModalMode] = useState<
     "view" | "edit"
   >("view");
@@ -278,13 +336,6 @@ export default function Agendamentos() {
       to: endOfWeek(today, { weekStartsOn: 0 }),
     };
   });
-  const [listBarberIds, setListBarberIds] = useState<string[]>(() => {
-    if (listBarbersParam && listBarbersParam.trim()) {
-      return listBarbersParam.split(",").map((s) => s.trim()).filter(Boolean);
-    }
-    if (barberParam && barberParam !== "__all__") return [barberParam];
-    return [];
-  });
   const [listStatus, setListStatus] = useState<string>(
     statusParam || "__all__",
   );
@@ -305,20 +356,14 @@ export default function Agendamentos() {
         params.set("from", listFromStr);
         params.set("to", listToStr);
       }
-      if (listBarberIds.length === 1) {
-        params.set("barber_id", listBarberIds[0]);
-      } else if (listBarberIds.length > 1) {
-        params.set("barbers", listBarberIds.join(","));
-      }
+      if (filterSearch.trim()) params.set("search", filterSearch.trim());
       if (listStatus && listStatus !== "__all__") {
         params.set("status", listStatus);
       }
     } else {
       params.set("grade_view", gradeViewMode);
       params.set("date", format(selectedDate, "yyyy-MM-dd"));
-      if (gradeBarberIds.length > 0) {
-        params.set("barbers", gradeBarberIds.join(","));
-      }
+      if (filterSearch.trim()) params.set("search", filterSearch.trim());
       if (gradeStatus && gradeStatus !== "__all__") {
         params.set("status", gradeStatus);
       }
@@ -328,14 +373,31 @@ export default function Agendamentos() {
     viewMode,
     listFromStr,
     listToStr,
-    listBarberIds,
+    filterSearch,
     listStatus,
     gradeViewMode,
     selectedDate,
-    gradeBarberIds,
     gradeStatus,
     setSearchParams,
   ]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT"
+      )
+        return;
+      const key = e.key.toLowerCase();
+      if (key === "d") setGradeViewMode("day");
+      else if (key === "m") setGradeViewMode("month");
+      else if (key === "a") setGradeViewMode("year");
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   const resetListFilters = () => {
     const today = new Date();
@@ -343,7 +405,7 @@ export default function Agendamentos() {
       from: startOfWeek(today, { weekStartsOn: 0 }),
       to: endOfWeek(today, { weekStartsOn: 0 }),
     });
-    setListBarberIds([]);
+    setFilterSearch("");
     setListStatus("__all__");
   };
 
@@ -366,14 +428,14 @@ export default function Agendamentos() {
       "appointments",
       dateStr,
       gradeViewMode,
-      gradeBarberIds,
+      filterSearch,
       gradeStatus,
     ],
     queryFn: () =>
       appointmentsApi.list({
         date: dateStr,
-        barber_id: gradeBarberIds.length === 1 ? gradeBarberIds[0] : undefined,
         status: gradeStatus !== "__all__" ? gradeStatus : undefined,
+        search: filterSearch.trim() || undefined,
       }),
     enabled: viewMode === "grade" && gradeViewMode === "day",
   });
@@ -384,15 +446,15 @@ export default function Agendamentos() {
       "month",
       gradeMonthFrom,
       gradeMonthTo,
-      gradeBarberIds,
+      filterSearch,
       gradeStatus,
     ],
     queryFn: () =>
       appointmentsApi.list({
         from: gradeMonthFrom,
         to: gradeMonthTo,
-        barber_id: gradeBarberIds.length === 1 ? gradeBarberIds[0] : undefined,
         status: gradeStatus !== "__all__" ? gradeStatus : undefined,
+        search: filterSearch.trim() || undefined,
       }),
     enabled:
       viewMode === "grade" &&
@@ -407,26 +469,20 @@ export default function Agendamentos() {
       "list",
       listFromStr,
       listToStr,
-      listBarberIds.length === 1 ? listBarberIds[0] : listBarberIds.length > 1 ? "multi" : null,
+      filterSearch,
       listStatus || null,
     ],
     queryFn: () =>
       appointmentsApi.list({
         from: listFromStr,
         to: listToStr,
-        barber_id:
-          listBarberIds.length === 1 ? listBarberIds[0] : undefined,
         status: listStatus && listStatus !== "__all__" ? listStatus : undefined,
+        search: filterSearch.trim() || undefined,
       }),
     enabled: viewMode === "lista" && !!listFromStr && !!listToStr,
   });
 
-  const listAppointments =
-    listBarberIds.length >= 2
-      ? listAppointmentsRaw.filter((a) =>
-          a.barber_id && listBarberIds.includes(a.barber_id),
-        )
-      : listAppointmentsRaw;
+  const listAppointments = listAppointmentsRaw;
 
   const { data: clients = [] } = useQuery({
     queryKey: ["clients"],
@@ -438,6 +494,101 @@ export default function Agendamentos() {
     queryFn: () => servicesApi.list(),
   });
 
+  const createClientForm = useForm<z.infer<typeof clientCreateSchema>>({
+    resolver: zodResolver(clientCreateSchema),
+    defaultValues: { name: "", phone: "", email: "", notes: "", barbershop_id: "" },
+  });
+  const createBarberForm = useForm<z.infer<typeof barberCreateSchema>>({
+    resolver: zodResolver(barberCreateSchema),
+    defaultValues: {
+      name: "",
+      phone: "",
+      email: "",
+      status: "active",
+      commission_percentage: 40,
+      barbershop_id: "",
+    },
+  });
+  const createServiceForm = useForm<z.infer<typeof serviceCreateSchema>>({
+    resolver: zodResolver(serviceCreateSchema),
+    defaultValues: {
+      name: "",
+      description: "",
+      price: 35,
+      duration_minutes: 30,
+      category: "corte",
+      barbershop_id: "",
+    },
+  });
+
+  const createClientMutation = useMutation({
+    mutationFn: (body: z.infer<typeof clientCreateSchema>) =>
+      clientsApi.create({
+        name: body.name,
+        phone: body.phone,
+        email: body.email || undefined,
+        notes: body.notes || undefined,
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
+      }),
+    onSuccess: (data: { id: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      setCreateClientOpen(false);
+      createClientForm.reset();
+      form.setValue("client_id", data.id, { shouldDirty: true });
+    },
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao criar cliente"),
+  });
+  const createBarberMutation = useMutation({
+    mutationFn: (body: z.infer<typeof barberCreateSchema>) =>
+      barbersApi.create({
+        name: body.name,
+        phone: body.phone || undefined,
+        email: body.email || undefined,
+        status: body.status,
+        commission_percentage: body.commission_percentage,
+        schedule: defaultBarberSchedule,
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
+      }),
+    onSuccess: (data: { id: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["barbers"] });
+      setCreateBarberOpen(false);
+      createBarberForm.reset();
+      form.setValue("barber_id", data.id, { shouldDirty: true });
+    },
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao criar barbeiro"),
+  });
+  const createServiceMutation = useMutation({
+    mutationFn: (body: z.infer<typeof serviceCreateSchema>) =>
+      servicesApi.create({
+        name: body.name,
+        description: body.description || undefined,
+        price: body.price,
+        duration_minutes: body.duration_minutes,
+        category: body.category ?? "corte",
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
+      }),
+    onSuccess: (data: { id: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["services"] });
+      setCreateServiceOpen(false);
+      createServiceForm.reset();
+      form.setValue(
+        "service_ids",
+        [...form.getValues("service_ids"), data.id],
+        { shouldDirty: true },
+      );
+    },
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao criar serviço"),
+  });
+
   const { data: barbershop } = useQuery({
     queryKey: ["barbershop"],
     queryFn: () => barbershopsApi.get(),
@@ -445,10 +596,33 @@ export default function Agendamentos() {
     staleTime: 2 * 60 * 1000,
   });
 
-  const timeSlots = getTimeSlotsForDay(
-    barbershop?.business_hours,
-    selectedDate,
-  );
+  const { data: closuresList = [] } = useQuery({
+    queryKey: ["barbershops", "closures"],
+    queryFn: () => barbershopsApi.closures.list(),
+  });
+
+  const closureForDate = (d: Date) => {
+    const str = format(d, "yyyy-MM-dd");
+    return closuresList.find((c) => c.closure_date === str) ?? null;
+  };
+
+  const timeSlots = (() => {
+    const c = closureForDate(selectedDate);
+    if (c?.status === "closed") return [];
+    return getTimeSlotsForDay(
+      barbershop?.business_hours,
+      selectedDate,
+      c?.status === "open_partial"
+        ? {
+            closure: {
+              start_time: c.start_time,
+              end_time: c.end_time,
+              unavailability_intervals: c.unavailability_intervals,
+            },
+          }
+        : undefined,
+    );
+  })();
   const slotsToShow = timeSlots.length > 0 ? timeSlots : TIME_SLOTS;
 
   const form = useForm<AppointmentFormValues>({
@@ -459,10 +633,11 @@ export default function Agendamentos() {
       service_id: "",
       service_ids: [],
       scheduled_date: dateStr,
-      scheduled_time: "",
+      scheduled_time: "09:00",
       notes: "",
       status: "confirmed",
       price: 0,
+      barbershop_id: "",
     },
   });
 
@@ -527,6 +702,9 @@ export default function Agendamentos() {
         scheduled_date: body.scheduled_date,
         scheduled_time: (body.scheduled_time ?? "00:00").slice(0, 5),
         notes: body.notes,
+        ...(selectedScope === "__all__" && body.barbershop_id
+          ? { barbershop_id: body.barbershop_id }
+          : {}),
       });
       const desiredStatus = body.status ?? "confirmed";
       if (desiredStatus !== "pending") {
@@ -646,28 +824,9 @@ export default function Agendamentos() {
 
   const normalizeTime = (t: string) => t.slice(0, 5);
 
-  const gradeDayAppointments = useMemo(() => {
-    if (gradeBarberIds.length > 1) {
-      return appointments.filter((a) => gradeBarberIds.includes(a.barber_id));
-    }
-    return appointments;
-  }, [appointments, gradeBarberIds]);
-
-  const gradeBarbers = useMemo(() => {
-    if (gradeBarberIds.length > 0) {
-      return barbers.filter((b) => gradeBarberIds.includes(b.id));
-    }
-    return barbers;
-  }, [barbers, gradeBarberIds]);
-
-  const gradeMonthAppointments = useMemo(() => {
-    if (gradeBarberIds.length > 1) {
-      return monthAppointments.filter((a) =>
-        gradeBarberIds.includes(a.barber_id),
-      );
-    }
-    return monthAppointments;
-  }, [monthAppointments, gradeBarberIds]);
+  const gradeDayAppointments = appointments;
+  const gradeBarbers = barbers;
+  const gradeMonthAppointments = monthAppointments;
 
   const getAppointmentForSlot = (
     list: AppointmentListItem[],
@@ -703,7 +862,19 @@ export default function Agendamentos() {
     if (!editDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(editDateStr))
       return TIME_SLOTS;
     const d = new Date(editDateStr + "T12:00:00");
-    const slots = getTimeSlotsForDay(barbershop?.business_hours, d);
+    const c = closureForDate(d);
+    if (c?.status === "closed") return [];
+    const options =
+      c?.status === "open_partial"
+        ? {
+            closure: {
+              start_time: c.start_time,
+              end_time: c.end_time,
+              unavailability_intervals: c.unavailability_intervals,
+            },
+          }
+        : undefined;
+    const slots = getTimeSlotsForDay(barbershop?.business_hours, d, options);
     return slots.length > 0 ? slots : TIME_SLOTS;
   })();
 
@@ -741,6 +912,7 @@ export default function Agendamentos() {
       notes: "",
       status: "confirmed",
       price: 0,
+      barbershop_id: "",
     });
     setFormOpen(true);
   };
@@ -755,10 +927,11 @@ export default function Agendamentos() {
       service_id: "",
       service_ids: [],
       scheduled_date: dateStr,
-      scheduled_time: slotsToShow[0] ?? "",
+      scheduled_time: slotsToShow[0] ?? "09:00",
       notes: "",
       status: "confirmed",
       price: 0,
+      barbershop_id: "",
     });
     setFormOpen(true);
   };
@@ -837,6 +1010,10 @@ export default function Agendamentos() {
 
   const onSubmit = async (values: AppointmentFormValues) => {
     try {
+      if (!editingAppointment && selectedScope === "__all__" && !values.barbershop_id) {
+        form.setError("barbershop_id", { message: "Selecione a filial." });
+        return;
+      }
       if (editingAppointment) {
         const movingToAnotherBarber =
           values.barber_id !== editingAppointment.barber_id;
@@ -859,6 +1036,9 @@ export default function Agendamentos() {
             scheduled_date: values.scheduled_date,
             scheduled_time: (values.scheduled_time ?? "00:00").slice(0, 5),
             notes: values.notes,
+            ...(selectedScope === "__all__" && values.barbershop_id
+              ? { barbershop_id: values.barbershop_id }
+              : {}),
           });
           const desiredStatus = values.status ?? "confirmed";
           if (desiredStatus !== "pending") {
@@ -953,7 +1133,7 @@ export default function Agendamentos() {
 
   return (
     <>
-      <div className="animate-fade-in">
+      <div className="animate-fade-in flex flex-col flex-1 min-h-0">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
           <div className="page-header mb-0">
             <h1 className="page-title">Agendamentos</h1>
@@ -972,7 +1152,7 @@ export default function Agendamentos() {
         <Tabs
           value={viewMode}
           onValueChange={(v) => setViewMode(v as "grade" | "lista")}
-          className="w-full"
+          className="w-full flex flex-col flex-1 min-h-[calc(100vh-8rem)]"
         >
           <TabsList className="mb-4 w-full grid grid-cols-2">
             <TabsTrigger value="grade" className="gap-2">
@@ -985,32 +1165,46 @@ export default function Agendamentos() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="grade" className="mt-0">
-            <div className="stat-card mb-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <div className="flex items-center gap-2">
+          <TabsContent
+            value="grade"
+            className="mt-0 flex flex-col flex-1 min-h-0"
+          >
+            <div className="stat-card mb-4 shrink-0">
+              <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] gap-3 items-center">
+                <div className="flex flex-wrap items-center justify-start gap-2 min-w-0">
                   <Tabs
                     value={gradeViewMode}
                     onValueChange={(v) =>
                       setGradeViewMode(v as "day" | "month" | "year")
                     }
                   >
-                    <TabsList className="h-10 p-0.5 grid grid-cols-3">
-                      <TabsTrigger value="day" className="text-xs">
+                    <TabsList className="h-12 p-1 grid grid-cols-3">
+                      <TabsTrigger
+                        value="day"
+                        className="text-sm font-medium px-4"
+                      >
                         Dia
                       </TabsTrigger>
-                      <TabsTrigger value="month" className="text-xs">
+                      <TabsTrigger
+                        value="month"
+                        className="text-sm font-medium px-4"
+                      >
                         Mês
                       </TabsTrigger>
-                      <TabsTrigger value="year" className="text-xs">
+                      <TabsTrigger
+                        value="year"
+                        className="text-sm font-medium px-4"
+                      >
                         Ano
                       </TabsTrigger>
                     </TabsList>
                   </Tabs>
-                  <div className="flex items-center border rounded-lg overflow-hidden">
+                </div>
+                <div className="flex flex-1 min-w-0 justify-center">
+                  <div className="flex items-center border rounded-xl overflow-hidden bg-muted/30">
                     <button
                       type="button"
-                      className="p-3 hover:bg-muted hover:rounded-l-lg transition-colors"
+                      className="p-4 hover:bg-muted transition-colors h-14 flex items-center justify-center"
                       onClick={() =>
                         setSelectedDate((d) =>
                           gradeViewMode === "day"
@@ -1028,35 +1222,35 @@ export default function Agendamentos() {
                             : "Ano anterior"
                       }
                     >
-                      <ChevronLeft className="w-5 h-5 text-muted-foreground" />
+                      <ChevronLeft className="w-6 h-6 text-muted-foreground" />
                     </button>
-                    <div className="w-[240px] flex items-center justify-center shrink-0 border-x border-border">
+                    <div className="w-[320px] min-h-[3.5rem] h-full flex items-center justify-center shrink-0 border-x border-border">
                       {gradeViewMode === "day" && (
                         <DatePicker
                           value={selectedDate}
                           onChange={(d) => d && setSelectedDate(d)}
                           triggerVariant="verbose"
-                          className="w-full min-w-0 flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium border-0 rounded-none"
+                          className="w-full min-w-0 flex items-center justify-center gap-2 text-base font-medium border-0 rounded-none h-full"
                         />
                       )}
                       {gradeViewMode === "month" && (
                         <MonthPicker
                           value={selectedDate}
                           onChange={setSelectedDate}
-                          className="w-full min-w-0 border-0 rounded-none justify-center"
+                          className="w-full min-w-0 border-0 rounded-none justify-center text-base font-medium h-full"
                         />
                       )}
                       {gradeViewMode === "year" && (
                         <YearPicker
                           value={selectedDate}
                           onChange={setSelectedDate}
-                          className="w-full min-w-0 border-0 rounded-none justify-center"
+                          className="w-full min-w-0 border-0 rounded-none justify-center text-base font-medium h-full"
                         />
                       )}
                     </div>
                     <button
                       type="button"
-                      className="p-3 hover:bg-muted hover:rounded-r-lg transition-colors"
+                      className="p-4 hover:bg-muted transition-colors h-14 flex items-center justify-center"
                       onClick={() =>
                         setSelectedDate((d) =>
                           gradeViewMode === "day"
@@ -1074,72 +1268,20 @@ export default function Agendamentos() {
                             : "Próximo ano"
                       }
                     >
-                      <ChevronRight className="w-5 h-5 text-muted-foreground" />
+                      <ChevronRight className="w-6 h-6 text-muted-foreground" />
                     </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1 h-10"
-                      >
-                        Barbeiros
-                        {gradeBarberIds.length > 0 ? (
-                          <span className="text-xs bg-primary/20 text-primary px-1.5 rounded">
-                            {gradeBarberIds.length}
-                          </span>
-                        ) : null}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent align="start" className="w-56 p-2">
-                      <div className="flex flex-col gap-2 max-h-[240px] overflow-y-auto">
-                        {barbers.map((b) => (
-                          <label
-                            key={b.id}
-                            className="flex items-center gap-2 cursor-pointer rounded px-2 py-1.5 hover:bg-muted"
-                          >
-                            <Checkbox
-                              checked={
-                                gradeBarberIds.length === 0 ||
-                                gradeBarberIds.includes(b.id)
-                              }
-                              onCheckedChange={(checked) => {
-                                if (gradeBarberIds.length === 0) {
-                                  setGradeBarberIds(
-                                    barbers
-                                      .filter((x) => x.id !== b.id)
-                                      .map((x) => x.id),
-                                  );
-                                } else if (checked) {
-                                  setGradeBarberIds((ids) =>
-                                    ids.includes(b.id) ? ids : [...ids, b.id],
-                                  );
-                                } else {
-                                  setGradeBarberIds((ids) =>
-                                    ids.filter((id) => id !== b.id),
-                                  );
-                                }
-                              }}
-                            />
-                            <span className="text-sm">{b.name}</span>
-                          </label>
-                        ))}
-                      </div>
-                      {gradeBarberIds.length > 0 && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="mt-2 w-full"
-                          onClick={() => setGradeBarberIds([])}
-                        >
-                          Limpar filtro
-                        </Button>
-                      )}
-                    </PopoverContent>
-                  </Popover>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  <div className="relative min-w-[180px]">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Cliente, barbeiro ou serviço"
+                      value={filterSearch}
+                      onChange={(e) => setFilterSearch(e.target.value)}
+                      className="pl-8 h-10 w-full"
+                    />
+                  </div>
                   <Select value={gradeStatus} onValueChange={setGradeStatus}>
                     <SelectTrigger className="w-[130px]">
                       <SelectValue placeholder="Status" />
@@ -1157,286 +1299,316 @@ export default function Agendamentos() {
               </div>
             </div>
 
-            <div className="min-h-[640px]">
-            {gradeViewMode === "day" && (
-              <>
-                {isLoading && (
-                  <div className="stat-card flex min-h-[640px] items-center justify-center">
-                    <LoadingState />
-                  </div>
-                )}
-                {!isLoading && timeSlots.length === 0 && (
-                  <div className="stat-card flex min-h-[640px] items-center justify-center">
-                    <EmptyState
-                      icon={
-                        <CalendarX className="h-12 w-12" strokeWidth={1.5} />
-                      }
-                      title="Fechada neste dia"
-                      description="Não há horários disponíveis para agendamento."
-                    />
-                  </div>
-                )}
-                {!isLoading && timeSlots.length > 0 && (
-                  <div className="stat-card overflow-hidden">
-                    <div className="overflow-x-auto scrollbar-thin">
-                      <div
-                        className="grid gap-2 mb-4 pb-4 border-b border-border min-w-[280px]"
-                        style={{
-                          gridTemplateColumns: `80px repeat(${gradeBarbers.length}, minmax(100px, 1fr))`,
-                        }}
-                      >
-                        <div className="text-sm font-medium text-muted-foreground">
-                          Horário
-                        </div>
-                        {gradeBarbers.map((barber, i) => (
-                          <div
-                            key={barber.id}
-                            className="flex items-center gap-2"
-                          >
-                            <div
-                              className={`w-3 h-3 rounded-full shrink-0 ${BARBER_COLORS[i % BARBER_COLORS.length]}`}
-                            />
-                            <span className="text-sm font-medium text-foreground truncate">
-                              {barber.name}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="space-y-1 max-h-[600px] overflow-y-auto scrollbar-thin">
-                        {slotsToShow.map((time) => (
-                          <div
-                            key={time}
-                            className="grid gap-2"
-                            style={{
-                              gridTemplateColumns: `80px repeat(${gradeBarbers.length}, 1fr)`,
-                            }}
-                          >
-                            <div className="text-sm text-muted-foreground py-3 font-medium">
-                              {time}
-                            </div>
-                            {gradeBarbers.map((barber, i) => {
-                              const appointment = getAppointmentForSlot(
-                                gradeDayAppointments,
-                                time,
-                                barber.id,
-                              );
-                              const occupied = isSlotOccupiedByAppointment(
-                                gradeDayAppointments,
-                                time,
-                                barber.id,
-                              );
-                              const colorClass =
-                                BARBER_COLORS[i % BARBER_COLORS.length];
-                              if (appointment) {
-                                return (
-                                  <div
-                                    key={`${time}-${barber.id}`}
-                                    role="button"
-                                    tabIndex={0}
-                                    onClick={() => openEdit(appointment)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" || e.key === " ") {
-                                        e.preventDefault();
-                                        openEdit(appointment);
-                                      }
-                                    }}
-                                    className={`w-full text-left ${colorClass}/10 border-l-4 ${colorClass} rounded-lg p-3 cursor-pointer hover:shadow-md transition-shadow`}
-                                  >
-                                    <div className="flex items-start justify-between">
-                                      <div>
-                                        <p className="font-medium text-foreground text-sm">
-                                          {appointment.client_name}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                                          <Scissors className="w-3 h-3" />
-                                          {serviceLabel(
-                                            appointment.service_names,
-                                            appointment.service_name,
-                                          )}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                                          <Phone className="w-3 h-3" />
-                                          {appointment.client_phone}
-                                        </p>
-                                      </div>
-                                      <span
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <EntityActionsMenu
-                                          onEdit={() => openEdit(appointment)}
-                                          onDelete={() =>
-                                            setCancelTarget(appointment)
-                                          }
-                                          aria-label="Menu do agendamento"
-                                        />
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              }
-                              if (occupied) {
-                                return (
-                                  <div
-                                    key={`${time}-${barber.id}`}
-                                    className="min-h-[52px] rounded-lg bg-muted/30"
-                                  />
-                                );
-                              }
-                              return (
-                                <button
-                                  type="button"
-                                  key={`${time}-${barber.id}`}
-                                  className="rounded-lg border border-dashed border-border hover:border-accent hover:bg-accent/5 transition-colors cursor-pointer min-h-[52px] flex items-center justify-center"
-                                  onClick={() => openCreate(time, barber.id)}
-                                  aria-label={`Adicionar agendamento ${time} para ${barber.name}`}
-                                >
-                                  <Plus className="w-4 h-4 text-muted-foreground" />
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
+            <div className="flex-1 min-h-0 flex flex-col">
+              {gradeViewMode === "day" && (
+                <>
+                  {isLoading && (
+                    <div className="stat-card flex flex-1 min-h-0 items-center justify-center">
+                      <LoadingState />
                     </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {gradeViewMode === "month" && (
-              <>
-                {monthLoading && (
-                  <div className="stat-card flex min-h-[640px] items-center justify-center">
-                    <LoadingState />
-                  </div>
-                )}
-                {!monthLoading && (
-                  <div className="stat-card">
-                    <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground mb-2">
-                      {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map(
-                        (d) => (
-                          <div key={d}>{d}</div>
-                        ),
-                      )}
-                    </div>
-                    <div className="grid grid-cols-7 gap-1">
-                      {(() => {
-                        const start = startOfMonth(selectedDate);
-                        const end = endOfMonth(selectedDate);
-                        const startPad = start.getDay();
-                        const lastDay = end.getDate();
-                        const days: (Date | null)[] = [];
-                        for (let i = 0; i < startPad; i++) days.push(null);
-                        for (let dayNum = 1; dayNum <= lastDay; dayNum++) {
-                          days.push(
-                            new Date(
-                              selectedDate.getFullYear(),
-                              selectedDate.getMonth(),
-                              dayNum,
-                            ),
-                          );
+                  )}
+                  {!isLoading && timeSlots.length === 0 && (
+                    <div className="stat-card flex flex-1 min-h-0 items-center justify-center">
+                      <EmptyState
+                        icon={
+                          <CalendarX className="h-12 w-12" strokeWidth={1.5} />
                         }
-                        return days.map((day, i) => {
-                          if (!day)
-                            return (
+                        title="Fechada neste dia"
+                        description="Não há horários disponíveis para agendamento."
+                      />
+                    </div>
+                  )}
+                  {!isLoading && timeSlots.length > 0 && (
+                    <div className="stat-card overflow-hidden flex-1 min-h-0 flex flex-col">
+                      <div className="overflow-x-auto scrollbar-thin flex-1 min-h-0 flex flex-col">
+                        <div
+                          className="grid gap-2 mb-4 pb-4 border-b border-border min-w-[280px] shrink-0"
+                          style={{
+                            gridTemplateColumns: `80px repeat(${gradeBarbers.length}, minmax(100px, 1fr))`,
+                          }}
+                        >
+                          <div className="text-sm font-medium text-muted-foreground">
+                            Horário
+                          </div>
+                          {gradeBarbers.map((barber, i) => (
+                            <div
+                              key={barber.id}
+                              className="flex items-center gap-2"
+                            >
                               <div
-                                key={`pad-${i}`}
-                                className="min-h-[120px] rounded bg-muted/20"
+                                className={`w-3 h-3 rounded-full shrink-0 ${BARBER_COLORS[i % BARBER_COLORS.length]}`}
                               />
-                            );
-                          const dayStr = format(day, "yyyy-MM-dd");
-                          const dayApts = gradeMonthAppointments.filter(
-                            (a) => a.scheduled_date === dayStr,
-                          );
-                          const byBarber = dayApts.reduce<
-                            Record<string, { id: string; name: string; count: number }>
-                          >((acc, a) => {
-                            const id = a.barber_id ?? "__unknown__";
-                            const name = a.barber_name ?? "Barbeiro";
-                            if (!acc[id]) acc[id] = { id, name, count: 0 };
-                            acc[id].count += 1;
-                            return acc;
-                          }, {});
-                          const barberBadges = Object.values(byBarber);
-                          return (
-                            <button
-                              type="button"
-                              key={dayStr}
-                              className="min-h-[120px] rounded border border-border p-1.5 overflow-hidden text-left flex flex-col hover:bg-muted/30 transition-colors"
-                              onClick={() => {
-                                setSelectedDate(day);
-                                setGradeViewMode("day");
+                              <span className="text-sm font-medium text-foreground truncate">
+                                {barber.name}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="space-y-1 flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+                          {slotsToShow.map((time) => (
+                            <div
+                              key={time}
+                              className="grid gap-2"
+                              style={{
+                                gridTemplateColumns: `80px repeat(${gradeBarbers.length}, 1fr)`,
                               }}
                             >
-                              <div className="text-xs font-medium text-muted-foreground mb-1">
-                                {format(day, "d")}
+                              <div className="text-sm text-muted-foreground py-3 font-medium">
+                                {time}
                               </div>
-                              {barberBadges.length > 0 && (
-                                <div className="flex flex-wrap gap-0.5">
-                                  {barberBadges.map(({ id: barberId, name, count }) => (
+                              {gradeBarbers.map((barber, i) => {
+                                const appointment = getAppointmentForSlot(
+                                  gradeDayAppointments,
+                                  time,
+                                  barber.id,
+                                );
+                                const occupied = isSlotOccupiedByAppointment(
+                                  gradeDayAppointments,
+                                  time,
+                                  barber.id,
+                                );
+                                const colorClass =
+                                  BARBER_COLORS[i % BARBER_COLORS.length];
+                                if (appointment) {
+                                  return (
+                                    <div
+                                      key={`${time}-${barber.id}`}
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={() => openEdit(appointment)}
+                                      onKeyDown={(e) => {
+                                        if (
+                                          e.key === "Enter" ||
+                                          e.key === " "
+                                        ) {
+                                          e.preventDefault();
+                                          openEdit(appointment);
+                                        }
+                                      }}
+                                      className={`w-full text-left ${colorClass}/10 border-l-4 ${colorClass} rounded-lg p-3 cursor-pointer hover:shadow-md transition-shadow`}
+                                    >
+                                      <div className="flex items-start justify-between">
+                                        <div>
+                                          <p className="font-medium text-foreground text-sm">
+                                            {appointment.client_name}
+                                          </p>
+                                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                                            <Scissors className="w-3 h-3" />
+                                            {serviceLabel(
+                                              appointment.service_names,
+                                              appointment.service_name,
+                                            )}
+                                          </p>
+                                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                            <Phone className="w-3 h-3" />
+                                            {appointment.client_phone}
+                                          </p>
+                                        </div>
+                                        <span
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <EntityActionsMenu
+                                            onEdit={() => openEdit(appointment)}
+                                            onDelete={() =>
+                                              setCancelTarget(appointment)
+                                            }
+                                            aria-label="Menu do agendamento"
+                                          />
+                                        </span>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                if (occupied) {
+                                  return (
+                                    <div
+                                      key={`${time}-${barber.id}`}
+                                      className="min-h-[52px] rounded-lg bg-muted/30"
+                                    />
+                                  );
+                                }
+                                return (
+                                  <button
+                                    type="button"
+                                    key={`${time}-${barber.id}`}
+                                    className="rounded-lg border border-dashed border-border hover:border-accent hover:bg-accent/5 transition-colors cursor-pointer min-h-[52px] flex items-center justify-center"
+                                    onClick={() => openCreate(time, barber.id)}
+                                    aria-label={`Adicionar agendamento ${time} para ${barber.name}`}
+                                  >
+                                    <Plus className="w-4 h-4 text-muted-foreground" />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {gradeViewMode === "month" && (
+                <>
+                  {monthLoading && (
+                    <div className="stat-card flex flex-1 min-h-0 items-center justify-center">
+                      <LoadingState />
+                    </div>
+                  )}
+                  {!monthLoading && (
+                    <div className="stat-card h-full flex flex-col min-h-0">
+                      <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground mb-2 shrink-0">
+                        {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map(
+                          (d) => (
+                            <div key={d}>{d}</div>
+                          ),
+                        )}
+                      </div>
+                      <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 overflow-auto content-start">
+                        {(() => {
+                          const start = startOfMonth(selectedDate);
+                          const end = endOfMonth(selectedDate);
+                          const startPad = start.getDay();
+                          const lastDay = end.getDate();
+                          const days: (Date | null)[] = [];
+                          for (let i = 0; i < startPad; i++) days.push(null);
+                          for (let dayNum = 1; dayNum <= lastDay; dayNum++) {
+                            days.push(
+                              new Date(
+                                selectedDate.getFullYear(),
+                                selectedDate.getMonth(),
+                                dayNum,
+                              ),
+                            );
+                          }
+                          return days.map((day, i) => {
+                            if (!day)
+                              return (
+                                <div
+                                  key={`pad-${i}`}
+                                  className="min-h-[120px] rounded bg-muted/20"
+                                />
+                              );
+                            const dayStr = format(day, "yyyy-MM-dd");
+                            const dayApts = gradeMonthAppointments.filter(
+                              (a) => a.scheduled_date === dayStr,
+                            );
+                            const byBarber = dayApts.reduce<
+                              Record<
+                                string,
+                                { id: string; name: string; count: number }
+                              >
+                            >((acc, a) => {
+                              const id = a.barber_id ?? "__unknown__";
+                              const name = a.barber_name ?? "Barbeiro";
+                              if (!acc[id]) acc[id] = { id, name, count: 0 };
+                              acc[id].count += 1;
+                              return acc;
+                            }, {});
+                            const barberBadges = Object.values(byBarber);
+                            return (
+                              <button
+                                type="button"
+                                key={dayStr}
+                                className="min-h-[120px] rounded border border-border p-1.5 overflow-hidden text-left flex flex-col hover:bg-muted/30 transition-colors"
+                                onClick={() => {
+                                  setSelectedDate(day);
+                                  setGradeViewMode("day");
+                                }}
+                              >
+                                <div className="text-xs font-medium text-muted-foreground mb-1">
+                                  {format(day, "d")}
+                                </div>
+                                {barberBadges.length > 0 && (
+                                  <div className="flex flex-wrap gap-0.5">
+                                    {barberBadges.map(
+                                      ({ id: barberId, name, count }) => (
+                                        <Badge
+                                          key={barberId}
+                                          variant="secondary"
+                                          className="text-[10px] px-1 py-0 font-normal"
+                                        >
+                                          {name} · {count}
+                                        </Badge>
+                                      ),
+                                    )}
                                     <Badge
-                                      key={barberId}
-                                      variant="secondary"
+                                      variant="outline"
                                       className="text-[10px] px-1 py-0 font-normal"
                                     >
-                                      {name} · {count}
+                                      Total: {dayApts.length}
                                     </Badge>
-                                  ))}
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[10px] px-1 py-0 font-normal"
-                                  >
-                                    Total: {dayApts.length}
-                                  </Badge>
-                                </div>
-                              )}
-                            </button>
-                          );
-                        });
-                      })()}
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          });
+                        })()}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </>
-            )}
+                  )}
+                </>
+              )}
 
-            {gradeViewMode === "year" && (
-              <div className="stat-card min-h-[640px]">
-                <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 gap-3 items-center justify-center">
-                  {Array.from({ length: 12 }, (_, i) => {
-                    const monthDate = new Date(
-                      selectedDate.getFullYear(),
-                      i,
-                      1,
-                    );
-                    const monthLabel = format(monthDate, "MMM", {
-                      locale: ptBR,
-                    });
-                    return (
-                      <Button
-                        key={i}
-                        variant="outline"
-                        className="h-auto flex flex-col items-center gap-1 py-8"
-                        onClick={() => {
-                          setSelectedDate(monthDate);
-                          setGradeViewMode("month");
-                        }}
-                      >
-                        <span className="capitalize">{monthLabel}</span>
-                      </Button>
-                    );
-                  })}
+              {gradeViewMode === "year" && (
+                <div className="stat-card h-full flex flex-col min-h-0">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 gap-3 items-center justify-center">
+                    {Array.from({ length: 12 }, (_, i) => {
+                      const monthDate = new Date(
+                        selectedDate.getFullYear(),
+                        i,
+                        1,
+                      );
+                      const monthLabel = format(monthDate, "MMM", {
+                        locale: ptBR,
+                      });
+                      return (
+                        <Button
+                          key={i}
+                          variant="outline"
+                          className="h-auto flex flex-col items-center gap-1 py-8"
+                          onClick={() => {
+                            setSelectedDate(monthDate);
+                            setGradeViewMode("month");
+                          }}
+                        >
+                          <span className="capitalize">{monthLabel}</span>
+                        </Button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
             </div>
           </TabsContent>
 
-          <TabsContent value="lista" className="mt-0">
-            <div className="space-y-4">
+          <TabsContent value="lista" className="mt-0 flex flex-col flex-1 min-h-0">
+            <div className="space-y-4 flex flex-col flex-1 min-h-0">
               <FiltersBar
                 left={
+                  <FiltersBarField label="Buscar" width="barber">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Cliente, barbeiro ou serviço"
+                        value={filterSearch}
+                        onChange={(e) => setFilterSearch(e.target.value)}
+                        className="pl-8 h-10 w-full min-w-[160px]"
+                      />
+                    </div>
+                  </FiltersBarField>
+                }
+                center={
+                  <FiltersBarField label="Período" width="date">
+                    <DateRangePicker
+                      value={listRange}
+                      onChange={setListRange}
+                      className="w-full"
+                    />
+                  </FiltersBarField>
+                }
+                right={
                   <FiltersBarField label="Status" width="status">
                     <Select value={listStatus} onValueChange={setListStatus}>
                       <SelectTrigger className="w-full">
@@ -1453,41 +1625,25 @@ export default function Agendamentos() {
                     </Select>
                   </FiltersBarField>
                 }
-                center={
-                  <FiltersBarField label="Período" width="date">
-                    <DateRangePicker
-                      value={listRange}
-                      onChange={setListRange}
-                      className="w-full"
-                    />
-                  </FiltersBarField>
-                }
-                right={
-                  <BarbersMultiSelect
-                    barbers={barbers.map((b) => ({ id: b.id, name: b.name }))}
-                    selectedIds={listBarberIds}
-                    onChange={setListBarberIds}
-                  />
-                }
               />
               {listLoading ? (
                 <LoadingState />
               ) : listAppointments.length === 0 ? (
-                <div className="stat-card flex flex-col gap-3">
+                <div className="stat-card flex flex-1 min-h-0 flex-col gap-3 items-center justify-center py-12">
                   <EmptyState
                     icon={<List className="h-12 w-12" strokeWidth={1.5} />}
                     title={
-                      listBarberIds.length > 0 || listStatus !== "__all__"
+                      filterSearch.trim() || listStatus !== "__all__"
                         ? "Nenhum agendamento para os filtros selecionados"
                         : "Nenhum agendamento no período"
                     }
                     description={
-                      listBarberIds.length > 0 || listStatus !== "__all__"
+                      filterSearch.trim() || listStatus !== "__all__"
                         ? "Tente outros filtros ou amplie o período."
                         : "Não há agendamentos no intervalo escolhido."
                     }
                   />
-                  {(listBarberIds.length > 0 || listStatus !== "__all__") && (
+                  {(filterSearch.trim() || listStatus !== "__all__") && (
                     <div className="flex justify-center">
                       <Button
                         type="button"
@@ -1598,9 +1754,20 @@ export default function Agendamentos() {
         }
         contentClassName={editingAppointment ? "sm:max-w-4xl" : "sm:max-w-2xl"}
         footer={
-          <div className="flex w-full flex-wrap items-center justify-between gap-2">
+          <>
             <div className="flex items-center gap-2">
-              {editingAppointment && appointmentModalMode === "edit" ? (
+              {editingAppointment && appointmentModalMode === "view" ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 border-border"
+                  onClick={() => setAppointmentModalMode("edit")}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Editar agendamento
+                </Button>
+              ) : editingAppointment && appointmentModalMode === "edit" ? (
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -1611,17 +1778,21 @@ export default function Agendamentos() {
                 >
                   Cancelar edição
                 </Button>
-              ) : (
-                <Button variant="outline" onClick={() => setFormOpen(false)}>
-                  {editingAppointment ? "Fechar" : "Cancelar"}
-                </Button>
-              )}
+              ) : null}
+              <Button variant="outline" onClick={() => setFormOpen(false)}>
+                {editingAppointment && appointmentModalMode === "edit"
+                  ? "Cancelar"
+                  : editingAppointment
+                    ? "Fechar"
+                    : "Cancelar"}
+              </Button>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-nowrap items-center justify-end gap-2 overflow-x-auto">
               {editingAppointment && appointmentModalMode === "view" ? (
                 <>
                   <Button
                     type="button"
+                    size="sm"
                     onClick={() =>
                       inlineUpdateMutation
                         .mutateAsync({
@@ -1637,11 +1808,12 @@ export default function Agendamentos() {
                         )
                     }
                   >
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    <CheckCircle2 className="h-4 w-4 mr-1 sm:mr-2" />
                     Confirmar
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     variant="outline"
                     onClick={() =>
                       inlineUpdateMutation
@@ -1658,11 +1830,12 @@ export default function Agendamentos() {
                         )
                     }
                   >
-                    <BadgeCheck className="h-4 w-4 mr-2" />
+                    <BadgeCheck className="h-4 w-4 mr-1 sm:mr-2" />
                     Concluir
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     variant="outline"
                     onClick={() =>
                       inlineUpdateMutation
@@ -1679,15 +1852,16 @@ export default function Agendamentos() {
                         )
                     }
                   >
-                    <UserX className="h-4 w-4 mr-2" />
+                    <UserX className="h-4 w-4 mr-1 sm:mr-2" />
                     Faltou
                   </Button>
                   <Button
                     type="button"
+                    size="sm"
                     variant="destructive"
                     onClick={() => setCancelTarget(editingAppointment)}
                   >
-                    <Ban className="h-4 w-4 mr-2" />
+                    <Ban className="h-4 w-4 mr-1 sm:mr-2" />
                     Cancelar
                   </Button>
                 </>
@@ -1702,7 +1876,7 @@ export default function Agendamentos() {
                 </Button>
               )}
             </div>
-          </div>
+          </>
         }
       >
         <Form {...form}>
@@ -1873,20 +2047,44 @@ export default function Agendamentos() {
                     </Button>
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="absolute bottom-3 right-3 gap-1.5 border-border"
-                  onClick={() => setAppointmentModalMode("edit")}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Editar agendamento
-                </Button>
               </div>
             )}
             {(!editingAppointment || appointmentModalMode === "edit") && (
               <div className="grid gap-4 md:grid-cols-2">
+                {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && !editingAppointment && (
+                  <div className="md:col-span-2">
+                    <FormField
+                      control={form.control}
+                      name="barbershop_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Filial <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <Select
+                            value={field.value || ""}
+                            onValueChange={field.onChange}
+                            required
+                          >
+                            <FormControl>
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Selecione a filial" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {profile.barbershops.map((b) => (
+                                <SelectItem key={b.id} value={b.id}>
+                                  {b.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
                 {!editingAppointment && (
                   <div className="md:col-span-2">
                     <FormField
@@ -1897,23 +2095,25 @@ export default function Agendamentos() {
                           <FormLabel>
                             Cliente <span className="text-destructive">*</span>
                           </FormLabel>
-                          <Select
-                            onValueChange={field.onChange}
-                            value={field.value}
-                          >
-                            <FormControl>
-                              <SelectTrigger autoFocus>
-                                <SelectValue placeholder="Selecione o cliente" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {clients.map((c) => (
-                                <SelectItem key={c.id} value={c.id}>
-                                  {c.name} – {c.phone}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <FormControl>
+                            <EntitySelectWithCreate
+                              value={field.value}
+                              onValueChange={field.onChange}
+                              options={clients.map((c) => ({
+                                value: c.id,
+                                label: `${c.name} – ${c.phone}`,
+                              }))}
+                              placeholder="Selecione o cliente"
+                              createLabel="Criar novo cliente"
+                              onSelectCreate={() => setCreateClientOpen(true)}
+                              emptyTitle="Nenhum cliente cadastrado"
+                              emptyDescription="Cadastre um cliente para agendar."
+                              emptyActionLabel="Cadastrar cliente"
+                              onEmptyAction={() => setCreateClientOpen(true)}
+                              triggerClassName="w-full"
+                              autoFocus
+                            />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}
@@ -1930,23 +2130,24 @@ export default function Agendamentos() {
                         {editingAppointment ? "Barbeiro (mover)" : "Barbeiro"}{" "}
                         <span className="text-destructive">*</span>
                       </FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione o barbeiro" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {barbers.map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
-                              {b.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <EntitySelectWithCreate
+                          value={field.value}
+                          onValueChange={field.onChange}
+                          options={barbers.map((b) => ({
+                            value: b.id,
+                            label: b.name,
+                          }))}
+                          placeholder="Selecione o barbeiro"
+                          createLabel="Criar novo barbeiro"
+                          onSelectCreate={() => setCreateBarberOpen(true)}
+                          emptyTitle="Nenhum barbeiro cadastrado"
+                          emptyDescription="Cadastre um barbeiro para agendar."
+                          emptyActionLabel="Cadastrar barbeiro"
+                          onEmptyAction={() => setCreateBarberOpen(true)}
+                          triggerClassName="w-full"
+                        />
+                      </FormControl>
                       {editingAppointment &&
                         field.value !== editingAppointment.barber_id && (
                           <p className="text-xs text-muted-foreground mt-1">
@@ -1965,21 +2166,32 @@ export default function Agendamentos() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>
-                        Data <span className="text-destructive">*</span>
+                        Data e horário{" "}
+                        <span className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
-                        <DatePicker
-                          value={
-                            field.value &&
-                            /^\d{4}-\d{2}-\d{2}$/.test(field.value)
-                              ? new Date(field.value + "T12:00:00")
-                              : null
-                          }
-                          onChange={(d) =>
-                            d && field.onChange(format(d, "yyyy-MM-dd"))
-                          }
-                          placeholder="Selecione a data"
-                          triggerVariant="verbose"
+                        <DateHourPicker
+                          value={{
+                            date:
+                              field.value &&
+                              /^\d{4}-\d{2}-\d{2}$/.test(field.value)
+                                ? new Date(field.value + "T12:00:00")
+                                : null,
+                            time:
+                              form.watch("scheduled_time")?.slice(0, 5) ||
+                              "09:00",
+                          }}
+                          onChange={({ date, time }) => {
+                            if (date)
+                              field.onChange(format(date, "yyyy-MM-dd"));
+                            form.setValue(
+                              "scheduled_time",
+                              time?.slice(0, 5) || "09:00",
+                              { shouldValidate: true },
+                            );
+                          }}
+                          placeholder="Selecione data e hora"
+                          timeStep={30}
                         />
                       </FormControl>
                       <FormMessage />
@@ -2082,9 +2294,23 @@ export default function Agendamentos() {
                         <FormLabel>
                           Serviços <span className="text-destructive">*</span>
                         </FormLabel>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <FormControl>
+                        <FormControl>
+                          <EntityMultiSelectWithCreate
+                            value={field.value}
+                            onChange={field.onChange}
+                            options={services.map((s) => ({
+                              value: s.id,
+                              label: s.name,
+                              subtitle: `R$ ${Number(s.price).toFixed(2)} · ${s.duration_minutes} min`,
+                            }))}
+                            placeholder="Selecione os serviços"
+                            createLabel="Criar novo serviço"
+                            onSelectCreate={() => setCreateServiceOpen(true)}
+                            emptyTitle="Nenhum serviço cadastrado"
+                            emptyDescription="Cadastre um serviço para agendar."
+                            emptyActionLabel="Cadastrar serviço"
+                            onEmptyAction={() => setCreateServiceOpen(true)}
+                            trigger={
                               <button
                                 type="button"
                                 className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -2098,76 +2324,14 @@ export default function Agendamentos() {
                                     : `${field.value.length} serviços`}
                                 <ChevronRight className="h-4 w-4 rotate-90 opacity-50" />
                               </button>
-                            </FormControl>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            className="z-[100] w-full min-w-[var(--radix-popover-trigger-width)] p-2"
-                            align="start"
-                          >
-                            <div className="max-h-60 space-y-2 overflow-y-auto p-1">
-                              {services.map((s) => (
-                                <label
-                                  key={s.id}
-                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50"
-                                >
-                                  <Checkbox
-                                    checked={field.value.includes(s.id)}
-                                    onCheckedChange={(checked) => {
-                                      const next = checked
-                                        ? [...field.value, s.id]
-                                        : field.value.filter(
-                                            (id) => id !== s.id,
-                                          );
-                                      field.onChange(next);
-                                    }}
-                                  />
-                                  <span className="flex-1">{s.name}</span>
-                                  <span className="text-muted-foreground">
-                                    R$ {Number(s.price).toFixed(2)} ·{" "}
-                                    {s.duration_minutes} min
-                                  </span>
-                                </label>
-                              ))}
-                            </div>
-                          </PopoverContent>
-                        </Popover>
+                            }
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
-
-                {!editingAppointment && (
-                  <FormField
-                    control={form.control}
-                    name="scheduled_time"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          Horário <span className="text-destructive">*</span>
-                        </FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Horário" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {TIME_SLOTS.map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
 
                 {editingAppointment && (
                   <div className="md:col-span-2">
@@ -2252,6 +2416,429 @@ export default function Agendamentos() {
           onConfirm={handleCancel}
         />
       )}
+
+      <EntityFormDialog
+        open={createClientOpen}
+        onOpenChange={setCreateClientOpen}
+        title="Novo cliente"
+        description="Preencha os dados do cliente para usar no agendamento."
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setCreateClientOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={createClientForm.handleSubmit((v) => {
+                if (selectedScope === "__all__" && !v.barbershop_id) {
+                  createClientForm.setError("barbershop_id", { message: "Selecione a filial." });
+                  return;
+                }
+                createClientMutation.mutate(v);
+              })}
+              disabled={createClientMutation.isPending}
+            >
+              Criar
+            </Button>
+          </>
+        }
+      >
+        <Form {...createClientForm}>
+          <form
+            onSubmit={createClientForm.handleSubmit((v) => {
+              if (selectedScope === "__all__" && !v.barbershop_id) {
+                createClientForm.setError("barbershop_id", { message: "Selecione a filial." });
+                return;
+              }
+              createClientMutation.mutate(v);
+            })}
+            className="space-y-4"
+          >
+            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && (
+              <FormField
+                control={createClientForm.control}
+                name="barbershop_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Filial <span className="text-destructive">*</span></FormLabel>
+                    <Select
+                      value={field.value || ""}
+                      onValueChange={field.onChange}
+                      required
+                    >
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a filial" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {profile.barbershops.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            <FormField
+              control={createClientForm.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Nome *</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Nome completo" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createClientForm.control}
+              name="phone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Telefone *</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="(11) 99999-9999"
+                      value={formatPhoneBR(field.value)}
+                      onChange={(e) =>
+                        field.onChange(
+                          parsePhoneBR(e.target.value).slice(0, 11),
+                        )
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createClientForm.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>E-mail</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      placeholder="email@exemplo.com"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createClientForm.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Observações</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Observações" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+      </EntityFormDialog>
+
+      <EntityFormDialog
+        open={createBarberOpen}
+        onOpenChange={setCreateBarberOpen}
+        title="Novo barbeiro"
+        description="Preencha os dados do barbeiro para usar no agendamento."
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setCreateBarberOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={createBarberForm.handleSubmit((v) => {
+                if (selectedScope === "__all__" && !v.barbershop_id) {
+                  createBarberForm.setError("barbershop_id", { message: "Selecione a filial." });
+                  return;
+                }
+                createBarberMutation.mutate(v);
+              })}
+              disabled={createBarberMutation.isPending}
+            >
+              Criar
+            </Button>
+          </>
+        }
+      >
+        <Form {...createBarberForm}>
+          <form
+            onSubmit={createBarberForm.handleSubmit((v) => {
+              if (selectedScope === "__all__" && !v.barbershop_id) {
+                createBarberForm.setError("barbershop_id", { message: "Selecione a filial." });
+                return;
+              }
+              createBarberMutation.mutate(v);
+            })}
+            className="space-y-4"
+          >
+            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && (
+              <FormField
+                control={createBarberForm.control}
+                name="barbershop_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Filial <span className="text-destructive">*</span></FormLabel>
+                    <Select value={field.value || ""} onValueChange={field.onChange} required>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a filial" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {profile.barbershops.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            <FormField
+              control={createBarberForm.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Nome *</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Nome do barbeiro" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createBarberForm.control}
+              name="phone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Telefone</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Telefone" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createBarberForm.control}
+              name="email"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>E-mail</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="email"
+                      placeholder="email@exemplo.com"
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createBarberForm.control}
+              name="status"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Status</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="active">Ativo</SelectItem>
+                      <SelectItem value="break">Intervalo</SelectItem>
+                      <SelectItem value="inactive">Inativo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createBarberForm.control}
+              name="commission_percentage"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Comissão (%)</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={0} max={100} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+      </EntityFormDialog>
+
+      <EntityFormDialog
+        open={createServiceOpen}
+        onOpenChange={setCreateServiceOpen}
+        title="Novo serviço"
+        description="Preencha os dados do serviço para usar no agendamento."
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setCreateServiceOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={createServiceForm.handleSubmit((v) => {
+                if (selectedScope === "__all__" && !v.barbershop_id) {
+                  createServiceForm.setError("barbershop_id", { message: "Selecione a filial." });
+                  return;
+                }
+                createServiceMutation.mutate(v);
+              })}
+              disabled={createServiceMutation.isPending}
+            >
+              Criar
+            </Button>
+          </>
+        }
+      >
+        <Form {...createServiceForm}>
+          <form
+            onSubmit={createServiceForm.handleSubmit((v) => {
+              if (selectedScope === "__all__" && !v.barbershop_id) {
+                createServiceForm.setError("barbershop_id", { message: "Selecione a filial." });
+                return;
+              }
+              createServiceMutation.mutate(v);
+            })}
+            className="space-y-4"
+          >
+            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && (
+              <FormField
+                control={createServiceForm.control}
+                name="barbershop_id"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Filial <span className="text-destructive">*</span></FormLabel>
+                    <Select value={field.value || ""} onValueChange={field.onChange} required>
+                      <FormControl>
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Selecione a filial" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {profile.barbershops.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+            <FormField
+              control={createServiceForm.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Nome *</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Ex: Corte masculino" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createServiceForm.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Descrição</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Descrição" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createServiceForm.control}
+              name="price"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Preço (R$) *</FormLabel>
+                  <FormControl>
+                    <Input type="number" step="0.01" min={0} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createServiceForm.control}
+              name="duration_minutes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Duração (min) *</FormLabel>
+                  <FormControl>
+                    <Input type="number" min={1} {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={createServiceForm.control}
+              name="category"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Categoria</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="corte">Corte</SelectItem>
+                      <SelectItem value="combo">Combo</SelectItem>
+                      <SelectItem value="barba">Barba</SelectItem>
+                      <SelectItem value="adicional">Adicional</SelectItem>
+                      <SelectItem value="tratamento">Tratamento</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+      </EntityFormDialog>
     </>
   );
 }

@@ -90,3 +90,38 @@ export function getBarbershopId(req: Request): string {
 export function getBarbershopIdOptional(req: Request): string | undefined {
   return req.barbershopId ?? req.auth?.barbershopId ?? config.barbershopId ?? (req.query.barbershop_id as string) ?? req.body?.barbershop_id;
 }
+
+/** Query param barbershop_id=__all__ means "all barbershops in the same account". Returns list of barbershop ids the user can access. */
+export async function getBarbershopScope(req: Request): Promise<{ single: string } | { all: string[] }> {
+  const scopeParam = req.query.barbershop_id as string | undefined;
+  if (scopeParam === "__all__") {
+    const profileId = req.auth?.profileId;
+    const currentBarbershopId = getBarbershopId(req);
+    if (!profileId) {
+      throw new Error("profile_id required");
+    }
+    const accountRow = await pool.query<{ account_id: string | null }>(
+      "SELECT account_id FROM public.barbershops WHERE id = $1",
+      [currentBarbershopId]
+    );
+    const accountId = accountRow.rows[0]?.account_id;
+    if (!accountId) {
+      return { single: currentBarbershopId };
+    }
+    const member = await pool.query(
+      "SELECT 1 FROM public.account_memberships WHERE profile_id = $1 AND account_id = $2",
+      [profileId, accountId]
+    );
+    if (member.rows.length === 0) {
+      return { single: currentBarbershopId };
+    }
+    const barbershops = await pool.query<{ id: string }>(
+      "SELECT id FROM public.barbershops WHERE account_id = $1 ORDER BY name",
+      [accountId]
+    );
+    const ids = barbershops.rows.map((r) => r.id);
+    if (ids.length === 0) return { single: currentBarbershopId };
+    return { all: ids };
+  }
+  return { single: getBarbershopId(req) };
+}
