@@ -88,7 +88,7 @@ const barberSchema = z.object({
   schedule: z.record(
     z.union([z.object({ start: z.string(), end: z.string() }), z.null()]),
   ),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 type BarberFormValues = z.infer<typeof barberSchema>;

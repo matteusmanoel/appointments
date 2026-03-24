@@ -22,8 +22,10 @@ const updateBody = z.object({
   notes: z.string().optional(),
   price: z.number().positive().optional(),
   service_ids: z.array(z.string().uuid()).min(1).optional(),
+  completed_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional(),
 });
 
+/** Effective end: completed+completed_time -> completed_time; else scheduled_time + duration_minutes. cancelled/no_show do not block. */
 async function checkSlotConflict(
   barbershopId: string,
   barberId: string,
@@ -36,18 +38,22 @@ async function checkSlotConflict(
   const startMins = h * 60 + m;
   const endMins = startMins + durationMinutes;
   let query = `
-    SELECT 1 FROM public.appointments
-    WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date
-      AND status NOT IN ('cancelled')
+    SELECT 1 FROM public.appointments a
+    WHERE a.barbershop_id = $1 AND a.barber_id = $2 AND a.scheduled_date = $3::date
+      AND a.status NOT IN ('cancelled', 'no_show')
+      AND (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int < $5
       AND (
-        (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5
-        AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4
-      )
+        CASE
+          WHEN a.status = 'completed' AND a.completed_time IS NOT NULL
+          THEN (EXTRACT(EPOCH FROM a.completed_time) / 60)::int
+          ELSE (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int + a.duration_minutes
+        END
+      ) > $4
   `;
   const params: unknown[] = [barbershopId, barberId, date, startMins, endMins];
   if (excludeAppointmentId) {
     params.push(excludeAppointmentId);
-    query += ` AND id != $${params.length}`;
+    query += ` AND a.id != $${params.length}`;
   }
   const r = await pool.query(query, params);
   return r.rows.length > 0;
@@ -80,6 +86,7 @@ appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> =
   let query = `
     SELECT a.id, a.barbershop_id, a.client_id, a.barber_id, a.service_id, a.scheduled_date, a.scheduled_time,
            a.duration_minutes, a.price, a.commission_amount, a.status, a.notes, a.created_at, a.updated_at,
+           a.completed_time, a.completed_at,
            c.name AS client_name, c.phone AS client_phone,
            b.name AS barber_name,
            ${isAll ? "bs.name AS barbershop_name," : ""}
@@ -275,7 +282,7 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
 appointmentsRouter.get("/:id", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const r = await pool.query(
-    `SELECT a.*, c.name AS client_name, c.phone AS client_phone, b.name AS barber_name,
+    `SELECT a.*, a.completed_time, a.completed_at, c.name AS client_name, c.phone AS client_phone, b.name AS barber_name,
             (SELECT COALESCE(array_agg(aps.service_id ORDER BY aps.position), ARRAY[]::uuid[]) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_ids,
             (SELECT COALESCE(array_agg(COALESCE(aps.service_name, s2.name) ORDER BY aps.position), ARRAY[]::text[]) FROM public.appointment_services aps LEFT JOIN public.services s2 ON s2.id = aps.service_id WHERE aps.appointment_id = a.id) AS service_names
      FROM public.appointments a
@@ -413,6 +420,30 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
     const commissionAmount = (price * pct) / 100;
     updates.push(`price = $${i++}::numeric`, `commission_amount = $${i++}::numeric`);
     values.push(price, commissionAmount);
+  }
+  if (parsed.data.status === "completed") {
+    let completedTimeVal: string | null = null;
+    if (parsed.data.completed_time != null && /^\d{2}:\d{2}(:\d{2})?$/.test(parsed.data.completed_time)) {
+      completedTimeVal = parsed.data.completed_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
+    }
+    if (completedTimeVal == null) {
+      const tzRow = await pool.query<{ timezone: string }>(
+        "SELECT COALESCE(ais.timezone, 'America/Sao_Paulo') AS timezone FROM public.barbershop_ai_settings ais WHERE ais.barbershop_id = $1",
+        [barbershopId]
+      );
+      const tz = tzRow.rows[0]?.timezone ?? "America/Sao_Paulo";
+      const nowInTz = new Date(new Date().toLocaleString("en-US", { timeZone: tz }));
+      completedTimeVal = `${String(nowInTz.getHours()).padStart(2, "0")}:${String(nowInTz.getMinutes()).padStart(2, "0")}`;
+    }
+    updates.push(`completed_time = $${i++}::time`, `completed_at = now()`);
+    values.push(completedTimeVal);
+  }
+  if (parsed.data.completed_time !== undefined && parsed.data.status !== "completed") {
+    if (/^\d{2}:\d{2}(:\d{2})?$/.test(parsed.data.completed_time)) {
+      const t = parsed.data.completed_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
+      updates.push(`completed_time = $${i++}::time`);
+      values.push(t);
+    }
   }
   if (updates.length > 0) {
     values.push(req.params.id, barbershopId);

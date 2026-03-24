@@ -252,9 +252,14 @@ publicRouter.get("/:slug/availability", async (req: Request, res: Response): Pro
     return;
   }
   const r = await pool.query(
-    `SELECT barber_id, scheduled_time, duration_minutes
+    `SELECT barber_id, scheduled_time,
+       CASE
+         WHEN status = 'completed' AND completed_time IS NOT NULL THEN
+           GREATEST(0, (EXTRACT(EPOCH FROM (completed_time - scheduled_time)) / 60)::int)
+         ELSE duration_minutes
+       END AS duration_minutes
      FROM public.appointments
-     WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled')
+     WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show')
      ORDER BY barber_id, scheduled_time`,
     [barbershopId, date]
   );

@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
+  AlertTriangle,
   Bot,
   Check,
   CheckCheck,
@@ -58,6 +59,7 @@ import { clientsApi, whatsappApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
+import { IncidentReportModal, mergeIncidentPatch } from "./IncidentReportModal";
 
 function normalizeDigits(v: string): string {
   return (v || "").replace(/\D/g, "");
@@ -163,6 +165,7 @@ export function InboxView({
   const [showInbox, setShowInbox] = useState(true);
   const [showDetails, setShowDetails] = useState(true);
   const [showToolMessages, setShowToolMessages] = useState(false);
+  const [incidentReportConversationId, setIncidentReportConversationId] = useState<string | null>(null);
 
   const whatsappConfigQuery = useQuery({
     queryKey: ["integrations", "whatsapp"],
@@ -263,6 +266,37 @@ export function InboxView({
     queryFn: () => clientsApi.list(clientPickerQuery.trim()),
     enabled: isActive && newConversationOpen,
     staleTime: 30_000,
+  });
+
+  const incidentMessagesQuery = useQuery({
+    queryKey: ["integrations", "whatsapp", "incident-messages", incidentReportConversationId],
+    queryFn: () =>
+      whatsappApi.getConversationMessages(incidentReportConversationId!, { limit: 60 }),
+    enabled: isActive && !!incidentReportConversationId,
+  });
+  const incidentAiSettingsQuery = useQuery({
+    queryKey: ["integrations", "whatsapp", "ai-settings"],
+    queryFn: () => whatsappApi.getAiSettings(),
+    enabled: isActive && !!incidentReportConversationId,
+  });
+
+  const updateAiSettingsMutation = useMutation({
+    mutationFn: (body: { agent_profile?: Record<string, unknown>; additional_instructions?: string | null }) =>
+      whatsappApi.updateAiSettings(body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp", "ai-settings"] });
+      toastSuccess("Rascunho aplicado.");
+    },
+    onError: (e) => toastError(e instanceof Error ? e.message : "Falha ao aplicar"),
+  });
+  const publishAiSettingsMutation = useMutation({
+    mutationFn: () => whatsappApi.publishAiSettings(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp", "ai-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp", "ai-versions"] });
+      toastSuccess("Ajustes publicados.");
+    },
+    onError: (e) => toastError(e instanceof Error ? e.message : "Falha ao publicar"),
   });
 
   const sendMutation = useMutation({
@@ -1065,6 +1099,12 @@ export function InboxView({
                       {showToolMessages ? "Ocultar mensagens técnicas" : "Mostrar mensagens técnicas"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
+                      onClick={() => setIncidentReportConversationId(selectedConversationId)}
+                    >
+                      <AlertTriangle className="h-4 w-4 mr-1" />
+                      Reportar problema
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => setDeleteConfirmOpen(true)}
                       className="text-destructive focus:text-destructive"
                     >
@@ -1497,6 +1537,45 @@ export function InboxView({
           await deleteConversationMutation.mutateAsync(selectedConversationId);
         }}
       />
+
+      {incidentReportConversationId &&
+        incidentMessagesQuery.data &&
+        incidentAiSettingsQuery.data && (
+          <IncidentReportModal
+            open
+            onClose={() => setIncidentReportConversationId(null)}
+            transcript={incidentMessagesQuery.data.messages
+              .filter((m) => m.role !== "tool")
+              .slice(-30)
+              .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))}
+            settingsSnapshot={{
+              agent_profile: (incidentAiSettingsQuery.data.agent_profile ?? {}) as Record<string, unknown>,
+              additional_instructions: incidentAiSettingsQuery.data.additional_instructions ?? null,
+            }}
+            conversationId={incidentReportConversationId}
+            currentProfileForDiff={(incidentAiSettingsQuery.data.agent_profile ?? {}) as Record<string, unknown>}
+            onApplyDraft={(res) => {
+              const merged = mergeIncidentPatch(
+                (incidentAiSettingsQuery.data!.agent_profile ?? {}) as Record<string, unknown>,
+                incidentAiSettingsQuery.data!.additional_instructions ?? null,
+                res
+              );
+              updateAiSettingsMutation.mutate(merged);
+              setIncidentReportConversationId(null);
+            }}
+            onApplyAndPublish={(res) => {
+              const merged = mergeIncidentPatch(
+                (incidentAiSettingsQuery.data!.agent_profile ?? {}) as Record<string, unknown>,
+                incidentAiSettingsQuery.data!.additional_instructions ?? null,
+                res
+              );
+              updateAiSettingsMutation.mutate(merged, {
+                onSuccess: () => publishAiSettingsMutation.mutate(),
+              });
+              setIncidentReportConversationId(null);
+            }}
+          />
+        )}
     </div>
   );
 }

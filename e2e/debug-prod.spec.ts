@@ -14,6 +14,8 @@ test.describe("Debug prod rendering", () => {
         if (t.includes("net::ERR_NAME_NOT_RESOLVED") || t.includes("Failed to load resource: net::ERR_NAME_NOT_RESOLVED")) {
           return;
         }
+        // React warning about fetchPriority on img (valid HTML attribute; not a fatal error).
+        if (t.includes("fetchPriority") || t.includes("fetchpriority")) return;
         consoleErrors.push(t);
       }
       if (msg.type() === "warning") consoleWarns.push(msg.text());

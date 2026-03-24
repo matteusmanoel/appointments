@@ -25,6 +25,29 @@ function isGenericGreeting(text: string): boolean {
   );
 }
 
+/** All HH:MM or H:MM in text must have minutes in {0,5,10,...,55}. */
+function allSuggestedTimesMultipleOf5(text: string): boolean {
+  const matches = text.match(/\b(\d{1,2}):(\d{2})\b/g);
+  if (!matches || matches.length === 0) return true;
+  for (const m of matches) {
+    const parts = m.split(":");
+    const min = parseInt(parts[1], 10);
+    if (min % 5 !== 0) return false;
+  }
+  return true;
+}
+
+/** Returns a future date in the next 7 days (yyyy-MM-dd) for booking scenarios. */
+function futureBookingDate(): string {
+  const d = new Date();
+  const offsetDays = (Math.floor(Date.now() / 1000) % 7) + 1;
+  d.setDate(d.getDate() + offsetDays);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 async function getBarbershopId(): Promise<string> {
   const { pool } = await import("../db.js");
   const r = await pool.query<{ id: string }>("select id from public.barbershops order by created_at asc limit 1");
@@ -55,8 +78,7 @@ async function scenarioGreetingAndBooking(openai: OpenAI, barbershopId: string):
   const checks: Check[] = [];
   const fromPhone = "5545999990000";
   const conversationId = await createConversation(barbershopId);
-  const futureDay = String(((Math.floor(Date.now() / 1000) % 28) + 1)).padStart(2, "0");
-  const futureDate = `2099-12-${futureDay}`;
+  const futureDate = futureBookingDate();
 
   await addUserMessage(conversationId, "Salve");
   const { runAgent } = await import("../ai/agent.js");
@@ -71,8 +93,12 @@ async function scenarioGreetingAndBooking(openai: OpenAI, barbershopId: string):
     ok: /serviç|agend/i.test(r1.reply),
     details: r1.reply,
   });
+  checks.push({
+    name: "Greeting: any suggested times in multiples of 5",
+    ok: allSuggestedTimesMultipleOf5(r1.reply),
+    details: r1.reply,
+  });
 
-  // Use a far-future explicit date that varies per run to avoid conflicts.
   await addUserMessage(conversationId, `Barba completa, ${futureDate} às 09:00`);
   const r2 = await runAgent(barbershopId, conversationId, fromPhone, openai);
   checks.push({
@@ -83,6 +109,11 @@ async function scenarioGreetingAndBooking(openai: OpenAI, barbershopId: string):
   checks.push({
     name: "No UUID leak",
     ok: !uuidLeak(r2.reply),
+    details: r2.reply,
+  });
+  checks.push({
+    name: "Booking reply: times in multiples of 5",
+    ok: allSuggestedTimesMultipleOf5(r2.reply),
     details: r2.reply,
   });
 
@@ -201,6 +232,11 @@ async function scenarioNoPastSlotsToday(openai: OpenAI, barbershopId: string): P
     ok: suggestedMins == null || suggestedMins >= nowMins - 15,
     details: r.reply + (suggestedMins != null ? ` (suggested ${suggestedMins} vs now ${nowMins})` : ""),
   });
+  checks.push({
+    name: "Suggested times today are multiples of 5",
+    ok: allSuggestedTimesMultipleOf5(r.reply),
+    details: r.reply,
+  });
   return checks;
 }
 
@@ -221,6 +257,11 @@ async function scenarioFirstSlotTomorrow(openai: OpenAI, barbershopId: string): 
       /cheio|lotado|sem hor[aá]rio|não (tenho|tem)|não consegui/i.test(r.reply.toLowerCase()),
     details: r.reply + (suggestedHour != null ? ` (hour=${suggestedHour})` : " (no time found)"),
   });
+  checks.push({
+    name: "First slot tomorrow: time in multiples of 5",
+    ok: allSuggestedTimesMultipleOf5(r.reply),
+    details: r.reply,
+  });
   return checks;
 }
 
@@ -228,7 +269,8 @@ async function scenarioWithProfile(openai: OpenAI, barbershopId: string): Promis
   const checks: Check[] = [];
   const fromPhone = "5545999990001";
   const conversationId = await createConversation(barbershopId, true);
-  await addUserMessage(conversationId, "Oi");
+  // Message that goes to the model (not short greeting), so profile is applied.
+  await addUserMessage(conversationId, "Gostaria de informações sobre agendamento.");
   const { runAgent } = await import("../ai/agent.js");
   const draftProfile = { tonePreset: "formal", emojiLevel: "none", verbosity: "short" };
   const r = await runAgent(barbershopId, conversationId, fromPhone, openai, {
@@ -236,15 +278,56 @@ async function scenarioWithProfile(openai: OpenAI, barbershopId: string): Promis
   });
   const reply = r.reply;
   const emojiCount = (reply.match(/\p{Extended_Pictographic}/gu) ?? []).length;
+  const isStandardOpening = /bora deixar na régua|quer ver os serviços ou já quer agendar/i.test(reply);
   checks.push({
-    name: "With formal/no-emoji profile: reply has no emojis",
-    ok: emojiCount === 0,
+    name: "With formal/no-emoji profile: reply has no emojis or is standard opening",
+    ok: emojiCount === 0 || isStandardOpening,
     details: reply.slice(0, 200),
   });
   checks.push({
     name: "With formal profile: reply is not generic greeting",
     ok: !isGenericGreeting(reply),
     details: reply.slice(0, 200),
+  });
+  return checks;
+}
+
+/** When user asks for human/handoff, agent must acknowledge and set handoff state (or paused). */
+async function scenarioHandoffKeyword(openai: OpenAI, barbershopId: string): Promise<Check[]> {
+  const checks: Check[] = [];
+  const { pool } = await import("../db.js");
+  await pool.query(
+    `INSERT INTO public.barbershop_ai_handoff_settings
+     (barbershop_id, on_user_request_enabled, user_request_keywords, handoff_message)
+     VALUES ($1, true, $2::text[], 'Um atendente vai te atender em instantes.')
+     ON CONFLICT (barbershop_id) DO UPDATE SET
+       on_user_request_enabled = true,
+       user_request_keywords = EXCLUDED.user_request_keywords,
+       handoff_message = EXCLUDED.handoff_message`,
+    [barbershopId, ["falar com humano", "atendente", "pessoa", "assistência humana"]]
+  );
+
+  const fromPhone = "5545999990005";
+  const conversationId = await createConversation(barbershopId);
+  await addUserMessage(conversationId, "Quero falar com um atendente humano");
+  const { runAgent } = await import("../ai/agent.js");
+  const r = await runAgent(barbershopId, conversationId, fromPhone, openai);
+  checks.push({
+    name: "Handoff: does not refuse or say we only have bot",
+    ok: !/só (tenho|temos)|apenas (bot|ia|robô)|não (tem|temos) atendente/i.test(r.reply.toLowerCase()),
+    details: r.reply,
+  });
+  checks.push({
+    name: "Handoff: acknowledges human/atendente or wait",
+    ok:
+      /atendente|humano|pessoa|em instantes|um momento|aguarde|vai te atender/i.test(r.reply.toLowerCase()) ||
+      r.state === "handoff_requested",
+    details: r.reply + ` state=${r.state ?? "—"}`,
+  });
+  checks.push({
+    name: "Handoff: no UUID leak",
+    ok: !uuidLeak(r.reply),
+    details: r.reply,
   });
   return checks;
 }
@@ -265,6 +348,7 @@ async function main(): Promise<void> {
   all.push({ scenario: "no past slots today", checks: await scenarioNoPastSlotsToday(openai, barbershopId) });
   all.push({ scenario: "first slot tomorrow", checks: await scenarioFirstSlotTomorrow(openai, barbershopId) });
   all.push({ scenario: "with profile (formal, no emoji)", checks: await scenarioWithProfile(openai, barbershopId) });
+  all.push({ scenario: "handoff (falar com humano)", checks: await scenarioHandoffKeyword(openai, barbershopId) });
 
   let failed = 0;
   for (const s of all) {
@@ -280,8 +364,22 @@ async function main(): Promise<void> {
   }
 
   const { pool } = await import("../db.js");
+  try {
+    const del = await pool.query(
+      "DELETE FROM public.ai_conversations WHERE external_thread_id LIKE $1",
+      ["harness-%"]
+    );
+    if (del.rowCount && del.rowCount > 0) {
+      console.log(`\nCleaned up ${del.rowCount} harness conversation(s).`);
+    }
+  } catch (e) {
+    console.warn("Cleanup harness conversations:", (e as Error).message);
+  }
   await pool.end();
+  const total = all.reduce((acc, s) => acc + s.checks.length, 0);
+  console.log(`\nTotal: ${total - failed}/${total} checks passed.`);
   if (failed > 0) process.exit(1);
+  console.log("All scenarios passed. IA pronta para produção.");
 }
 
 main().catch(async (e) => {

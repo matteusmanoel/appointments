@@ -25,6 +25,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { whatsappApi, type AgentProfile } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { IncidentReportModal } from "./IncidentReportModal";
 
 function formatVersionDate(iso: string) {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -41,7 +42,8 @@ const PROFILE_PATCH_LABELS: Record<string, string> = {
 function formatPatchDiff(
   patch: Record<string, unknown> | undefined,
   instructionsPatch: string | null | undefined,
-  currentProfile: Record<string, unknown>
+  currentProfile: Record<string, unknown>,
+  customRulesPatch?: DiagnosticAssistantPayload["recommended_custom_rules_patch"]
 ): string[] {
   const lines: string[] = [];
   if (patch && Object.keys(patch).length > 0) {
@@ -56,6 +58,16 @@ function formatPatchDiff(
   if (instructionsPatch !== undefined && instructionsPatch !== null) {
     lines.push("Instruções adicionais: (atualizado)");
   }
+  if (customRulesPatch) {
+    const add = customRulesPatch.add?.length ?? 0;
+    const update = customRulesPatch.update?.length ?? 0;
+    const disable = customRulesPatch.disable?.length ?? 0;
+    const parts: string[] = [];
+    if (add > 0) parts.push(`+${add} adicionada(s)`);
+    if (update > 0) parts.push(`${update} atualizada(s)`);
+    if (disable > 0) parts.push(`${disable} desativada(s)`);
+    if (parts.length > 0) lines.push(`Regras customizadas: ${parts.join(", ")}`);
+  }
   return lines;
 }
 
@@ -66,11 +78,23 @@ const SCENARIOS: { label: string; messages: Array<{ role: "user" | "assistant"; 
   { label: "Ver serviços", messages: [{ role: "user", content: "Quais serviços vocês têm?" }] },
 ];
 
+const SUITE_SCENARIOS = SCENARIOS.map((s, i) => ({
+  id: `scenario-${i}-${s.label.replace(/\s+/g, "-").toLowerCase()}`,
+  label: s.label,
+  messages: s.messages,
+  expected: { violationsMax: 0 } as const,
+}));
+
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type DiagnosticAttachment = { id: string; name: string; mimeType?: string; text: string };
 type DiagnosticAssistantPayload = {
   recommended_profile_patch?: Record<string, unknown>;
   recommended_additional_instructions_patch?: string | null;
+  recommended_custom_rules_patch?: {
+    add?: Array<Record<string, unknown>>;
+    update?: Array<{ id: string; patch: Record<string, unknown> }>;
+    disable?: string[];
+  };
   risk_notes: string[];
   expected_outcomes: string[];
 };
@@ -79,6 +103,15 @@ type DiagnosticMessage = {
   content: string;
   payload?: DiagnosticAssistantPayload;
 };
+
+type SuiteResultItem = {
+  scenario_id: string;
+  label: string;
+  reply: string;
+  violations: string[];
+  passed: boolean;
+};
+type SuiteResultsState = { results: SuiteResultItem[]; all_passed: boolean } | null;
 
 const ANALYZER_OBJECTIVES = [
   { id: "mais vendas", label: "Mais vendas" },
@@ -103,7 +136,14 @@ export function AgentPreviewChatStep({
   draftAdditionalInstructions?: string | null;
   onPublish: () => void;
   onRollback: (versionId: string) => void;
-  onApplyAnalyzerResult?: (patch: { profile?: Record<string, unknown>; instructions?: string | null }, publish: boolean) => void;
+  onApplyAnalyzerResult?: (
+    patch: {
+      profile?: Record<string, unknown>;
+      instructions?: string | null;
+      custom_rules_patch?: DiagnosticAssistantPayload["recommended_custom_rules_patch"];
+    },
+    publish: boolean
+  ) => void;
   versions: Array<{ id: string; status: string; created_at: string }>;
   isPublishing: boolean;
   isRollingBack: boolean;
@@ -126,6 +166,11 @@ export function AgentPreviewChatStep({
   const [rollbackConfirmId, setRollbackConfirmId] = useState<string | null>(null);
   const [versionsDrawerOpen, setVersionsDrawerOpen] = useState(false);
   const [diagnosticModalOpen, setDiagnosticModalOpen] = useState(false);
+  const [suiteResults, setSuiteResults] = useState<SuiteResultsState>(null);
+  const [suiteLoading, setSuiteLoading] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
+  const [lastSimulationDebug, setLastSimulationDebug] = useState<{ applied_rule_titles: string[] } | null>(null);
+  const [incidentReportOpen, setIncidentReportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -153,15 +198,18 @@ export function AgentPreviewChatStep({
     setLoading(true);
     setError(null);
     setViolations([]);
+    setLastSimulationDebug(null);
     try {
       const res = await whatsappApi.simulateAiChat({
         messages: all,
         draft_profile: Object.keys(draftProfile ?? {}).length ? (draftProfile as Record<string, unknown>) : undefined,
         draft_additional_instructions: draftAdditionalInstructions ?? undefined,
+        debug: debugMode,
       });
       const newMessages: ChatMessage[] = [...all, { role: "assistant", content: res.reply }];
       setMessages(newMessages);
       setViolations(res.violations ?? []);
+      if (res.debug) setLastSimulationDebug(res.debug);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao simular");
     } finally {
@@ -172,6 +220,23 @@ export function AgentPreviewChatStep({
   const runScenario = (scenario: (typeof SCENARIOS)[0]) => {
     setMessages(scenario.messages);
     runSimulate(scenario.messages);
+  };
+
+  const runSuite = async () => {
+    setSuiteLoading(true);
+    setSuiteResults(null);
+    try {
+      const res = await whatsappApi.simulateAiSuite({
+        scenarios: SUITE_SCENARIOS,
+        draft_profile: Object.keys(draftProfile ?? {}).length ? (draftProfile as Record<string, unknown>) : undefined,
+        draft_additional_instructions: draftAdditionalInstructions ?? undefined,
+      });
+      setSuiteResults({ results: res.results, all_passed: res.all_passed });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao rodar suíte");
+    } finally {
+      setSuiteLoading(false);
+    }
   };
 
   const clearChat = () => {
@@ -220,6 +285,7 @@ export function AgentPreviewChatStep({
       {
         profile: payload.recommended_profile_patch,
         instructions: payload.recommended_additional_instructions_patch ?? undefined,
+        custom_rules_patch: payload.recommended_custom_rules_patch,
       },
       publish
     );
@@ -262,6 +328,7 @@ export function AgentPreviewChatStep({
             recommended_profile_patch: res.recommended_profile_patch,
             recommended_additional_instructions_patch:
               res.recommended_additional_instructions_patch ?? null,
+            recommended_custom_rules_patch: res.recommended_custom_rules_patch,
             risk_notes: res.risk_notes ?? [],
             expected_outcomes: res.expected_outcomes ?? [],
           },
@@ -324,6 +391,22 @@ export function AgentPreviewChatStep({
           )}
         </div>
       )}
+      {suiteResults && (
+        <Alert variant={suiteResults.all_passed ? "default" : "destructive"} className="py-2">
+          <AlertTitle className="text-sm">
+            Suíte de cenários: {suiteResults.all_passed ? "todos passaram" : "alguns falharam"}
+          </AlertTitle>
+          <AlertDescription>
+            <ul className="mt-1 text-xs space-y-0.5 list-disc list-inside">
+              {suiteResults.results.map((r) => (
+                <li key={r.scenario_id}>
+                  {r.label}: {r.passed ? "OK" : `Falhou${r.violations.length > 0 ? ` (${r.violations.join(", ")})` : ""}`}
+                </li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="flex flex-nowrap gap-2 items-center overflow-x-auto pb-1 scrollbar-thin shrink-0">
         {SCENARIOS.map((s) => (
           <Button
@@ -355,6 +438,16 @@ export function AgentPreviewChatStep({
           type="button"
           variant="outline"
           size="sm"
+          onClick={runSuite}
+          disabled={suiteLoading}
+        >
+          {suiteLoading ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+          Rodar suíte
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
           onClick={() => setDiagnosticModalOpen(true)}
         >
           <FileText className="h-4 w-4 mr-1" />
@@ -372,7 +465,43 @@ export function AgentPreviewChatStep({
             Analisar conversa
           </Button>
         )}
+        {messages.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setIncidentReportOpen(true)}
+            disabled={loading}
+          >
+            <AlertTriangle className="h-4 w-4 mr-1" />
+            Reportar problema
+          </Button>
+        )}
       </div>
+      <IncidentReportModal
+        open={incidentReportOpen}
+        onClose={() => setIncidentReportOpen(false)}
+        transcript={messages}
+        settingsSnapshot={{
+          agent_profile: (draftProfile ?? {}) as Record<string, unknown>,
+          additional_instructions: draftAdditionalInstructions ?? null,
+        }}
+        currentProfileForDiff={(draftProfile ?? {}) as Record<string, unknown>}
+        onApplyDraft={(res) =>
+          onApplyAnalyzerResult?.({
+            profile: res.recommended_profile_patch,
+            instructions: res.recommended_additional_instructions_patch ?? undefined,
+            custom_rules_patch: res.recommended_custom_rules_patch,
+          }, false)
+        }
+        onApplyAndPublish={(res) =>
+          onApplyAnalyzerResult?.({
+            profile: res.recommended_profile_patch,
+            instructions: res.recommended_additional_instructions_patch ?? undefined,
+            custom_rules_patch: res.recommended_custom_rules_patch,
+          }, true)
+        }
+      />
       <div className="flex-1 min-h-[520px] flex flex-col rounded-lg border bg-muted/30 overflow-hidden">
         <div className="shrink-0 px-3 py-2 border-b bg-muted/50 text-sm font-medium flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
@@ -390,8 +519,22 @@ export function AgentPreviewChatStep({
                 Copiar resposta
               </Button>
             )}
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={debugMode}
+                onChange={(e) => setDebugMode(e.target.checked)}
+                className="rounded border-input"
+              />
+              Debug regras
+            </label>
           </div>
         </div>
+        {lastSimulationDebug && lastSimulationDebug.applied_rule_titles.length > 0 && (
+          <div className="shrink-0 px-3 py-1.5 border-b bg-muted/30 text-xs text-muted-foreground">
+            Regras aplicadas nesta resposta: {lastSimulationDebug.applied_rule_titles.join(", ")}
+          </div>
+        )}
         <ScrollArea className="flex-1 min-h-0 p-3">
           <div className="space-y-2">
             {messages.length === 0 && (
@@ -598,7 +741,8 @@ export function AgentPreviewChatStep({
                                 {formatPatchDiff(
                                   msg.payload.recommended_profile_patch,
                                   msg.payload.recommended_additional_instructions_patch ?? undefined,
-                                  draftProfile as Record<string, unknown>
+                                  draftProfile as Record<string, unknown>,
+                                  msg.payload.recommended_custom_rules_patch
                                 ).map((line, i) => (
                                   <div key={i}>{line}</div>
                                 ))}

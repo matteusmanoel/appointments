@@ -64,7 +64,7 @@ const serviceSchema = z.object({
   points_to_redeem: z
     .union([z.coerce.number().int().min(0), z.literal("")])
     .optional(),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 type ServiceFormValues = z.infer<typeof serviceSchema>;

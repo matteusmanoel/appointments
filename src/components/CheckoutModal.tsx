@@ -22,36 +22,12 @@ import {
   parseCNPJ,
 } from "@/lib/input-masks";
 import { billingApi, type BillingPlan } from "@/lib/api";
+import { BILLING_PLANS } from "@/lib/billing-plans";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
 const EXTRA_NUMBER_PRICE = 39;
 const MAX_EXTRA_NUMBERS = 10;
-
-const PLANS: { id: BillingPlan; label: string; price: string; priceValue: number; desc: string }[] =
-  [
-    {
-      id: "essential",
-      label: "Essencial",
-      price: "R$ 97/mês",
-      priceValue: 97,
-      desc: "Painel de Gestão + Link Público",
-    },
-    {
-      id: "pro",
-      label: "Profissional",
-      price: "R$ 197/mês",
-      priceValue: 197,
-      desc: "Assistente de IA, lembretes e follow-ups",
-    },
-    {
-      id: "premium",
-      label: "Premium",
-      price: "R$ 349/mês",
-      priceValue: 349,
-      desc: "NavalhIA escalável",
-    },
-  ];
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -106,7 +82,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
   const showExtraNumbers = plan === "pro" || plan === "premium";
   const effectiveExtraNumbers = showExtraNumbers ? extraNumbers : 0;
-  const planInfo = PLANS.find((p) => p.id === plan);
+  const planInfo = BILLING_PLANS.find((p) => p.id === plan);
   const monthlyTotal = planInfo
     ? planInfo.priceValue + effectiveExtraNumbers * EXTRA_NUMBER_PRICE
     : 0;
@@ -246,7 +222,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   onValueChange={(v) => setPlan(v as BillingPlan)}
                   className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1.5"
                 >
-                  {PLANS.map((p) => (
+                  {BILLING_PLANS.map((p) => (
                     <label
                       key={p.id}
                       className={`flex flex-col items-center justify-center rounded-lg border p-3 min-h-[72px] sm:min-h-0 cursor-pointer transition-colors touch-manipulation ${

@@ -15,6 +15,7 @@
     "seed:production": "node dist/scripts/seed.js && node dist/scripts/seed-demo.js",
     "tools:create-api-key": "tsx src/scripts/create-api-key.ts",
     "worker:ai": "tsx src/workers/run-ai-worker.ts",
+    "harness:ai": "tsx src/scripts/ai-harness.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

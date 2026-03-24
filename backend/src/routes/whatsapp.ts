@@ -5,8 +5,8 @@ import { pool } from "../db.js";
 import { getBarbershopId } from "../middleware/auth.js";
 import { config } from "../config.js";
 import { encrypt, decrypt } from "../integrations/encryption.js";
-import { validateAdditionalInstructions, buildSystemPrompt, normalizeProfile } from "../ai/prompt-builder.js";
-import { runAgent, detectViolations } from "../ai/agent.js";
+import { validateAdditionalInstructions, validateCustomRules, buildSystemPrompt, buildSystemPromptWithSections, normalizeProfile, getIncludedCustomRuleTitles } from "../ai/prompt-builder.js";
+import { runAgent, detectViolations, DEFAULT_SYSTEM_PROMPT, RUNTIME_GUARDRAILS } from "../ai/agent.js";
 import {
   adminCreateInstance,
   instanceConnect,
@@ -21,7 +21,7 @@ import type { InstanceStatusResult } from "../integrations/uazapi/client.js";
 import { getAiPauseState, setAiPaused, clearAiPause, setConversationPaused, clearConversationPause } from "../ai/runtime-pause.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { knowledgeRouter } from "./knowledge.js";
-import { brPhoneMatchKeys, brPhonesMatch } from "../lib/phone-match.js";
+import { brPhoneMatchKeys, brPhonesMatch, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
 
 export const whatsappRouter = Router();
 whatsappRouter.use("/knowledge", knowledgeRouter);
@@ -369,6 +369,7 @@ whatsappRouter.post("/conversations/start", async (req: Request, res: Response):
       res.status(400).json({ error: "Telefone inválido para iniciar conversa" });
       return;
     }
+    const canonicalPhone = canonicalizeBrPhoneDigits(phoneDigits) ?? phoneDigits;
 
     const ins = await pool.query<{ id: string; created: boolean }>(
       `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, updated_at)
@@ -376,10 +377,10 @@ whatsappRouter.post("/conversations/start", async (req: Request, res: Response):
        ON CONFLICT (barbershop_id, channel, external_thread_id)
        DO UPDATE SET updated_at = now()
        RETURNING id, (xmax = 0) AS created`,
-      [barbershopId, phoneDigits]
+      [barbershopId, canonicalPhone]
     );
     const row = ins.rows[0];
-    res.json({ conversation_id: row!.id, created: row!.created, external_thread_id: phoneDigits });
+    res.json({ conversation_id: row!.id, created: row!.created, external_thread_id: canonicalPhone });
   } catch (e) {
     console.error("whatsapp conversation start:", e);
     res.status(500).json({ error: "Falha ao iniciar conversa" });
@@ -420,6 +421,8 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
 
     const searchDigits = search.replace(/\D/g, "");
     const searchMatchKeys = searchDigits.length >= 8 ? brPhoneMatchKeys(searchDigits) : [];
+    // Placeholder válido UTF-8 que nunca casa com telefone (evita "invalid byte sequence 0x00" e inferência de tipo de $3)
+    const searchMatchKeysParam = searchMatchKeys.length > 0 ? searchMatchKeys : ["__no_phone_match__"];
 
     const statusCondition =
       statusFilter === "manual"
@@ -428,11 +431,9 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
           ? "AND (cr.paused_until IS NULL OR cr.paused_until <= now())"
           : "";
     const updatedSinceCondition = updatedSince ? "AND (c.last_message_at >= $4::timestamptz OR c.updated_at >= $4::timestamptz)" : "";
-    const searchPhoneCondition =
-      searchMatchKeys.length > 0
-        ? "OR (regexp_replace(c.external_thread_id, '[^0-9]', '', 'g') = ANY($3::text[]))"
-        : "";
-    const params: (string | number | string[])[] = [barbershopId, search, searchMatchKeys];
+    // COALESCE força o tipo de $3 para text[] (evita "could not determine data type of parameter $3")
+    const searchPhoneCondition = "OR (regexp_replace(c.external_thread_id, '[^0-9]', '', 'g') = ANY(COALESCE($3::text[], ARRAY[]::text[])))";
+    const params: (string | number | string[])[] = [barbershopId, search, searchMatchKeysParam];
     if (updatedSince) params.push(updatedSince);
     params.push(limit, offset);
     const limitIdx = params.length - 1;
@@ -491,15 +492,31 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
       params
     );
 
+    const canonicalToBest = new Map<string, (typeof q.rows)[0]>();
+    for (const row of q.rows) {
+      const canonical = canonicalizeBrPhoneDigits(row.external_thread_id) ?? row.external_thread_id;
+      const existing = canonicalToBest.get(canonical);
+      const rowTime = row.last_message_at ?? row.updated_at ?? "";
+      const existingTime = existing ? (existing.last_message_at ?? existing.updated_at ?? "") : "";
+      if (!existing || rowTime > existingTime) {
+        canonicalToBest.set(canonical, row);
+      }
+    }
+    const dedupedRows = [...canonicalToBest.values()].sort((a, b) => {
+      const at = a.last_message_at ?? a.updated_at ?? "";
+      const bt = b.last_message_at ?? b.updated_at ?? "";
+      return bt.localeCompare(at);
+    });
+
     let clientByThreadId: Map<string, { name: string | null; phone: string | null }> | null = null;
-    const needTolerantMatch = q.rows.some((r) => !r.client_name && !r.client_phone);
+    const needTolerantMatch = dedupedRows.some((r) => !r.client_name && !r.client_phone);
     if (needTolerantMatch) {
       const clients = await pool.query<{ name: string | null; phone: string | null }>(
         `SELECT name, phone FROM public.clients WHERE barbershop_id = $1`,
         [barbershopId]
       );
       clientByThreadId = new Map();
-      for (const row of q.rows) {
+      for (const row of dedupedRows) {
         if (row.client_name != null || row.client_phone != null) continue;
         const found = clients.rows.find((cl) => brPhonesMatch(row.external_thread_id, cl.phone));
         if (found) clientByThreadId.set(row.id, { name: found.name, phone: found.phone });
@@ -507,7 +524,7 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
     }
 
     res.json({
-      conversations: q.rows.map((row) => {
+      conversations: dedupedRows.map((row) => {
         let client_name = row.client_name ?? undefined;
         let client_phone = row.client_phone ?? undefined;
         if ((client_name == null && client_phone == null) && clientByThreadId) {
@@ -517,9 +534,11 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
             client_phone = tolerant.phone ?? undefined;
           }
         }
+        const canonical_thread_id = canonicalizeBrPhoneDigits(row.external_thread_id) ?? row.external_thread_id;
         return {
           id: row.id,
           external_thread_id: row.external_thread_id,
+          canonical_thread_id,
           last_message_at: row.last_message_at ?? undefined,
           paused_until: row.paused_until ?? null,
           paused_by: row.paused_by ?? null,
@@ -1270,10 +1289,12 @@ whatsappRouter.get("/ai-settings", async (req: Request, res: Response): Promise<
       active_prompt_version_id: string | null;
       max_output_tokens: number | null;
       typing_simulation: unknown;
+      booking_buffer_minutes: number | null;
       updated_at: string;
     }>(
       `SELECT enabled, timezone, model, model_premium, temperature, system_prompt_override,
-              agent_profile, additional_instructions, active_prompt_version_id, max_output_tokens, typing_simulation, updated_at
+              agent_profile, additional_instructions, active_prompt_version_id, max_output_tokens, typing_simulation,
+              COALESCE(booking_buffer_minutes, 0)::int AS booking_buffer_minutes, updated_at
        FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
       [barbershopId]
     );
@@ -1291,6 +1312,7 @@ whatsappRouter.get("/ai-settings", async (req: Request, res: Response): Promise<
         active_prompt_version_id: null,
         max_output_tokens: 350,
         typing_simulation: null,
+        booking_buffer_minutes: 0,
         updated_at: new Date().toISOString(),
       });
       return;
@@ -1307,12 +1329,31 @@ whatsappRouter.get("/ai-settings", async (req: Request, res: Response): Promise<
       active_prompt_version_id: row.active_prompt_version_id ?? undefined,
       max_output_tokens: row.max_output_tokens ?? undefined,
       typing_simulation: row.typing_simulation ?? undefined,
+      booking_buffer_minutes: row.booking_buffer_minutes ?? 0,
       updated_at: row.updated_at,
     });
   } catch (e) {
     console.error("whatsapp ai-settings get:", e);
     res.status(500).json({ error: "Failed to get AI settings" });
   }
+});
+
+const customRuleSchema = z.object({
+  id: z.string().min(1).max(64),
+  title: z.string().min(1).max(120),
+  enabled: z.boolean(),
+  priority: z.number().int().min(1).max(5),
+  when: z.object({
+    intents: z.array(z.string().max(80)).max(10).optional(),
+    keywords: z.array(z.string().max(80)).max(20).optional(),
+    stages: z.array(z.string().max(80)).max(10).optional(),
+  }).optional(),
+  do: z.array(z.string().min(1).max(500)).min(1).max(15),
+  dont: z.array(z.string().min(1).max(500)).max(10).optional(),
+  examples: z.array(z.object({
+    user: z.string().max(300),
+    assistant: z.string().max(500),
+  })).max(5).optional(),
 });
 
 const agentProfileSchema = z.object({
@@ -1322,6 +1363,7 @@ const agentProfileSchema = z.object({
   verbosity: z.enum(["short", "normal"]).optional(),
   salesStyle: z.enum(["soft", "direct"]).optional(),
   hardRules: z.record(z.unknown()).optional(),
+  customRules: z.array(customRuleSchema).max(30).optional(),
   displayName: z.string().max(100).optional(),
   nickname: z.string().max(50).optional(),
   role: z.string().max(200).optional(),
@@ -1347,6 +1389,7 @@ const aiSettingsBody = z.object({
   additional_instructions: z.string().nullable().optional(),
   max_output_tokens: z.number().int().min(50).max(4096).nullable().optional(),
   typing_simulation: typingSimulationSchema,
+  booking_buffer_minutes: z.number().int().min(0).max(30).optional(),
 });
 
 /** PUT /api/integrations/whatsapp/ai-settings — atualiza config da IA */
@@ -1366,12 +1409,20 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
         return;
       }
     }
+    if (data.agent_profile != null && typeof data.agent_profile === "object") {
+      const profile = normalizeProfile(data.agent_profile);
+      const customValidation = validateCustomRules(profile.customRules);
+      if (!customValidation.valid) {
+        res.status(400).json({ error: "Regras customizadas inválidas", errors: customValidation.errors });
+        return;
+      }
+    }
     const cur = await pool.query<{
       enabled: boolean; timezone: string; model: string; model_premium: string | null; temperature: number;
       system_prompt_override: string | null; agent_profile: unknown; additional_instructions: string | null;
-      max_output_tokens: number | null; typing_simulation: unknown;
+      max_output_tokens: number | null; typing_simulation: unknown; booking_buffer_minutes: number | null;
     }>(
-      `SELECT enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, max_output_tokens, typing_simulation
+      `SELECT enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, max_output_tokens, typing_simulation, COALESCE(booking_buffer_minutes, 0)::int AS booking_buffer_minutes
        FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
       [barbershopId]
     );
@@ -1386,6 +1437,7 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
       additional_instructions: null as string | null,
       max_output_tokens: 350 as number | null,
       typing_simulation: null as unknown,
+      booking_buffer_minutes: 0 as number | null,
     };
     const enabled = data.enabled ?? current.enabled;
     const timezone = data.timezone ?? current.timezone;
@@ -1397,20 +1449,21 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
     const additional_instructions = data.additional_instructions !== undefined ? data.additional_instructions : current.additional_instructions;
     const max_output_tokens = data.max_output_tokens !== undefined ? data.max_output_tokens : current.max_output_tokens;
     const typing_simulation = data.typing_simulation !== undefined ? (data.typing_simulation == null ? null : JSON.stringify(data.typing_simulation)) : (current.typing_simulation != null ? JSON.stringify(current.typing_simulation) : null);
+    const booking_buffer_minutes = data.booking_buffer_minutes !== undefined ? data.booking_buffer_minutes : (current.booking_buffer_minutes ?? 0);
     await pool.query(
-      `INSERT INTO public.barbershop_ai_settings (barbershop_id, enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, max_output_tokens, typing_simulation, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, now())
+      `INSERT INTO public.barbershop_ai_settings (barbershop_id, enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, max_output_tokens, typing_simulation, booking_buffer_minutes, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12, now())
        ON CONFLICT (barbershop_id) DO UPDATE SET
          enabled = $2, timezone = $3, model = $4, model_premium = $5, temperature = $6, system_prompt_override = $7,
-         agent_profile = $8::jsonb, additional_instructions = $9, max_output_tokens = $10, typing_simulation = $11::jsonb, updated_at = now()`,
-      [barbershopId, enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, max_output_tokens, typing_simulation]
+         agent_profile = $8::jsonb, additional_instructions = $9, max_output_tokens = $10, typing_simulation = $11::jsonb, booking_buffer_minutes = $12, updated_at = now()`,
+      [barbershopId, enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, max_output_tokens, typing_simulation, booking_buffer_minutes]
     );
     const r = await pool.query<{
       enabled: boolean; timezone: string; model: string; model_premium: string | null; temperature: number;
       system_prompt_override: string | null; agent_profile: unknown; additional_instructions: string | null;
-      active_prompt_version_id: string | null; max_output_tokens: number | null; typing_simulation: unknown; updated_at: string;
+      active_prompt_version_id: string | null; max_output_tokens: number | null; typing_simulation: unknown; booking_buffer_minutes: number | null; updated_at: string;
     }>(
-      `SELECT enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, active_prompt_version_id, max_output_tokens, typing_simulation, updated_at
+      `SELECT enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, active_prompt_version_id, max_output_tokens, typing_simulation, COALESCE(booking_buffer_minutes, 0)::int AS booking_buffer_minutes, updated_at
        FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
       [barbershopId]
     );
@@ -1422,6 +1475,7 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
       active_prompt_version_id: row.active_prompt_version_id ?? undefined,
       max_output_tokens: row.max_output_tokens ?? undefined,
       typing_simulation: row.typing_simulation ?? undefined,
+      booking_buffer_minutes: row.booking_buffer_minutes ?? 0,
     });
   } catch (e) {
     console.error("whatsapp ai-settings put:", e);
@@ -1429,20 +1483,23 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
   }
 });
 
-/** POST /api/integrations/whatsapp/ai-settings/publish — publica perfil atual como nova versão ativa */
+/** POST /api/integrations/whatsapp/ai-settings/publish — publica perfil atual como nova versão ativa (account-wide se modo conta única) */
 whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response): Promise<void> => {
   try {
     const barbershopId = getBarbershopId(req);
     const cur = await pool.query<{
       agent_profile: unknown;
       additional_instructions: string | null;
+      enabled: boolean;
+      timezone: string;
       model: string;
       model_premium: string | null;
       temperature: number;
+      system_prompt_override: string | null;
       max_output_tokens: number | null;
       typing_simulation: unknown;
     }>(
-      `SELECT agent_profile, additional_instructions, model, model_premium, temperature, max_output_tokens, typing_simulation
+      `SELECT agent_profile, additional_instructions, enabled, timezone, model, model_premium, temperature, system_prompt_override, max_output_tokens, typing_simulation
        FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
       [barbershopId]
     );
@@ -1450,6 +1507,11 @@ whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response):
     const agent_profile = row?.agent_profile ?? {};
     const additional_instructions = row?.additional_instructions ?? null;
     const profile = normalizeProfile(agent_profile);
+    const customValidation = validateCustomRules(profile.customRules);
+    if (!customValidation.valid) {
+      res.status(400).json({ error: "Regras customizadas inválidas", errors: customValidation.errors });
+      return;
+    }
     const compiled = buildSystemPrompt({
       basePrompt: "{{TIMEZONE}} {{DATE_NOW}} {{BARBERSHOP_NAME}}",
       guardrails: "",
@@ -1487,22 +1549,68 @@ whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response):
       // Tables may not exist
     }
 
-    const ins = await pool.query<{ id: string }>(
-      `INSERT INTO public.barbershop_ai_prompt_versions (barbershop_id, agent_profile, additional_instructions, compiled_prompt_preview, status, settings_snapshot, knowledge_snapshot)
-       VALUES ($1, $2::jsonb, $3, $4, 'active', $5::jsonb, $6::jsonb)
-       RETURNING id`,
-      [barbershopId, JSON.stringify(agent_profile), additional_instructions, compiled, JSON.stringify(settingsSnapshot), JSON.stringify(knowledgeSnapshot)]
+    const accountRow = await pool.query<{ account_id: string | null }>(
+      "SELECT account_id FROM public.barbershops WHERE id = $1",
+      [barbershopId]
     );
-    const newId = ins.rows[0]!.id;
-    await pool.query(
-      `UPDATE public.barbershop_ai_prompt_versions SET status = 'rolled_back' WHERE barbershop_id = $1 AND status = 'active' AND id != $2`,
-      [barbershopId, newId]
-    );
-    await pool.query(
-      `UPDATE public.barbershop_ai_settings SET active_prompt_version_id = $1, updated_at = now() WHERE barbershop_id = $2`,
-      [newId, barbershopId]
-    );
-    res.json({ version_id: newId, status: "active" });
+    const accountId = accountRow.rows[0]?.account_id ?? null;
+    let branchIds: string[] = [barbershopId];
+    if (accountId) {
+      const accRow = await pool.query<{ whatsapp_number_mode: string }>(
+        "SELECT whatsapp_number_mode FROM public.accounts WHERE id = $1",
+        [accountId]
+      );
+      if (accRow.rows[0]?.whatsapp_number_mode === "account_wide") {
+        const branchesRow = await pool.query<{ id: string }>(
+          "SELECT id FROM public.barbershops WHERE account_id = $1 ORDER BY name",
+          [accountId]
+        );
+        branchIds = branchesRow.rows.map((r) => r.id);
+      }
+    }
+
+    const agentProfileJson = JSON.stringify(agent_profile);
+    const settingsSnapshotJson = JSON.stringify(settingsSnapshot);
+    const knowledgeSnapshotJson = JSON.stringify(knowledgeSnapshot);
+    const versionIds: string[] = [];
+    const defaultEnabled = row?.enabled ?? true;
+    const defaultTimezone = row?.timezone ?? "America/Sao_Paulo";
+    const defaultModel = row?.model ?? "gpt-4o-mini";
+    const defaultTemperature = row?.temperature ?? 0.7;
+    const defaultSystemPromptOverride = row?.system_prompt_override ?? null;
+    const defaultMaxOutputTokens = row?.max_output_tokens ?? null;
+    const defaultTypingSimulation = row?.typing_simulation != null ? JSON.stringify(row.typing_simulation) : null;
+
+    for (const bid of branchIds) {
+      const ins = await pool.query<{ id: string }>(
+        `INSERT INTO public.barbershop_ai_prompt_versions (barbershop_id, agent_profile, additional_instructions, compiled_prompt_preview, status, settings_snapshot, knowledge_snapshot)
+         VALUES ($1, $2::jsonb, $3, $4, 'active', $5::jsonb, $6::jsonb)
+         RETURNING id`,
+        [bid, agentProfileJson, additional_instructions, compiled, settingsSnapshotJson, knowledgeSnapshotJson]
+      );
+      const newId = ins.rows[0]!.id;
+      versionIds.push(newId);
+      await pool.query(
+        `UPDATE public.barbershop_ai_prompt_versions SET status = 'rolled_back' WHERE barbershop_id = $1 AND status = 'active' AND id != $2`,
+        [bid, newId]
+      );
+      await pool.query(
+        `INSERT INTO public.barbershop_ai_settings (barbershop_id, enabled, timezone, model, model_premium, temperature, system_prompt_override, agent_profile, additional_instructions, active_prompt_version_id, max_output_tokens, typing_simulation, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb, now())
+         ON CONFLICT (barbershop_id) DO UPDATE SET
+           agent_profile = EXCLUDED.agent_profile,
+           additional_instructions = EXCLUDED.additional_instructions,
+           active_prompt_version_id = EXCLUDED.active_prompt_version_id,
+           updated_at = now()`,
+        [bid, defaultEnabled, defaultTimezone, defaultModel, row?.model_premium ?? null, defaultTemperature, defaultSystemPromptOverride, agentProfileJson, additional_instructions, newId, defaultMaxOutputTokens, defaultTypingSimulation]
+      );
+    }
+
+    res.json({
+      version_id: versionIds[0]!,
+      status: "active",
+      propagated: branchIds.length > 1 ? branchIds.length : undefined,
+    });
   } catch (e) {
     console.error("whatsapp ai-settings publish:", e);
     res.status(500).json({ error: "Failed to publish" });
@@ -1614,10 +1722,56 @@ whatsappRouter.get("/ai-settings/versions", async (req: Request, res: Response):
   }
 });
 
+const COMPILED_PROMPT_PREVIEW_MAX = 2000;
+
+/** GET /api/integrations/whatsapp/ai-prompt/compiled — prompt compilado em execução (read-only, sem segredos) */
+whatsappRouter.get("/ai-prompt/compiled", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const row = await pool.query<{
+      agent_profile: unknown;
+      additional_instructions: string | null;
+      active_prompt_version_id: string | null;
+    }>(
+      `SELECT agent_profile, additional_instructions, active_prompt_version_id
+       FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+      [barbershopId]
+    ).then((r) => r.rows[0]);
+    const agent_profile = row?.agent_profile ?? {};
+    const additional_instructions = row?.additional_instructions ?? null;
+    const active_prompt_version_id = row?.active_prompt_version_id ?? null;
+    const profile = normalizeProfile(agent_profile);
+    const { full, sections, section_lengths } = buildSystemPromptWithSections({
+      basePrompt: DEFAULT_SYSTEM_PROMPT,
+      guardrails: RUNTIME_GUARDRAILS,
+      profile,
+      additionalInstructions: additional_instructions,
+    });
+    const compiled_prompt_preview = full.slice(0, COMPILED_PROMPT_PREVIEW_MAX);
+    res.json({
+      compiled_prompt: full,
+      compiled_prompt_preview,
+      active_prompt_version_id,
+      sections: {
+        base: sections.base,
+        style: sections.style ?? null,
+        customRules: sections.customRules ?? null,
+        additionalInstructions: sections.additionalInstructions ?? null,
+        guardrails: sections.guardrails,
+      },
+      section_lengths,
+    });
+  } catch (e) {
+    console.error("whatsapp ai-prompt compiled:", e);
+    res.status(500).json({ error: "Failed to get compiled prompt" });
+  }
+});
+
 const simulateBody = z.object({
   messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })),
   draft_profile: z.record(z.unknown()).nullable().optional(),
   draft_additional_instructions: z.string().nullable().optional(),
+  debug: z.boolean().optional(),
 });
 
 /** POST /api/integrations/whatsapp/ai-simulate — simula chat com perfil rascunho (sandbox) */
@@ -1629,7 +1783,7 @@ whatsappRouter.post("/ai-simulate", async (req: Request, res: Response): Promise
       res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
       return;
     }
-    const { messages, draft_profile, draft_additional_instructions } = parsed.data;
+    const { messages, draft_profile, draft_additional_instructions, debug } = parsed.data;
     if (draft_additional_instructions != null) {
       const validation = validateAdditionalInstructions(draft_additional_instructions);
       if (!validation.valid) {
@@ -1663,10 +1817,128 @@ whatsappRouter.post("/ai-simulate", async (req: Request, res: Response): Promise
     const clientPhone = "5511999999999";
     const result = await runAgent(barbershopId, conversationId, clientPhone, openai, { sandboxDraft });
     const violations = detectViolations(result.reply);
-    res.json({ reply: result.reply, violations, usage: result.usage });
+    const payload: { reply: string; violations: string[]; usage?: unknown; debug?: { applied_rule_titles: string[] } } = {
+      reply: result.reply,
+      violations,
+      usage: result.usage,
+    };
+    if (debug && sandboxDraft?.agent_profile != null) {
+      const profile = normalizeProfile(sandboxDraft.agent_profile);
+      payload.debug = { applied_rule_titles: getIncludedCustomRuleTitles(profile.customRules) };
+    }
+    res.json(payload);
   } catch (e) {
     console.error("whatsapp ai-simulate:", e);
     res.status(500).json({ error: e instanceof Error ? e.message : "Simulation failed" });
+  }
+});
+
+const scenarioExpectedSchema = z.object({
+  violationsMax: z.number().int().min(0).optional(),
+  mustContain: z.array(z.string().min(1).max(200)).max(10).optional(),
+  mustNotContain: z.array(z.string().min(1).max(200)).max(10).optional(),
+});
+
+const simulateSuiteBody = z.object({
+  scenarios: z.array(
+    z.object({
+      id: z.string().min(1).max(80),
+      label: z.string().min(1).max(120),
+      messages: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).min(1).max(20),
+      expected: scenarioExpectedSchema.optional(),
+    })
+  ).min(1).max(20),
+  draft_profile: z.record(z.unknown()).nullable().optional(),
+  draft_additional_instructions: z.string().nullable().optional(),
+});
+
+/** POST /api/integrations/whatsapp/ai-simulate-suite — roda cenários e retorna pass/fail por cenário */
+whatsappRouter.post("/ai-simulate-suite", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = simulateSuiteBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    const { scenarios, draft_profile, draft_additional_instructions } = parsed.data;
+    if (draft_additional_instructions != null) {
+      const validation = validateAdditionalInstructions(draft_additional_instructions);
+      if (!validation.valid) {
+        res.status(400).json({ error: "draft_additional_instructions invalid", errors: validation.errors });
+        return;
+      }
+    }
+    const openaiApiKey = config.openaiApiKey;
+    if (!openaiApiKey) {
+      res.status(503).json({ error: "OpenAI not configured" });
+      return;
+    }
+    const openai = new OpenAI({ apiKey: openaiApiKey });
+    const sandboxDraft =
+      draft_profile != null && typeof draft_profile === "object"
+        ? { agent_profile: draft_profile, additional_instructions: draft_additional_instructions ?? null }
+        : undefined;
+    const clientPhone = "5511999999999";
+    const results: Array<{
+      scenario_id: string;
+      label: string;
+      reply: string;
+      violations: string[];
+      passed: boolean;
+      checks?: { violationsMax?: boolean; mustContain?: boolean; mustNotContain?: boolean };
+    }> = [];
+
+    for (const scenario of scenarios) {
+      const externalThreadId = `suite-${scenario.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const conv = await pool.query<{ id: string }>(
+        `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox)
+         VALUES ($1, 'whatsapp', $2, true) RETURNING id`,
+        [barbershopId, externalThreadId]
+      );
+      const conversationId = conv.rows[0]!.id;
+      for (const msg of scenario.messages) {
+        await pool.query(
+          `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, $2, $3)`,
+          [conversationId, msg.role, msg.content]
+        );
+      }
+      const result = await runAgent(barbershopId, conversationId, clientPhone, openai, { sandboxDraft });
+      const violations = detectViolations(result.reply);
+      const expected = scenario.expected;
+      let passed = true;
+      const checks: { violationsMax?: boolean; mustContain?: boolean; mustNotContain?: boolean } = {};
+      if (expected) {
+        if (expected.violationsMax !== undefined) {
+          checks.violationsMax = violations.length <= expected.violationsMax;
+          if (!checks.violationsMax) passed = false;
+        }
+        if (expected.mustContain?.length) {
+          const replyLower = result.reply.toLowerCase();
+          checks.mustContain = expected.mustContain.every((s) => replyLower.includes(s.toLowerCase()));
+          if (!checks.mustContain) passed = false;
+        }
+        if (expected.mustNotContain?.length) {
+          const replyLower = result.reply.toLowerCase();
+          checks.mustNotContain = !expected.mustNotContain.some((s) => replyLower.includes(s.toLowerCase()));
+          if (!checks.mustNotContain) passed = false;
+        }
+      }
+      results.push({
+        scenario_id: scenario.id,
+        label: scenario.label,
+        reply: result.reply,
+        violations,
+        passed,
+        checks: Object.keys(checks).length > 0 ? checks : undefined,
+      });
+    }
+
+    const all_passed = results.every((r) => r.passed);
+    res.json({ results, all_passed });
+  } catch (e) {
+    console.error("whatsapp ai-simulate-suite:", e);
+    res.status(500).json({ error: e instanceof Error ? e.message : "Suite run failed" });
   }
 });
 
@@ -1692,13 +1964,72 @@ const diagnosticChatBody = z.object({
   attachments: z.array(diagnosticAttachmentSchema).max(10).optional(),
 });
 
+type CustomRulesPatch = {
+  add?: Array<Record<string, unknown>>;
+  update?: Array<{ id: string; patch: Record<string, unknown> }>;
+  disable?: string[];
+};
+
 type DiagnosticResult = {
   reply: string;
   recommended_profile_patch?: Record<string, unknown>;
   recommended_additional_instructions_patch?: string | null;
+  recommended_custom_rules_patch?: CustomRulesPatch;
   risk_notes: string[];
   expected_outcomes: string[];
 };
+
+const INCIDENT_TYPES = [
+  "double_booking",
+  "ignored_availability",
+  "asked_phone",
+  "uuid_leak",
+  "tone_issue",
+  "wrong_policy",
+  "hallucination",
+] as const;
+
+const incidentDiagnoseBody = z.object({
+  incident_type: z.enum(INCIDENT_TYPES),
+  manager_note: z.string().max(500).optional(),
+  conversation_id: z.string().uuid().optional(),
+  sandbox_conversation_id: z.string().optional(),
+  prompt_version_id: z.string().uuid().optional().nullable(),
+  settings_snapshot: z.object({
+    agent_profile: z.record(z.unknown()).optional(),
+    additional_instructions: z.string().nullable().optional(),
+  }),
+  transcript: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).max(60),
+  tool_trace: z
+    .array(
+      z.object({
+        name: z.string(),
+        args: z.record(z.unknown()).optional(),
+        result: z.unknown().optional(),
+      })
+    )
+    .max(20)
+    .optional(),
+});
+
+type IncidentDiagnoseResult = {
+  summary: string;
+  question_to_confirm: string;
+  recommended_profile_patch?: Record<string, unknown>;
+  recommended_additional_instructions_patch?: string | null;
+  recommended_custom_rules_patch?: CustomRulesPatch;
+  suite_scenarios_to_run?: string[];
+  risk_notes: string[];
+};
+
+const INCIDENT_TRANSCRIPT_MAX_CHARS = 12000;
+const INCIDENT_TOOL_TRACE_ITEM_MAX = 400;
+
+function truncateForIncident(text: string, max: number): string {
+  const t = (text ?? "").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max) + "...";
+}
 
 function fallbackDiagnosticResult(objectives: string[] | undefined): DiagnosticResult {
   const objectivesStr = (objectives ?? ["melhorar atendimento"]).join(", ").toLowerCase();
@@ -1748,6 +2079,167 @@ function normalizeRecommendedProfilePatch(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function normalizeRecommendedCustomRulesPatch(value: unknown): CustomRulesPatch | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const out: CustomRulesPatch = {};
+  if (Array.isArray(raw.add)) {
+    const added: Record<string, unknown>[] = [];
+    for (const item of raw.add.slice(0, 10)) {
+      const parsed = customRuleSchema.safeParse(item);
+      if (parsed.success) {
+        const rule = parsed.data as unknown as Record<string, unknown>;
+        if (!rule.id || typeof rule.id !== "string") rule.id = crypto.randomUUID();
+        if (rule.enabled === undefined) rule.enabled = true;
+        added.push(rule);
+      }
+    }
+    if (added.length > 0) out.add = added;
+  }
+  if (Array.isArray(raw.update)) {
+    const updates: Array<{ id: string; patch: Record<string, unknown> }> = [];
+    for (const item of raw.update.slice(0, 20)) {
+      if (item && typeof item === "object" && typeof (item as Record<string, unknown>).id === "string") {
+        const { id, patch } = item as Record<string, unknown>;
+        const patchObj = patch && typeof patch === "object" && !Array.isArray(patch) ? (patch as Record<string, unknown>) : {};
+        const parsed = customRuleSchema.partial().safeParse(patchObj);
+        if (parsed.success && Object.keys(parsed.data).length > 0) {
+          updates.push({ id: id as string, patch: parsed.data as Record<string, unknown> });
+        }
+      }
+    }
+    if (updates.length > 0) out.update = updates;
+  }
+  if (Array.isArray(raw.disable)) {
+    const ids = raw.disable
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+      .slice(0, 30);
+    if (ids.length > 0) out.disable = ids;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function fallbackIncidentDiagnose(incidentType: string): IncidentDiagnoseResult {
+  return {
+    summary: `Incidente do tipo "${incidentType}" reportado. Sem LLM ativo, não foi possível gerar correção automática.`,
+    question_to_confirm: "Deseja revisar as configurações do agente manualmente?",
+    risk_notes: ["Revise as regras e o perfil na aba Cérebro."],
+  };
+}
+
+/** Deterministic suggestion for hard-constraint incidents (no LLM). */
+function deterministicIncidentSuggestion(incidentType: string): IncidentDiagnoseResult | null {
+  if (incidentType === "double_booking" || incidentType === "ignored_availability") {
+    return {
+      summary: "Esse tipo de problema é evitado pelo intervalo mínimo entre atendimentos (buffer). Ative ou aumente o buffer nas configurações da IA (Integrações > Cérebro) para evitar sobreposição.",
+      question_to_confirm: "Deseja ativar ou aumentar o buffer entre atendimentos nas configurações?",
+      risk_notes: ["O buffer é aplicado automaticamente em check_availability, get_next_slots e create_appointment."],
+    };
+  }
+  return null;
+}
+
+async function runIncidentCorrectorLlm(params: {
+  barbershopId: string;
+  model: string;
+  incidentType: string;
+  managerNote?: string;
+  settingsSnapshot: { agent_profile?: unknown; additional_instructions?: string | null };
+  transcript: Array<{ role: "user" | "assistant"; content: string }>;
+  toolTrace?: Array<{ name: string; args?: Record<string, unknown>; result?: unknown }>;
+}): Promise<IncidentDiagnoseResult> {
+  const deterministic = deterministicIncidentSuggestion(params.incidentType);
+  if (deterministic) return deterministic;
+
+  if (!config.openaiApiKey) {
+    return fallbackIncidentDiagnose(params.incidentType);
+  }
+
+  const openai = new OpenAI({ apiKey: config.openaiApiKey });
+  const transcriptText = params.transcript
+    .map((m) => `${m.role}: ${m.content}`)
+    .join("\n\n");
+  const transcriptTruncated = truncateForIncident(transcriptText, INCIDENT_TRANSCRIPT_MAX_CHARS);
+  const toolTraceText =
+    (params.toolTrace?.length &&
+      params.toolTrace
+        .slice(-10)
+        .map((t) => {
+          const argsStr = t.args ? truncateForIncident(JSON.stringify(t.args), INCIDENT_TOOL_TRACE_ITEM_MAX) : "";
+          const resultStr = t.result !== undefined ? truncateForIncident(JSON.stringify(t.result), INCIDENT_TOOL_TRACE_ITEM_MAX) : "";
+          return `${t.name}${argsStr ? ` args: ${argsStr}` : ""}${resultStr ? ` result: ${resultStr}` : ""}`;
+        })
+        .join("\n")) ?? "";
+
+  const systemContent =
+    "Você é um corretor de incidentes para um agente de WhatsApp de barbearia.\n" +
+    "Sua tarefa: analisar o incidente reportado e sugerir um patch mínimo (regras estruturadas e/ou perfil/instruções) para evitar recorrência.\n" +
+    "Responda SOMENTE em JSON válido com as chaves:\n" +
+    '{"summary": string, "question_to_confirm": string (uma pergunta curta para o gestor), ' +
+    '"recommended_profile_patch": object | null, "recommended_additional_instructions_patch": string | null, ' +
+    '"recommended_custom_rules_patch": { "add": [{ "id", "title", "enabled", "priority", "do", "dont?" }], "update": [{ "id", "patch": {} }], "disable": [id] } | null, ' +
+    '"suite_scenarios_to_run": string[] | null (ids de cenários para rodar após aplicar), "risk_notes": string[]}\n' +
+    "Regras:\n" +
+    "- Prefira patch estruturado (regras customizadas) em vez de texto livre.\n" +
+    "- Não aumente o prompt sem necessidade.\n" +
+    "- Se o incidente for de hard constraint (ex.: double_booking, ignored_availability), sugira ativar buffer no backend ou mudança de processo, não só regra de linguagem.\n" +
+    "- summary e question_to_confirm em PT-BR, curtos e acionáveis.\n" +
+    "- recommended_profile_patch: apenas campos tonePreset, emojiLevel, slangLevel, verbosity, salesStyle, displayName, nickname, role, signMessages, signatureStyle, hardRules.\n" +
+    "- recommended_custom_rules_patch: add com id único, title, enabled true, priority 1-5, do array de strings, dont opcional.";
+
+  const userContent =
+    `Tipo de incidente: ${params.incidentType}\n` +
+    (params.managerNote ? `Observação do gestor: ${params.managerNote}\n` : "") +
+    `Configuração atual (snapshot):\n${JSON.stringify(params.settingsSnapshot)}\n\n` +
+    `Transcrito da conversa:\n${transcriptTruncated}\n\n` +
+    (toolTraceText ? `Últimas chamadas de ferramentas:\n${toolTraceText}\n\n` : "") +
+    "Gere a correção (summary, question_to_confirm e patches recomendados).";
+
+  const completion = await openai.chat.completions.create({
+    model: params.model || "gpt-4o-mini",
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: systemContent },
+      { role: "user", content: userContent },
+    ],
+  });
+
+  const content = completion.choices[0]?.message?.content ?? "{}";
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(content) as Record<string, unknown>;
+  } catch {
+    return fallbackIncidentDiagnose(params.incidentType);
+  }
+
+  const summary =
+    typeof parsed.summary === "string" && parsed.summary.trim()
+      ? parsed.summary.trim()
+      : "Correção sugerida com base no incidente.";
+  const question_to_confirm =
+    typeof parsed.question_to_confirm === "string" && parsed.question_to_confirm.trim()
+      ? parsed.question_to_confirm.trim()
+      : "Deseja aplicar estas alterações no rascunho?";
+
+  return {
+    summary,
+    question_to_confirm,
+    recommended_profile_patch: normalizeRecommendedProfilePatch(parsed.recommended_profile_patch),
+    recommended_additional_instructions_patch:
+      typeof parsed.recommended_additional_instructions_patch === "string"
+        ? parsed.recommended_additional_instructions_patch.slice(0, 4000)
+        : parsed.recommended_additional_instructions_patch === null
+          ? null
+          : undefined,
+    recommended_custom_rules_patch: normalizeRecommendedCustomRulesPatch(parsed.recommended_custom_rules_patch),
+    suite_scenarios_to_run: Array.isArray(parsed.suite_scenarios_to_run)
+      ? parsed.suite_scenarios_to_run.filter((id): id is string => typeof id === "string").slice(0, 10)
+      : undefined,
+    risk_notes: normalizeStringList(parsed.risk_notes),
+  };
+}
+
 async function runDiagnosticWithLlm(params: {
   barbershopId: string;
   model: string;
@@ -1793,12 +2285,14 @@ async function runDiagnosticWithLlm(params: {
           '  "reply": string,\n' +
           '  "recommended_profile_patch": object | null,\n' +
           '  "recommended_additional_instructions_patch": string | null,\n' +
+          '  "recommended_custom_rules_patch": { "add": [{ "id", "title", "enabled", "priority", "do", "dont?" }], "update": [{ "id", "patch": {} }], "disable": [id] } | null,\n' +
           '  "risk_notes": string[],\n' +
           '  "expected_outcomes": string[]\n' +
           "}\n" +
           "Restrições:\n" +
           "- reply em PT-BR, curto, objetivo e acionável.\n" +
-          "- Em recommended_profile_patch, use apenas campos compatíveis: tonePreset, emojiLevel, slangLevel, verbosity, salesStyle, displayName, nickname, role, signMessages, signatureStyle, hardRules.\n" +
+          "- Em recommended_profile_patch, use apenas campos compatíveis: tonePreset, emojiLevel, slangLevel, verbosity, salesStyle, displayName, nickname, role, signMessages, signatureStyle, hardRules, customRules.\n" +
+          "- Em recommended_custom_rules_patch: add = novas regras (id único, title, enabled true, priority 1-5, do array de strings, dont opcional); update = por id, patch com campos a alterar; disable = array de ids para desativar.\n" +
           "- Nunca invente IDs, dados sensíveis ou links internos.\n",
       },
       {
@@ -1845,6 +2339,9 @@ async function runDiagnosticWithLlm(params: {
     ),
     recommended_additional_instructions_patch:
       recommendedAdditionalInstructions ?? null,
+    recommended_custom_rules_patch: normalizeRecommendedCustomRulesPatch(
+      parsed.recommended_custom_rules_patch
+    ),
     risk_notes: normalizeStringList(parsed.risk_notes),
     expected_outcomes: normalizeStringList(parsed.expected_outcomes),
   };
@@ -1998,5 +2495,47 @@ whatsappRouter.post("/ai-diagnostic-chat", async (req: Request, res: Response): 
   } catch (e) {
     console.error("whatsapp ai-diagnostic-chat:", e);
     res.status(500).json({ error: "Failed to run diagnostic chat" });
+  }
+});
+
+/** POST /api/integrations/whatsapp/ai-incidents/diagnose — diagnóstico corretor a partir de um incidente reportado */
+whatsappRouter.post("/ai-incidents/diagnose", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = incidentDiagnoseBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    const data = parsed.data;
+    const transcriptTruncated = data.transcript
+      .slice(-30)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 2000) }));
+    const cur = await pool.query<{ model: string | null }>(
+      `SELECT model FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+      [barbershopId]
+    );
+    const model = cur.rows[0]?.model ?? "gpt-4o-mini";
+    const result = await runIncidentCorrectorLlm({
+      barbershopId,
+      model,
+      incidentType: data.incident_type,
+      managerNote: data.manager_note,
+      settingsSnapshot: data.settings_snapshot,
+      transcript: transcriptTruncated,
+      toolTrace: data.tool_trace,
+    });
+    res.json({
+      summary: result.summary,
+      question_to_confirm: result.question_to_confirm,
+      recommended_profile_patch: result.recommended_profile_patch ?? undefined,
+      recommended_additional_instructions_patch: result.recommended_additional_instructions_patch ?? undefined,
+      recommended_custom_rules_patch: result.recommended_custom_rules_patch ?? undefined,
+      suite_scenarios_to_run: result.suite_scenarios_to_run ?? undefined,
+      risk_notes: result.risk_notes,
+    });
+  } catch (e) {
+    console.error("whatsapp ai-incidents diagnose:", e);
+    res.status(500).json({ error: "Failed to diagnose incident" });
   }
 });

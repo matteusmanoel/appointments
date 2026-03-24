@@ -81,7 +81,7 @@ function formatTopServicesForWhatsapp(
     .join("\n");
 }
 
-const DEFAULT_SYSTEM_PROMPT = `Timezone: {{TIMEZONE}} (America/Sao_Paulo, UTC-03:00)
+export const DEFAULT_SYSTEM_PROMPT = `Timezone: {{TIMEZONE}} (America/Sao_Paulo, UTC-03:00)
 Agora (local): {{DATE_NOW}}
 Hoje: {{TODAY_DATE}}
 Amanhã: {{TOMORROW_DATE}}
@@ -120,7 +120,7 @@ Proibido: “Como posso ajudar?” / “Estou aqui para ajudar”.
 - Não diga que “tá agendado” antes de realmente criar (create_appointment).
 - Formatação WhatsApp: para *negrito* use apenas 1 asterisco: *assim*. Não use **assim**.
 - Serviço inexistente: diga que não faz e chame list_services; responda com os principais serviços (ex.: 4) e CTA: “Gostaria de agendar um horário ou ver outras opções?”
-- Horários: nunca sugerir horário no passado. Para “hoje” sem hora ou “primeiro horário” use get_next_slots (com after_time quando for hoje). Para horário específico use check_availability (com after_time quando for hoje).
+- Horários: nunca sugerir horário no passado. Para “hoje” sem hora ou “primeiro horário” use get_next_slots (com after_time quando for hoje). Para horário específico use check_availability (com after_time quando for hoje). Horários sempre em múltiplos de 5 minutos (15:00, 16:15, 17:30); nunca 16:07 ou 15:48.
 - Quando o horário pedido não encaixar, explique curto e ofereça 2–3 alternativas vindas das ferramentas (get_next_slots ou check_availability).
 
 ✅ Fechamento (sem confirmação duplicada)
@@ -136,18 +136,19 @@ Proibido: “Como posso ajudar?” / “Estou aqui para ajudar”.
 4) Confirmação final (curta): “Serviço • dia/hora • barbeiro. Fecho assim?”
 5) Confirmou → create_appointment → mensagem curta: “Agendamento confirmado: [resumo]. Aguardamos você!” (evite “Seu agendamento está marcado para” e “Te vejo lá!”).`;
 
-const RUNTIME_GUARDRAILS = `GUARDRAILS (obrigatório, acima de qualquer prompt customizado):
+export const RUNTIME_GUARDRAILS = `GUARDRAILS (obrigatório, acima de qualquer prompt customizado):
 - Direcione qualquer contato para agendamento (serviços ou marcar horário).
 - Em cumprimento curto, use a abertura obrigatória com “Quer ver os serviços ou já quer agendar? ✂️”.
 - Proibido responder com frases genéricas (“Como posso ajudar?”, “Estou aqui para ajudar”).
 - Emojis: não use em toda mensagem. Em geral: 0–1 por mensagem, e evite repetir.
 - Serviço que não existe: chame list_services e responda com lista dos principais + “Gostaria de agendar um horário ou ver outras opções?”
-- Nunca sugerir horário no passado. Para “hoje” sem hora ou “primeiro horário”/“primeiro horário amanhã”: use get_next_slots (com after_time quando for hoje).
+- Nunca sugerir horário no passado. Para “hoje” sem hora ou “primeiro horário”/“primeiro horário amanhã”: use get_next_slots (com after_time quando for hoje). Horários sempre em múltiplos de 5 (15:00, 16:15, 17:30).
 - Se o cliente já informou DIA/HORÁRIO, NÃO mude. Só sugira outro horário se houver conflito ao checar disponibilidade.
 - “Qualquer um / tanto faz”: SEM preferência; escolha você um barbeiro disponível.
 - Nunca diga “tá agendado / tá marcado” antes de create_appointment retornar sucesso.
 - Fechamento após agendar: “Agendamento confirmado: … Aguardamos você!” (mensagens curtas).
-- Nunca pedir telefone. Nunca mostrar IDs/UUIDs.`;
+- Nunca pedir telefone. Nunca mostrar IDs/UUIDs.
+- Se create_appointment ou reschedule_appointment retornar code SLOT_CONFLICT, BUFFER_CONFLICT ou PAST_TIME: chame get_next_slots (ou check_availability) e ofereça 2–3 horários alternativos ao cliente; não insista no mesmo horário.`;
 
 const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -330,6 +331,8 @@ export type AgentResult = {
 export type RunAgentOptions = {
   /** When set, use this profile/instructions instead of DB (e.g. for sandbox simulation). */
   sandboxDraft?: { agent_profile: unknown; additional_instructions?: string | null };
+  /** When false, do not persist assistant messages (e.g. ai-worker persists after sending to WhatsApp). Default true. */
+  persistAssistantMessages?: boolean;
 };
 
 let selectedBarbershopColumnSupported: boolean | null = null;
@@ -438,6 +441,7 @@ export async function runAgent(
   const temperature = settings?.temperature ?? 0.7;
   const draft = options?.sandboxDraft;
   const useDraft = draft && draft.agent_profile != null && typeof draft.agent_profile === "object";
+  const persistAssistantMessages = options?.persistAssistantMessages !== false;
   const hasProfile =
     useDraft ||
     (settings?.agent_profile != null &&
@@ -576,10 +580,12 @@ export async function runAgent(
         const reply =
           (handoff.handoff_message && handoff.handoff_message.trim()) ||
           "Um atendente vai te atender em instantes. Aguarde um momento.";
-        await pool.query(
-          `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
-          [conversationId, reply]
-        );
+        if (persistAssistantMessages) {
+          await pool.query(
+            `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+            [conversationId, reply]
+          );
+        }
         return { reply, state: "handoff_requested" };
       }
     }
@@ -647,6 +653,15 @@ export async function runAgent(
       desiredDate = tm >= nowM + 10 ? dateOnlyStr : tomorrowOnlyStr;
     }
 
+    // Horários sempre múltiplos de 5 (ex.: 16:07 -> 16:10).
+    if (desiredTime) {
+      const totalMins = parseInt(desiredTime.slice(0, 2), 10) * 60 + parseInt(desiredTime.slice(3, 5), 10);
+      const rounded = Math.ceil(totalMins / 5) * 5;
+      const rh = Math.floor(rounded / 60) % 24;
+      const rm = rounded % 60;
+      desiredTime = `${String(rh).padStart(2, "0")}:${String(rm).padStart(2, "0")}`;
+    }
+
     return { desiredDate, desiredTime };
   })();
 
@@ -676,23 +691,61 @@ export async function runAgent(
   })();
 
   // --- Deterministic guardrails (runtime), to avoid generic/robotic behavior ---
-  // 1) Strong opening for short greetings.
+  // 1) Strong opening for short greetings; if client has history, suggest "o de sempre" with next slots.
   if (isGreetingOnly) {
+    const favorites = await aiTools.getClientFavoriteServices(effectiveBarbershopId, clientPhone).catch(() => null);
+    const preferred = favorites?.last ?? favorites?.frequent[0];
+    if (preferred?.service_ids?.length) {
+      const slotsToday = (await aiTools.getNextSlots(effectiveBarbershopId, {
+        date: dateOnlyStr,
+        service_ids: preferred.service_ids,
+        after_time: currentTimeHHmm,
+        limit: 3,
+      })) as { slots?: Array<{ time: string }> };
+      let slotsTomorrow: { slots?: Array<{ time: string }> } | null = null;
+      if (!slotsToday?.slots?.length) {
+        slotsTomorrow = (await aiTools.getNextSlots(effectiveBarbershopId, {
+          date: tomorrowOnlyStr,
+          service_ids: preferred.service_ids,
+          limit: 3,
+        })) as { slots?: Array<{ time: string }> };
+      }
+      const slots = slotsToday?.slots?.length ? slotsToday.slots : slotsTomorrow?.slots;
+      const isTomorrow = !!(slotsTomorrow?.slots?.length && !slotsToday?.slots?.length);
+      const dayLabel = isTomorrow ? "amanhã" : "hoje";
+      if (slots?.length) {
+        const times = slots.map((s: { time: string }) => s.time).filter(Boolean);
+        const reply =
+          `Salve! 😄 Quer o de sempre (${preferred.service_names})? ` +
+          `Tenho ${dayLabel} às *${times.join("* • *")}*. Qual prefere?`;
+        if (persistAssistantMessages) {
+          await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+            conversationId,
+            reply,
+          ]);
+        }
+        return { reply };
+      }
+    }
     const reply = OPENING_MESSAGE;
-    await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-      conversationId,
-      reply,
-    ]);
+    if (persistAssistantMessages) {
+      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+        conversationId,
+        reply,
+      ]);
+    }
     return { reply };
   }
 
   // 2) Out-of-scope (pizza etc.): never invent external businesses; redirect to booking/services.
   if (isOutOfScopeFood(lastUserText)) {
     const reply = "Aqui eu só cuido do visual 😄\n\nQuer ver os serviços ou já quer agendar um horário?";
-    await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-      conversationId,
-      reply,
-    ]);
+    if (persistAssistantMessages) {
+      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+        conversationId,
+        reply,
+      ]);
+    }
     return { reply };
   }
 
@@ -717,10 +770,12 @@ export async function runAgent(
           `Mas a gente faz:\n` +
           `${formatTopServicesForWhatsapp(top, 4)}\n\n` +
           `Gostaria de agendar um horário ou ver outras opções?`;
-        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-          conversationId,
-          reply,
-        ]);
+        if (persistAssistantMessages) {
+          await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+            conversationId,
+            reply,
+          ]);
+        }
         return { reply };
       }
     }
@@ -768,10 +823,12 @@ export async function runAgent(
           `Show — vou te colocar com o *${chosen.barber_name}* então.\n\n` +
           `*${String(pickedService.name)}* • ${desired.desiredDate} ${desired.desiredTime} • *R$ ${Number(availability.total_price ?? 0).toFixed(2).replace(".", ",")}*` +
           `\n\n[[MSG]]Pra salvar aqui, qual seu nome?`;
-        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-          conversationId,
-          reply,
-        ]);
+        if (persistAssistantMessages) {
+          await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+            conversationId,
+            reply,
+          ]);
+        }
         return { reply };
       }
     }
@@ -808,10 +865,12 @@ export async function runAgent(
         `Aqui os principais:\n` +
         `${formatTopServicesForWhatsapp(top, 4)}\n\n` +
         `Me diz qual você quer que eu já puxo os horários de hoje.`;
-      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-        conversationId,
-        reply,
-      ]);
+      if (persistAssistantMessages) {
+        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+          conversationId,
+          reply,
+        ]);
+      }
       return { reply };
     }
 
@@ -828,18 +887,22 @@ export async function runAgent(
 
     if (times.length) {
       const reply = `Hoje eu consigo te encaixar nesses horários: *${times.join("* • *")}*.\nQual você prefere?`;
-      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-        conversationId,
-        reply,
-      ]);
+      if (persistAssistantMessages) {
+        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+          conversationId,
+          reply,
+        ]);
+      }
       return { reply };
     }
 
     const reply = "Hoje já tá bem corrido por aqui 😅 Quer que eu veja o primeiro horário de amanhã?";
-    await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-      conversationId,
-      reply,
-    ]);
+    if (persistAssistantMessages) {
+      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+        conversationId,
+        reply,
+      ]);
+    }
     return { reply };
   }
 
@@ -872,10 +935,12 @@ export async function runAgent(
         `Pra qual serviço você quer marcar amanhã?\n\n` +
         `Aqui os principais:\n` +
         `${formatTopServicesForWhatsapp(top, 4)}`;
-      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-        conversationId,
-        reply,
-      ]);
+      if (persistAssistantMessages) {
+        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+          conversationId,
+          reply,
+        ]);
+      }
       return { reply };
     }
 
@@ -887,10 +952,12 @@ export async function runAgent(
     const first = Array.isArray(slots?.slots) && slots.slots[0] ? slots.slots[0] : null;
     const t = first?.time ? String(first.time) : null;
     const reply = t ? `Amanhã o primeiro horário que eu tenho é *${t}*. Quer esse?` : "Amanhã tá bem cheio 😅 Quer tentar outro dia?";
-    await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
-      conversationId,
-      reply,
-    ]);
+    if (persistAssistantMessages) {
+      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+        conversationId,
+        reply,
+      ]);
+    }
     return { reply };
   }
 
@@ -997,6 +1064,7 @@ export async function runAgent(
   let currentBarbershopId = effectiveBarbershopId;
 
   async function persistAssistant(content: string | null): Promise<void> {
+    if (!persistAssistantMessages) return;
     await pool.query(
       `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
       [conversationId, stripIdsAndUuids(content ?? "")]

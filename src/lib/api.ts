@@ -449,6 +449,18 @@ export type WhatsAppConnection = {
   ai_paused_by?: string;
 };
 
+/** Regra customizada da barbearia: instruções estruturadas que entram no prompt do agente. */
+export type CustomRule = {
+  id: string;
+  title: string;
+  enabled: boolean;
+  priority: number;
+  when?: { intents?: string[]; keywords?: string[]; stages?: string[] };
+  do: string[];
+  dont?: string[];
+  examples?: Array<{ user: string; assistant: string }>;
+};
+
 export type AgentProfile = {
   tonePreset?: string;
   emojiLevel?: "none" | "low" | "medium";
@@ -456,6 +468,7 @@ export type AgentProfile = {
   verbosity?: "short" | "normal";
   salesStyle?: "soft" | "direct";
   hardRules?: Record<string, unknown>;
+  customRules?: CustomRule[];
   displayName?: string;
   nickname?: string;
   role?: string;
@@ -582,6 +595,20 @@ export const whatsappApi = {
     api<{ version_id: string; status: string }>("/api/integrations/whatsapp/ai-settings/publish", { method: "POST" }),
   listAiVersions: () =>
     api<{ versions: AiPromptVersion[] }>("/api/integrations/whatsapp/ai-settings/versions"),
+  getCompiledPrompt: () =>
+    api<{
+      compiled_prompt: string;
+      compiled_prompt_preview: string;
+      active_prompt_version_id: string | null;
+      sections: {
+        base: string;
+        style: string | null;
+        customRules: string | null;
+        additionalInstructions: string | null;
+        guardrails: string;
+      };
+      section_lengths: Record<string, number>;
+    }>("/api/integrations/whatsapp/ai-prompt/compiled"),
   rollbackAiSettings: (versionId: string) =>
     api<{ version_id: string; status: string }>("/api/integrations/whatsapp/ai-settings/rollback", {
       method: "POST",
@@ -591,11 +618,41 @@ export const whatsappApi = {
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     draft_profile?: Record<string, unknown> | null;
     draft_additional_instructions?: string | null;
+    debug?: boolean;
   }) =>
-    api<{ reply: string; violations: string[]; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }>(
+    api<{
+      reply: string;
+      violations: string[];
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+      debug?: { applied_rule_titles: string[] };
+    }>(
       "/api/integrations/whatsapp/ai-simulate",
       { method: "POST", body: JSON.stringify(params) }
     ),
+  simulateAiSuite: (params: {
+    scenarios: Array<{
+      id: string;
+      label: string;
+      messages: Array<{ role: "user" | "assistant"; content: string }>;
+      expected?: { violationsMax?: number; mustContain?: string[]; mustNotContain?: string[] };
+    }>;
+    draft_profile?: Record<string, unknown> | null;
+    draft_additional_instructions?: string | null;
+  }) =>
+    api<{
+      results: Array<{
+        scenario_id: string;
+        label: string;
+        reply: string;
+        violations: string[];
+        passed: boolean;
+        checks?: { violationsMax?: boolean; mustContain?: boolean; mustNotContain?: boolean };
+      }>;
+      all_passed: boolean;
+    }>("/api/integrations/whatsapp/ai-simulate-suite", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
   analyzeChat: (params: { chat_text: string; objectives?: string[] }) =>
     api<{
       recommended_profile_patch?: Record<string, unknown>;
@@ -613,9 +670,14 @@ export const whatsappApi = {
       reply: string;
       recommended_profile_patch?: Record<string, unknown>;
       recommended_additional_instructions_patch?: string | null;
+      recommended_custom_rules_patch?: {
+        add?: CustomRule[];
+        update?: Array<{ id: string; patch: Partial<CustomRule> }>;
+        disable?: string[];
+      };
       risk_notes: string[];
       expected_outcomes: string[];
-      current_profile: AgentProfile;
+      current_profile?: AgentProfile;
     }>("/api/integrations/whatsapp/ai-diagnostic-chat", {
       method: "POST",
       body: JSON.stringify(params),
@@ -629,6 +691,32 @@ export const whatsappApi = {
       last_24h: { total: number; with_violations: number };
       regression_detected: boolean;
     }>("/api/integrations/whatsapp/ai-health"),
+  diagnoseIncident: (params: {
+    incident_type: string;
+    manager_note?: string;
+    conversation_id?: string;
+    sandbox_conversation_id?: string;
+    prompt_version_id?: string | null;
+    settings_snapshot: { agent_profile?: Record<string, unknown>; additional_instructions?: string | null };
+    transcript: Array<{ role: "user" | "assistant"; content: string }>;
+    tool_trace?: Array<{ name: string; args?: Record<string, unknown>; result?: unknown }>;
+  }) =>
+    api<{
+      summary: string;
+      question_to_confirm: string;
+      recommended_profile_patch?: Record<string, unknown>;
+      recommended_additional_instructions_patch?: string | null;
+      recommended_custom_rules_patch?: {
+        add?: CustomRule[];
+        update?: Array<{ id: string; patch: Partial<CustomRule> }>;
+        disable?: string[];
+      };
+      suite_scenarios_to_run?: string[];
+      risk_notes: string[];
+    }>("/api/integrations/whatsapp/ai-incidents/diagnose", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
   listConversations: (params?: { limit?: number; search?: string; status?: "ai" | "manual"; updated_since?: string; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.limit != null) q.set("limit", String(params.limit));
@@ -867,6 +955,8 @@ export type AppointmentListItem = {
   service_names?: string[];
   barbershop_id?: string;
   barbershop_name?: string;
+  completed_time?: string | null;
+  completed_at?: string | null;
 };
 
 export const appointmentsApi = {
@@ -901,6 +991,7 @@ export const appointmentsApi = {
     notes?: string;
     price?: number;
     service_ids?: string[];
+    completed_time?: string;
   }) => api<AppointmentListItem>(`/api/appointments/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   cancel: (id: string) => api(`/api/appointments/${id}`, { method: "DELETE" }),
 };

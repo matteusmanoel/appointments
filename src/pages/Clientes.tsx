@@ -57,7 +57,7 @@ const clientSchema = z.object({
       "E-mail inválido",
     ),
   notes: z.string().optional(),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 type ClientFormValues = z.infer<typeof clientSchema>;

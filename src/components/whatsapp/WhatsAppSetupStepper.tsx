@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Loader2,
   Clock,
@@ -45,7 +46,14 @@ import {
   FileText,
   Upload,
   BookOpen,
+  Copy,
 } from "lucide-react";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import { cn } from "@/lib/utils";
 import {
   whatsappApi,
@@ -64,6 +72,7 @@ import { UpgradeGate } from "@/components/UpgradeGate";
 import { hasPremium } from "@/lib/plan";
 import { AgentToneStep } from "./AgentToneStep";
 import { AgentBehaviorStep } from "./AgentBehaviorStep";
+import { AgentCustomRulesStep } from "./AgentCustomRulesStep";
 import { AgentPreviewChatStep } from "./AgentPreviewChatStep";
 import { LoadingState } from "@/components/LoadingState";
 import { toastSuccess, toastError } from "@/lib/toast-helpers";
@@ -88,6 +97,13 @@ const DAY_LABELS: { key: keyof BusinessHours; label: string }[] = [
   { key: "friday", label: "Sexta" },
   { key: "saturday", label: "Sábado" },
   { key: "sunday", label: "Domingo" },
+];
+
+const DEFAULT_SUITE_SCENARIOS = [
+  { id: "scenario-0-saudação", label: "Saudação", messages: [{ role: "user" as const, content: "Oi" }], expected: { violationsMax: 0 } as const },
+  { id: "scenario-1-serviço-inexistente", label: "Serviço inexistente", messages: [{ role: "user" as const, content: "Vocês fazem pizza?" }], expected: { violationsMax: 0 } as const },
+  { id: "scenario-2-hoje-1745", label: "Hoje 17:45", messages: [{ role: "user" as const, content: "Quero cortar o cabelo hoje às 17:45" }], expected: { violationsMax: 0 } as const },
+  { id: "scenario-3-ver-serviços", label: "Ver serviços", messages: [{ role: "user" as const, content: "Quais serviços vocês têm?" }], expected: { violationsMax: 0 } as const },
 ];
 
 function getWeekdayKeyInTimezone(tz: string): (typeof DAY_KEYS)[number] {
@@ -656,6 +672,12 @@ export function WhatsAppSetupStepper({
     enabled: enabled && activeTab === "preview",
   });
 
+  const { data: numberModeData } = useQuery({
+    queryKey: ["integrations", "whatsapp", "number-mode"],
+    queryFn: () => whatsappApi.getNumberMode(),
+    enabled: enabled && (activeTab === "brain" || activeTab === "preview"),
+  });
+
   const { data: knowledgeConfig } = useQuery({
     queryKey: ["integrations", "whatsapp", "knowledge", "config"],
     queryFn: () => whatsappApi.knowledge.getConfig(),
@@ -664,6 +686,11 @@ export function WhatsAppSetupStepper({
   const { data: knowledgeDocuments } = useQuery({
     queryKey: ["integrations", "whatsapp", "knowledge", "documents"],
     queryFn: () => whatsappApi.knowledge.listDocuments(),
+    enabled: enabled && activeTab === "brain",
+  });
+  const { data: compiledPromptData } = useQuery({
+    queryKey: ["integrations", "whatsapp", "ai-prompt", "compiled"],
+    queryFn: () => whatsappApi.getCompiledPrompt(),
     enabled: enabled && activeTab === "brain",
   });
   const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
@@ -683,6 +710,8 @@ export function WhatsAppSetupStepper({
   const [hoursState, setHoursState] = useState<BusinessHours>(() => getDefaultBusinessHours());
   const [closureFormOpen, setClosureFormOpen] = useState(false);
   const [editingClosure, setEditingClosure] = useState<BarbershopClosure | null>(null);
+  const [requireSuiteBeforePublish, setRequireSuiteBeforePublish] = useState(false);
+  const [publishGateChecking, setPublishGateChecking] = useState(false);
 
   useEffect(() => {
     if (barbershop?.business_hours && activeTab === "hours") {
@@ -841,6 +870,9 @@ export function WhatsAppSetupStepper({
       queryClient.invalidateQueries({
         queryKey: ["integrations", "whatsapp", "ai-settings"],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["integrations", "whatsapp", "ai-prompt", "compiled"],
+      });
       if (diagnosticApplyRef.current) {
         diagnosticApplyRef.current = false;
         setApplyFeedback({
@@ -871,6 +903,9 @@ export function WhatsAppSetupStepper({
       queryClient.invalidateQueries({
         queryKey: ["integrations", "whatsapp", "ai-versions"],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["integrations", "whatsapp", "ai-prompt", "compiled"],
+      });
       toastSuccess("Ajustes publicados.");
     },
     onError: (e) =>
@@ -886,6 +921,9 @@ export function WhatsAppSetupStepper({
       });
       queryClient.invalidateQueries({
         queryKey: ["integrations", "whatsapp", "ai-versions"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["integrations", "whatsapp", "ai-prompt", "compiled"],
       });
       toastSuccess("Versão anterior reativada.");
     },
@@ -1463,6 +1501,15 @@ export function WhatsAppSetupStepper({
             </div>
           ) : (
             <div className="space-y-8">
+              {numberModeData?.mode === "account_wide" && numberModeData?.barbershops && numberModeData.barbershops.length > 1 && (
+                <Alert className="border-primary/50 bg-primary/5">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Modo conta única</AlertTitle>
+                  <AlertDescription>
+                    As regras e o perfil do agente serão aplicados a todas as unidades da conta ao publicar.
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="flex items-center gap-2">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
                   <Brain className="h-5 w-5 text-primary" aria-hidden />
@@ -1600,6 +1647,12 @@ export function WhatsAppSetupStepper({
                       profile={draftProfile}
                       onChange={(u) => setDraftProfile((p) => ({ ...p, ...u }))}
                     />
+                    <div className="mt-4">
+                      <AgentCustomRulesStep
+                        profile={draftProfile}
+                        onChange={(u) => setDraftProfile((p) => ({ ...p, ...u }))}
+                      />
+                    </div>
                     {isPremium && aiSettings && (
                     <Card className="border-border/60 bg-card/50 mt-4">
                       <CardHeader className="pb-2">
@@ -1820,6 +1873,102 @@ export function WhatsAppSetupStepper({
                   </Card>
                   )}
                 </div>
+
+                {/* Prompt compilado (read-only) */}
+                {compiledPromptData && (
+                  <Card className="border-border/60 bg-card/50">
+                    <CardHeader className="pb-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-5 w-5 text-muted-foreground" />
+                          <div>
+                            <h4 className="text-sm font-semibold">Prompt compilado (em execução)</h4>
+                            <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                              Versão ativa em uso pelo agente. Somente leitura.
+                              {compiledPromptData.active_prompt_version_id && (
+                                <span className="ml-1">ID: {compiledPromptData.active_prompt_version_id.slice(0, 8)}…</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(compiledPromptData.compiled_prompt).then(
+                              () => toastSuccess("Prompt copiado para a área de transferência."),
+                              () => toastError("Falha ao copiar.")
+                            );
+                          }}
+                        >
+                          <Copy className="h-4 w-4 mr-1.5" />
+                          Copiar
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <Accordion type="single" collapsible className="w-full space-y-1" defaultValue={["base"]}>
+                        <AccordionItem value="base" className="rounded-lg border border-border/60 px-3">
+                          <AccordionTrigger className="hover:no-underline py-3 text-sm">
+                            Base ({compiledPromptData.section_lengths?.base ?? 0} caracteres)
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono bg-muted/30 p-3 rounded-md max-h-48 overflow-y-auto">
+                              {compiledPromptData.sections.base}
+                            </pre>
+                          </AccordionContent>
+                        </AccordionItem>
+                        {compiledPromptData.sections.style != null && compiledPromptData.sections.style.trim() !== "" && (
+                          <AccordionItem value="style" className="rounded-lg border border-border/60 px-3">
+                            <AccordionTrigger className="hover:no-underline py-3 text-sm">
+                              Estilo ({compiledPromptData.section_lengths?.style ?? 0} caracteres)
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono bg-muted/30 p-3 rounded-md max-h-48 overflow-y-auto">
+                                {compiledPromptData.sections.style}
+                              </pre>
+                            </AccordionContent>
+                          </AccordionItem>
+                        )}
+                        {compiledPromptData.sections.customRules != null && compiledPromptData.sections.customRules.trim() !== "" && (
+                          <AccordionItem value="customRules" className="rounded-lg border border-border/60 px-3">
+                            <AccordionTrigger className="hover:no-underline py-3 text-sm">
+                              Regras customizadas ({compiledPromptData.section_lengths?.customRules ?? 0} caracteres)
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono bg-muted/30 p-3 rounded-md max-h-48 overflow-y-auto">
+                                {compiledPromptData.sections.customRules}
+                              </pre>
+                            </AccordionContent>
+                          </AccordionItem>
+                        )}
+                        {compiledPromptData.sections.additionalInstructions != null && compiledPromptData.sections.additionalInstructions.trim() !== "" && (
+                          <AccordionItem value="additionalInstructions" className="rounded-lg border border-border/60 px-3">
+                            <AccordionTrigger className="hover:no-underline py-3 text-sm">
+                              Instruções adicionais ({compiledPromptData.section_lengths?.additionalInstructions ?? 0} caracteres)
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono bg-muted/30 p-3 rounded-md max-h-48 overflow-y-auto">
+                                {compiledPromptData.sections.additionalInstructions}
+                              </pre>
+                            </AccordionContent>
+                          </AccordionItem>
+                        )}
+                        <AccordionItem value="guardrails" className="rounded-lg border border-border/60 px-3">
+                          <AccordionTrigger className="hover:no-underline py-3 text-sm">
+                            Guardrails ({compiledPromptData.section_lengths?.guardrails ?? 0} caracteres)
+                          </AccordionTrigger>
+                          <AccordionContent>
+                            <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono bg-muted/30 p-3 rounded-md max-h-48 overflow-y-auto">
+                              {compiledPromptData.sections.guardrails}
+                            </pre>
+                          </AccordionContent>
+                        </AccordionItem>
+                      </Accordion>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </div>
           )}
@@ -1835,18 +1984,50 @@ export function WhatsAppSetupStepper({
             onPublish={() => publishMutation.mutate()}
             onRollback={(id) => rollbackMutation.mutate(id)}
             onApplyAnalyzerResult={(patch, publish) => {
-              const mergedProfile = {
+              const baseProfile = {
                 ...draftProfile,
                 ...(patch.profile && Object.keys(patch.profile).length > 0
                   ? patch.profile
                   : {}),
               } as AgentProfile;
+              let nextCustomRules = Array.isArray(baseProfile.customRules) ? [...baseProfile.customRules] : [];
+              const crp = patch.custom_rules_patch;
+              if (crp) {
+                const disableSet = new Set(crp.disable ?? []);
+                if (disableSet.size > 0) {
+                  nextCustomRules = nextCustomRules.map((r) =>
+                    disableSet.has((r as { id?: string }).id ?? "") ? { ...r, enabled: false } : r
+                  );
+                }
+                for (const u of crp.update ?? []) {
+                  const i = nextCustomRules.findIndex((r) => (r as { id?: string }).id === u.id);
+                  if (i >= 0) {
+                    nextCustomRules[i] = { ...nextCustomRules[i], ...u.patch } as AgentProfile["customRules"] extends (infer R)[] ? R : never;
+                  }
+                }
+                for (const a of crp.add ?? []) {
+                  const rule = a as { id?: string; title?: string; enabled?: boolean; priority?: number; do?: string[]; dont?: string[] };
+                  nextCustomRules.push({
+                    id: rule.id ?? crypto.randomUUID(),
+                    title: rule.title ?? "Nova regra",
+                    enabled: rule.enabled !== false,
+                    priority: typeof rule.priority === "number" ? rule.priority : 3,
+                    do: Array.isArray(rule.do) ? rule.do : [String(rule.do ?? "")],
+                    dont: rule.dont,
+                  } as AgentProfile["customRules"] extends (infer R)[] ? R : never);
+                }
+              }
+              const mergedProfile = { ...baseProfile, customRules: nextCustomRules };
               const mergedInstructions =
                 patch.instructions !== undefined
                   ? patch.instructions
                   : draftAdditionalInstructions;
               setDraftProfile(mergedProfile);
               setDraftAdditionalInstructions(mergedInstructions);
+              const hasChanges =
+                patch.profile ||
+                patch.instructions !== undefined ||
+                (crp && (crp.add?.length || crp.update?.length || crp.disable?.length));
               if (publish) {
                 updateSettingsMutation.mutate(
                   {
@@ -1855,10 +2036,7 @@ export function WhatsAppSetupStepper({
                   },
                   { onSuccess: () => publishMutation.mutate() },
                 );
-              } else if (
-                patch.profile ||
-                patch.instructions !== undefined
-              ) {
+              } else if (hasChanges) {
                 diagnosticApplyRef.current = true;
                 updateSettingsMutation.mutate({
                   agent_profile: mergedProfile,
@@ -1927,6 +2105,17 @@ export function WhatsAppSetupStepper({
                 )}
                 {activeTab === "preview" && (
                   <>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Checkbox
+                        id="require-suite-publish"
+                        checked={requireSuiteBeforePublish}
+                        onCheckedChange={(v) => setRequireSuiteBeforePublish(v === true)}
+                        aria-describedby="require-suite-desc"
+                      />
+                      <Label id="require-suite-desc" htmlFor="require-suite-publish" className="text-sm font-normal cursor-pointer whitespace-nowrap">
+                        Exigir suíte antes de publicar
+                      </Label>
+                    </div>
                     <Button
                       type="button"
                       variant="outline"
@@ -1941,12 +2130,34 @@ export function WhatsAppSetupStepper({
                     <Button
                       type="button"
                       size="sm"
-                      onClick={() => publishMutation.mutate()}
-                      disabled={isBusy}
-                      aria-label={publishMutation.isPending ? "Publicando…" : "Publicar alterações"}
+                      onClick={async () => {
+                        if (requireSuiteBeforePublish) {
+                          setPublishGateChecking(true);
+                          try {
+                            const res = await whatsappApi.simulateAiSuite({
+                              scenarios: DEFAULT_SUITE_SCENARIOS,
+                              draft_profile: draftProfile ?? undefined,
+                              draft_additional_instructions: draftAdditionalInstructions ?? undefined,
+                            });
+                            if (!res.all_passed) {
+                              toastError("Suíte de cenários falhou. Corrija o agente e tente novamente ou desmarque 'Exigir suíte antes de publicar'.");
+                              setPublishGateChecking(false);
+                              return;
+                            }
+                          } catch (e) {
+                            toastError(e instanceof Error ? e.message : "Erro ao rodar suíte.");
+                            setPublishGateChecking(false);
+                            return;
+                          }
+                          setPublishGateChecking(false);
+                        }
+                        publishMutation.mutate();
+                      }}
+                      disabled={isBusy || publishGateChecking}
+                      aria-label={publishMutation.isPending || publishGateChecking ? "Publicando…" : "Publicar alterações"}
                       className="rounded-lg font-medium bg-primary text-primary-foreground hover:bg-primary/90"
                     >
-                      {publishMutation.isPending ? (
+                      {(publishMutation.isPending || publishGateChecking) ? (
                         <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
                       ) : null}
                       Publicar

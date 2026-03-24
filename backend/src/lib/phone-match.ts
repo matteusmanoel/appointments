@@ -55,3 +55,39 @@ export function brPhonesMatch(a: string | null | undefined, b: string | null | u
   const kb = brPhoneMatchKeys(b ?? "");
   return ka.some((k) => kb.includes(k));
 }
+
+/**
+ * Canoniza número BR para chave única: sempre "55" + DDD + número (com nono dígito quando móvel).
+ * Usar como external_thread_id e em lookups para evitar conversas duplicadas (459... vs 5545...).
+ * - Entrada: string qualquer (com ou sem 55, com ou sem nono).
+ * - Saída: "55" + 11 dígitos (móvel) ou "55" + 10 dígitos (fixo), ou null se inválido.
+ */
+export function canonicalizeBrPhoneDigits(v: string | null | undefined): string | null {
+  const d = normalizeDigits(v ?? "");
+  if (d.length < 10) return null;
+
+  let national = d;
+  if (d.length >= 12 && d.startsWith("55")) {
+    national = d.slice(2);
+  } else if (d.length === 11 && d.startsWith("55")) {
+    national = d.slice(2);
+  }
+
+  if (national.length === 11 && national.charAt(2) === "9") {
+    return "55" + national;
+  }
+  if (national.length === 10) {
+    const ddd = national.slice(0, 2);
+    const subscriber = national.slice(2);
+    const firstDigit = subscriber.charAt(0);
+    // Assinante começando em 6–9: tratar como móvel e inserir nono dígito.
+    if (firstDigit >= "6" && firstDigit <= "9") {
+      return "55" + ddd + "9" + subscriber;
+    }
+    return "55" + national;
+  }
+  if (national.length === 11) {
+    return "55" + national;
+  }
+  return d.length >= 10 ? "55" + national : null;
+}

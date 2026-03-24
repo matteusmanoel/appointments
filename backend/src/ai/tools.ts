@@ -1,8 +1,34 @@
+import { createHash } from "node:crypto";
 import { pool } from "../db.js";
-import { validateUuidIds } from "../lib/uuid.js";
+import { validateUuidIds, isValidUuid } from "../lib/uuid.js";
+import { canonicalizeBrPhoneDigits, brPhoneMatchKeys } from "../lib/phone-match.js";
 import { barbershopHasAutomation, cancelReminderForAppointment, scheduleReminderForAppointment } from "../outbound/scheduled-messages.js";
 
 const MAX_TEXT_LENGTH = 8 * 1024;
+
+export type BookingErrorCode = "SLOT_CONFLICT" | "BUFFER_CONFLICT" | "PAST_TIME" | "OUT_OF_HOURS";
+
+export function isStructuredBookingError(
+  value: unknown
+): value is { code: BookingErrorCode; message: string; details?: unknown } {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    typeof (value as Record<string, unknown>).code === "string" &&
+    typeof (value as Record<string, unknown>).message === "string"
+  );
+}
+
+/** Returns booking buffer minutes (0–30) for the barbershop. */
+async function getBookingBufferMinutes(barbershopId: string): Promise<number> {
+  const r = await pool.query<{ booking_buffer_minutes: number | null }>(
+    `SELECT COALESCE(booking_buffer_minutes, 0)::int AS booking_buffer_minutes
+     FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+    [barbershopId]
+  );
+  const v = r.rows[0]?.booking_buffer_minutes ?? 0;
+  return Math.min(30, Math.max(0, Number(v) || 0));
+}
 
 function truncateForLlm(obj: unknown): unknown {
   if (typeof obj === "string") return obj.slice(0, MAX_TEXT_LENGTH);
@@ -80,6 +106,35 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): b
   return aStart < bEnd && bStart < aEnd;
 }
 
+/** True if intervals conflict when a minimum gap of bufferMins is required between them. */
+function overlapsWithBuffer(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number,
+  bufferMins: number
+): boolean {
+  if (bufferMins <= 0) return overlaps(aStart, aEnd, bStart, bEnd);
+  return aEnd + bufferMins > bStart && bEnd + bufferMins > aStart;
+}
+
+/** Returns today (YYYY-MM-DD) and current minutes since midnight in the barbershop timezone. */
+async function getNowInBarbershopTz(barbershopId: string): Promise<{ todayStr: string; nowMins: number }> {
+  const r = await pool.query<{ today_str: string; now_mins: number }>(
+    `SELECT
+       (NOW() AT TIME ZONE COALESCE(ais.timezone, 'America/Sao_Paulo'))::date::text AS today_str,
+       (EXTRACT(EPOCH FROM (NOW() AT TIME ZONE COALESCE(ais.timezone, 'America/Sao_Paulo'))::time) / 60)::int AS now_mins
+     FROM (SELECT $1::uuid AS barbershop_id) x
+     LEFT JOIN public.barbershop_ai_settings ais ON ais.barbershop_id = x.barbershop_id`
+    ,
+    [barbershopId]
+  );
+  const row = r.rows[0];
+  const todayStr = row?.today_str ?? new Date().toISOString().slice(0, 10);
+  const nowMins = Number(row?.now_mins) ?? 0;
+  return { todayStr, nowMins: Number.isFinite(nowMins) ? nowMins : 0 };
+}
+
 export async function checkAvailability(
   barbershopId: string,
   params: {
@@ -123,7 +178,13 @@ export async function checkAvailability(
   if (requestedStart == null) return { error: "Invalid time" };
   const requestedEnd = requestedStart + totalDuration;
 
-  if (afterMins != null && requestedStart < afterMins) {
+  const bufferMins = await getBookingBufferMinutes(barbershopId);
+  const { todayStr, nowMins } = await getNowInBarbershopTz(barbershopId);
+  const effectiveAfterMins =
+    params.date === todayStr
+      ? Math.max(afterMins ?? 0, Math.ceil(nowMins / 5) * 5)
+      : afterMins ?? null;
+  if (effectiveAfterMins != null && requestedStart < effectiveAfterMins) {
     return truncateForLlm({
       date: params.date,
       time: timeNorm,
@@ -234,10 +295,10 @@ export async function checkAvailability(
     candidates.push({ barber_id: b.id, barber_name: b.name, start: startM, end: endM });
   }
 
-  const appts = await pool.query<{ barber_id: string; scheduled_time: string; duration_minutes: number }>(
-    `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes
+  const appts = await pool.query<{ barber_id: string; scheduled_time: string; duration_minutes: number; status: string; completed_time: string | null }>(
+    `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time
      FROM public.appointments
-     WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled')
+     WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show')
      ${params.barber_id ? "AND barber_id = $3" : ""}`,
     params.barber_id ? [barbershopId, params.date, params.barber_id] : [barbershopId, params.date]
   );
@@ -245,9 +306,13 @@ export async function checkAvailability(
   for (const a of appts.rows) {
     const t = String(a.scheduled_time ?? "").slice(0, 5);
     const s = timeToMinutes(t);
+    if (s == null) continue;
     const d = Number(a.duration_minutes ?? 0);
-    if (s == null || !Number.isFinite(d) || d <= 0) continue;
-    const e = s + d;
+    const effectiveEndMins =
+      a.status === "completed" && a.completed_time != null
+        ? timeToMinutes(String(a.completed_time).slice(0, 5)) ?? s + d
+        : s + (Number.isFinite(d) && d > 0 ? d : 0);
+    const e = effectiveEndMins > s ? effectiveEndMins : s + (Number.isFinite(d) && d > 0 ? d : 0);
     const list = byBarber.get(a.barber_id) ?? [];
     list.push({ start: s, end: e });
     byBarber.set(a.barber_id, list);
@@ -257,23 +322,25 @@ export async function checkAvailability(
   const debugBarbers: { barber_id: string; barber_name: string; in_schedule: boolean; conflict: boolean }[] = [];
   for (const c of candidates) {
     const occ = byBarber.get(c.barber_id) ?? [];
-    const conflict = occ.some((o) => overlaps(requestedStart, requestedEnd, o.start, o.end));
+    const conflict = occ.some((o) => overlapsWithBuffer(requestedStart, requestedEnd, o.start, o.end, bufferMins));
     if (!conflict) availableBarbers.push({ barber_id: c.barber_id, barber_name: c.barber_name });
     debugBarbers.push({ barber_id: c.barber_id, barber_name: c.barber_name, in_schedule: true, conflict });
   }
 
   const available = availableBarbers.length > 0;
 
-  // Alternatives: closest free slots on a 15-min grid around the requested time.
+  // Alternatives: closest free slots on a 5-min grid around the requested time.
   const alternatives: { time: string; barber_id: string; barber_name: string }[] = [];
   if (!available) {
+    const baseSlot = Math.ceil(requestedStart / 5) * 5;
     const deltas: number[] = [];
-    for (let step = 1; step <= 12; step++) {
-      deltas.push(step * 15, -step * 15); // +/- up to 3 hours
+    for (let step = 1; step <= 36; step++) {
+      deltas.push(step * 5, -step * 5);
     }
+    const minStartMins = effectiveAfterMins ?? afterMins;
     outer: for (const delta of deltas) {
-      const slotStart = requestedStart + delta;
-      if (afterMins != null && slotStart < afterMins) continue;
+      const slotStart = baseSlot + delta;
+      if (minStartMins != null && slotStart < minStartMins) continue;
       const slotEnd = slotStart + totalDuration;
       for (const b of barbers.rows) {
         const sched = (b.schedule ?? {}) as Record<string, any>;
@@ -288,7 +355,7 @@ export async function checkAvailability(
         }
         if (slotStart < startM || slotEnd > endM) continue;
         const occ = byBarber.get(b.id) ?? [];
-        const conflict = occ.some((o) => overlaps(slotStart, slotEnd, o.start, o.end));
+        const conflict = occ.some((o) => overlapsWithBuffer(slotStart, slotEnd, o.start, o.end, bufferMins));
         if (!conflict) {
           alternatives.push({ time: minutesToTime(slotStart), barber_id: b.id, barber_name: b.name });
           if (alternatives.length >= 3) break outer;
@@ -413,12 +480,14 @@ export async function validateSlotForPublicReschedule(
     ? [barbershopId, params.barber_id, params.date, startMins, endMins, params.excludeAppointmentId]
     : [barbershopId, params.barber_id, params.date, startMins, endMins];
   const conflictQuery = params.excludeAppointmentId
-    ? `SELECT 1 FROM public.appointments
-       WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled') AND id != $6
-       AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4 AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5`
-    : `SELECT 1 FROM public.appointments
-       WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled')
-       AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4 AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5`;
+    ? `SELECT 1 FROM public.appointments a
+       WHERE a.barbershop_id = $1 AND a.barber_id = $2 AND a.scheduled_date = $3::date AND a.status NOT IN ('cancelled', 'no_show') AND a.id != $6
+       AND (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int < $5
+       AND (CASE WHEN a.status = 'completed' AND a.completed_time IS NOT NULL THEN (EXTRACT(EPOCH FROM a.completed_time) / 60)::int ELSE (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int + a.duration_minutes END) > $4`
+    : `SELECT 1 FROM public.appointments a
+       WHERE a.barbershop_id = $1 AND a.barber_id = $2 AND a.scheduled_date = $3::date AND a.status NOT IN ('cancelled', 'no_show')
+       AND (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int < $5
+       AND (CASE WHEN a.status = 'completed' AND a.completed_time IS NOT NULL THEN (EXTRACT(EPOCH FROM a.completed_time) / 60)::int ELSE (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int + a.duration_minutes END) > $4`;
   const conflictCheck = await pool.query(conflictQuery, conflictParams);
   if (conflictCheck.rows.length > 0) return { ok: false, error: "Horário já ocupado para este barbeiro" };
 
@@ -447,6 +516,9 @@ export async function getNextSlots(
   const afterMins = params.after_time ? timeToMinutes(params.after_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2")) : null;
   if (params.after_time != null && afterMins == null) return { error: "after_time must be HH:mm" };
 
+  const bufferMins = await getBookingBufferMinutes(barbershopId);
+  const { todayStr, nowMins } = await getNowInBarbershopTz(barbershopId);
+
   const [shopRow, closureRow, serviceRows, barbersRows, apptsRows] = await Promise.all([
     pool.query<{ business_hours: unknown }>("SELECT business_hours FROM public.barbershops WHERE id = $1", [barbershopId]),
     pool.query<{ status: string; start_time: string | null; end_time: string | null; unavailability_intervals: unknown }>(
@@ -458,9 +530,9 @@ export async function getNextSlots(
       `SELECT id, name, schedule FROM public.barbers WHERE barbershop_id = $1 AND status IN ('active','break') ${params.barber_id ? "AND id = $2" : ""} ORDER BY name`,
       params.barber_id ? [barbershopId, params.barber_id] : [barbershopId]
     ),
-    pool.query<{ barber_id: string; scheduled_time: string; duration_minutes: number }>(
-      `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes FROM public.appointments
-       WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled') ${params.barber_id ? "AND barber_id = $3" : ""}`,
+    pool.query<{ barber_id: string; scheduled_time: string; duration_minutes: number; status: string; completed_time: string | null }>(
+      `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time FROM public.appointments
+       WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show') ${params.barber_id ? "AND barber_id = $3" : ""}`,
       params.barber_id ? [barbershopId, params.date, params.barber_id] : [barbershopId, params.date]
     ),
   ]);
@@ -523,7 +595,13 @@ export async function getNextSlots(
     }
   }
 
-  if (afterMins != null) startM = Math.max(startM, afterMins);
+  if (params.date === todayStr) {
+    startM = Math.max(startM, Math.ceil(nowMins / 5) * 5);
+  }
+  if (afterMins != null) {
+    startM = Math.max(startM, afterMins);
+    startM = Math.ceil(startM / 5) * 5;
+  }
   const slotEndMax = endM - totalDuration;
   if (startM >= slotEndMax) {
     return truncateForLlm({ date: params.date, slots: [], message: "Não há mais horários disponíveis a partir do horário informado." });
@@ -533,15 +611,20 @@ export async function getNextSlots(
   for (const a of apptsRows.rows) {
     const t = String(a.scheduled_time ?? "").slice(0, 5);
     const s = timeToMinutes(t);
+    if (s == null) continue;
     const d = Number(a.duration_minutes ?? 0);
-    if (s == null || !Number.isFinite(d) || d <= 0) continue;
+    const effectiveEndMins =
+      a.status === "completed" && a.completed_time != null
+        ? timeToMinutes(String(a.completed_time).slice(0, 5)) ?? s + d
+        : s + (Number.isFinite(d) && d > 0 ? d : 0);
+    const e = effectiveEndMins > s ? effectiveEndMins : s + (Number.isFinite(d) && d > 0 ? d : 0);
     const list = byBarber.get(a.barber_id) ?? [];
-    list.push({ start: s, end: s + d });
+    list.push({ start: s, end: e });
     byBarber.set(a.barber_id, list);
   }
 
   const slots: { time: string; barber_id: string; barber_name: string }[] = [];
-  const STEP = 15;
+  const STEP = 5;
   for (let slotStart = startM; slotStart < slotEndMax && slots.length < limit; slotStart += STEP) {
     const slotEnd = slotStart + totalDuration;
     if (unavailIntervals.some((u) => overlaps(slotStart, slotEnd, u.start, u.end))) continue;
@@ -558,7 +641,7 @@ export async function getNextSlots(
       }
       if (slotStart < barberStart || slotEnd > barberEnd) continue;
       const occ = byBarber.get(b.id) ?? [];
-      if (occ.some((o) => overlaps(slotStart, slotEnd, o.start, o.end))) continue;
+      if (occ.some((o) => overlapsWithBuffer(slotStart, slotEnd, o.start, o.end, bufferMins))) continue;
       slots.push({ time: minutesToTime(slotStart), barber_id: b.id, barber_name: b.name });
       break;
     }
@@ -573,8 +656,32 @@ export async function upsertClient(
   name?: string,
   notes?: string
 ): Promise<unknown> {
-  const normalizedPhone = phone.replace(/\D/g, "") || phone;
-  if (!normalizedPhone) return { error: "phone required" };
+  const digits = phone.replace(/\D/g, "") || phone;
+  if (!digits) return { error: "phone required" };
+  const canonicalPhone = canonicalizeBrPhoneDigits(digits) ?? digits;
+  const matchKeys = brPhoneMatchKeys(canonicalPhone);
+  const existing = await pool.query<{ id: string; name: string | null; phone: string }>(
+    `SELECT id, name, phone FROM public.clients
+     WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     LIMIT 1`,
+    [barbershopId, matchKeys]
+  );
+  if (existing.rows.length > 0) {
+    const row = existing.rows[0];
+    await pool.query(
+      `UPDATE public.clients SET
+         name = COALESCE($2, name),
+         notes = COALESCE($3, notes),
+         updated_at = now()
+       WHERE id = $1`,
+      [row.id, (name ?? "").trim() || row.name, notes ?? null]
+    );
+    const updated = await pool.query<{ id: string; name: string | null; phone: string; barbershop_id: string }>(
+      `SELECT id, name, phone, barbershop_id FROM public.clients WHERE id = $1`,
+      [row.id]
+    );
+    return truncateForLlm(updated.rows[0]);
+  }
   const r = await pool.query(
     `INSERT INTO public.clients (barbershop_id, name, phone, notes)
      VALUES ($1, $2, $3, $4)
@@ -583,7 +690,7 @@ export async function upsertClient(
        notes = COALESCE(EXCLUDED.notes, clients.notes),
        updated_at = now()
      RETURNING id, name, phone, barbershop_id`,
-    [barbershopId, name ?? "Cliente", normalizedPhone, notes ?? null]
+    [barbershopId, name ?? "Cliente", canonicalPhone, notes ?? null]
   );
   return truncateForLlm(r.rows[0]);
 }
@@ -621,6 +728,9 @@ export async function createAppointment(
   if (serviceIds.length === 0) return { error: "service_id or service_ids (min 1) required" };
   const uuidErrBook = validateUuidIds(serviceIds, "service_id");
   if (uuidErrBook) return { error: uuidErrBook };
+  if (!isValidUuid(params.barber_id)) {
+    return { error: "barber_id deve ser o UUID do barbeiro; use list_barbers para obter os IDs (não use nome ou slug)." };
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date)) return { error: "date must be yyyy-MM-dd" };
   if (!/^\d{2}:\d{2}(:\d{2})?$/.test(params.time)) return { error: "time must be HH:mm or HH:mm:ss" };
   const timeNorm = params.time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
@@ -650,23 +760,84 @@ export async function createAppointment(
     "SELECT commission_percentage FROM public.barbers WHERE id = $1 AND barbershop_id = $2",
     [params.barber_id, barbershopId]
   );
+  if (barberRow.rows.length === 0) {
+    return { error: "Barbeiro não encontrado; use list_barbers para obter os IDs (UUID) válidos desta barbearia." };
+  }
   const barberPct = barberRow.rows[0]?.commission_percentage ?? 40;
   const commissionAmount = totalPrice * (barberPct / 100);
   const startMins = parseInt(timeNorm.slice(0, 2), 10) * 60 + parseInt(timeNorm.slice(3, 5), 10);
   const endMins = startMins + totalDuration;
+
+  const bufferMins = await getBookingBufferMinutes(barbershopId);
+  const { todayStr, nowMins } = await getNowInBarbershopTz(barbershopId);
+  if (params.date === todayStr && startMins < Math.ceil(nowMins / 5) * 5) {
+    return {
+      error: "Horário no passado. Use get_next_slots ou check_availability para obter horários válidos.",
+      code: "PAST_TIME" as const,
+      message: "Horário no passado. Ofereça 2–3 alternativas com get_next_slots ou check_availability.",
+    };
+  }
+
   const conflictCheck = await pool.query(
-    `SELECT 1 FROM public.appointments
-     WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled')
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5`,
-    [barbershopId, params.barber_id, params.date, startMins, endMins]
+    `SELECT 1 FROM public.appointments a
+     WHERE a.barbershop_id = $1 AND a.barber_id = $2 AND a.scheduled_date = $3::date
+       AND a.status NOT IN ('cancelled', 'no_show')
+       AND (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int < $5 + $6
+       AND (
+         CASE
+           WHEN a.status = 'completed' AND a.completed_time IS NOT NULL
+           THEN (EXTRACT(EPOCH FROM a.completed_time) / 60)::int
+           ELSE (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int + a.duration_minutes
+         END
+       ) > $4 - $6`,
+    [barbershopId, params.barber_id, params.date, startMins, endMins, bufferMins]
   );
   if (conflictCheck.rows.length > 0) {
-    return { error: "Horário já ocupado para este barbeiro" };
+    return {
+      error: "Horário já ocupado ou insuficiente intervalo para este barbeiro.",
+      code: "SLOT_CONFLICT" as const,
+      message: "Horário indisponível. Chame get_next_slots ou check_availability e ofereça 2–3 alternativas.",
+    };
   }
+  const lockKeyBuf = createHash("md5").update(barbershopId + params.barber_id + params.date).digest();
+  const lockKey = lockKeyBuf.readBigUInt64BE(0);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const lockRow = await client.query<{ pg_try_advisory_xact_lock: boolean }>(
+      "SELECT pg_try_advisory_xact_lock($1::bigint)",
+      [lockKey.toString()]
+    );
+    if (!lockRow.rows[0]?.pg_try_advisory_xact_lock) {
+      await client.query("ROLLBACK");
+      return {
+        error: "Conflito ao reservar; tente novamente.",
+        code: "SLOT_CONFLICT" as const,
+        message: "Outro agendamento em andamento. Chame get_next_slots e ofereça alternativas.",
+      };
+    }
+    const recheck = await client.query(
+      `SELECT 1 FROM public.appointments a
+       WHERE a.barbershop_id = $1 AND a.barber_id = $2 AND a.scheduled_date = $3::date
+         AND a.status NOT IN ('cancelled', 'no_show')
+         AND (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int < $5 + $6
+         AND (
+           CASE
+             WHEN a.status = 'completed' AND a.completed_time IS NOT NULL
+             THEN (EXTRACT(EPOCH FROM a.completed_time) / 60)::int
+             ELSE (EXTRACT(EPOCH FROM a.scheduled_time) / 60)::int + a.duration_minutes
+           END
+         ) > $4 - $6`,
+      [barbershopId, params.barber_id, params.date, startMins, endMins, bufferMins]
+    );
+    if (recheck.rows.length > 0) {
+      await client.query("ROLLBACK");
+      return {
+        error: "Horário já ocupado para este barbeiro.",
+        code: "SLOT_CONFLICT" as const,
+        message: "Horário indisponível. Chame get_next_slots ou check_availability e ofereça 2–3 alternativas.",
+      };
+    }
     const appResult = await client.query(
       `INSERT INTO public.appointments (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status, notes)
        VALUES ($1, $2, $3, $4, $5::date, $6::time, $7, $8, $9, 'pending', $10)
@@ -725,14 +896,97 @@ export async function createAppointment(
 }
 
 /**
+ * Returns "o de sempre" for a client: last appointment's services and top 1–2 most frequent combos in last 6 months.
+ * Used by agent to suggest proactively on greeting.
+ */
+export async function getClientFavoriteServices(
+  barbershopId: string,
+  clientPhone: string
+): Promise<{
+  last: { service_ids: string[]; service_names: string } | null;
+  frequent: Array<{ service_ids: string[]; service_names: string; count: number }>;
+} | null> {
+  const digits = clientPhone.replace(/\D/g, "");
+  if (!digits) return null;
+  const matchKeys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(digits) ?? digits);
+
+  const lastRow = await pool.query<{ service_ids: string[]; service_names: string }>(
+    `WITH client_appointments AS (
+       SELECT a.id
+       FROM public.appointments a
+       JOIN public.clients c ON c.id = a.client_id
+       WHERE a.barbershop_id = $1 AND a.status NOT IN ('cancelled')
+         AND a.scheduled_date < CURRENT_DATE
+         AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
+       ORDER BY a.scheduled_date DESC, a.scheduled_time DESC
+       LIMIT 1
+     ),
+     svcs AS (
+       SELECT aps.service_id, aps.service_name
+       FROM public.appointment_services aps
+       JOIN client_appointments ca ON ca.id = aps.appointment_id
+       ORDER BY aps.position
+     )
+     SELECT
+       COALESCE(array_agg(svcs.service_id::text) FILTER (WHERE svcs.service_id IS NOT NULL), ARRAY[]::text[]) AS service_ids,
+       COALESCE(string_agg(svcs.service_name, ', ' ORDER BY (SELECT 1)), '') AS service_names
+     FROM svcs`,
+    [barbershopId, matchKeys]
+  );
+  const last = lastRow.rows[0];
+  const lastResult =
+    last && Array.isArray(last.service_ids) && last.service_ids.length > 0
+      ? { service_ids: last.service_ids, service_names: last.service_names ?? "" }
+      : null;
+
+  const sixMonthsAgo = new Date();
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const frequentRows = await pool.query<{ service_ids: string[]; service_names: string; cnt: string }>(
+    `WITH past AS (
+       SELECT a.id
+       FROM public.appointments a
+       JOIN public.clients c ON c.id = a.client_id
+       WHERE a.barbershop_id = $1 AND a.status NOT IN ('cancelled')
+         AND a.scheduled_date >= $2::date
+         AND a.scheduled_date < CURRENT_DATE
+         AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])
+     ),
+     combo AS (
+       SELECT
+         array_agg(aps.service_id::text ORDER BY aps.position) AS service_ids,
+         string_agg(aps.service_name, ', ' ORDER BY aps.position) AS service_names
+       FROM public.appointment_services aps
+       JOIN past p ON p.id = aps.appointment_id
+       GROUP BY aps.appointment_id
+     )
+     SELECT service_ids, service_names, COUNT(*)::text AS cnt
+     FROM combo
+     GROUP BY service_ids, service_names
+     ORDER BY COUNT(*) DESC
+     LIMIT 2`,
+    [barbershopId, sixMonthsAgo.toISOString().slice(0, 10), matchKeys]
+  );
+  const frequent = frequentRows.rows.map((r) => ({
+    service_ids: r.service_ids ?? [],
+    service_names: r.service_names ?? "",
+    count: parseInt(r.cnt, 10) || 0,
+  }));
+
+  if (!lastResult && frequent.length === 0) return null;
+  return { last: lastResult, frequent };
+}
+
+/**
  * List upcoming appointments for the client (by phone). Used by agent for cancel/reschedule intents.
  */
 export async function listClientUpcomingAppointments(
   barbershopId: string,
   clientPhone: string
 ): Promise<unknown> {
-  const normalized = clientPhone.replace(/\D/g, "");
-  if (!normalized) return { error: "client_phone required" };
+  const digits = clientPhone.replace(/\D/g, "");
+  if (!digits) return { error: "client_phone required" };
+  const canonical = canonicalizeBrPhoneDigits(digits) ?? digits;
+  const matchKeys = brPhoneMatchKeys(canonical);
   const r = await pool.query<{
     id: string;
     scheduled_date: string;
@@ -748,9 +1002,9 @@ export async function listClientUpcomingAppointments(
      JOIN public.barbers b ON b.id = a.barber_id
      WHERE a.barbershop_id = $1 AND a.status NOT IN ('cancelled')
        AND a.scheduled_date >= CURRENT_DATE
-       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = $2
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
      ORDER BY a.scheduled_date, a.scheduled_time`,
-    [barbershopId, normalized]
+    [barbershopId, matchKeys]
   );
   return truncateForLlm(
     r.rows.map((row) => ({
@@ -771,14 +1025,15 @@ export async function cancelAppointmentByAgent(
   appointmentId: string,
   clientPhone: string
 ): Promise<unknown> {
-  const normalized = clientPhone.replace(/\D/g, "");
-  if (!normalized) return { error: "Telefone do cliente é obrigatório" };
+  const digits = clientPhone.replace(/\D/g, "");
+  if (!digits) return { error: "Telefone do cliente é obrigatório" };
+  const matchKeys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(digits) ?? digits);
   const check = await pool.query<{ id: string }>(
     `SELECT a.id FROM public.appointments a
      JOIN public.clients c ON c.id = a.client_id
      WHERE a.id = $1 AND a.barbershop_id = $2 AND a.status NOT IN ('cancelled')
-       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = $3`,
-    [appointmentId, barbershopId, normalized]
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])`,
+    [appointmentId, barbershopId, matchKeys]
   );
   if (check.rows.length === 0) return { error: "Agendamento não encontrado, já cancelado ou não pertence a este cliente" };
   await pool.query(
@@ -799,8 +1054,9 @@ export async function rescheduleAppointmentByAgent(
   clientPhone: string,
   params: { date: string; time: string; barber_id?: string }
 ): Promise<unknown> {
-  const normalized = clientPhone.replace(/\D/g, "");
-  if (!normalized) return { error: "Telefone do cliente é obrigatório" };
+  const digits = clientPhone.replace(/\D/g, "");
+  if (!digits) return { error: "Telefone do cliente é obrigatório" };
+  const matchKeys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(digits) ?? digits);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date)) return { error: "date must be yyyy-MM-dd" };
   const timeNorm = params.time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
   if (!/^\d{2}:\d{2}$/.test(timeNorm)) return { error: "time must be HH:mm" };
@@ -809,24 +1065,37 @@ export async function rescheduleAppointmentByAgent(
     `SELECT a.barber_id, a.duration_minutes FROM public.appointments a
      JOIN public.clients c ON c.id = a.client_id
      WHERE a.id = $1 AND a.barbershop_id = $2 AND a.status NOT IN ('cancelled')
-       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = $3`,
-    [appointmentId, barbershopId, normalized]
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])`,
+    [appointmentId, barbershopId, matchKeys]
   );
   if (appRow.rows.length === 0) return { error: "Agendamento não encontrado, já cancelado ou não pertence a este cliente" };
   const { barber_id: currentBarberId, duration_minutes: duration } = appRow.rows[0];
   const barberId = params.barber_id ?? currentBarberId;
 
+  const bufferMins = await getBookingBufferMinutes(barbershopId);
   const startMins = parseInt(timeNorm.slice(0, 2), 10) * 60 + parseInt(timeNorm.slice(3, 5), 10);
   const endMins = startMins + duration;
+  const { todayStr, nowMins } = await getNowInBarbershopTz(barbershopId);
+  if (params.date === todayStr && startMins < Math.ceil(nowMins / 5) * 5) {
+    return {
+      error: "Horário no passado.",
+      code: "PAST_TIME" as const,
+      message: "Escolha um horário a partir de agora. Use get_next_slots ou check_availability.",
+    };
+  }
   const conflictCheck = await pool.query(
     `SELECT 1 FROM public.appointments
      WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled') AND id != $4
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $5
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $6`,
-    [barbershopId, barberId, params.date, appointmentId, startMins, endMins]
+     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes + $7 > $5
+     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int - $7 < $6`,
+    [barbershopId, barberId, params.date, appointmentId, startMins, endMins, bufferMins]
   );
   if (conflictCheck.rows.length > 0) {
-    return { error: "Horário já ocupado para este barbeiro" };
+    return {
+      error: "Horário já ocupado ou intervalo insuficiente para este barbeiro.",
+      code: "SLOT_CONFLICT" as const,
+      message: "Horário indisponível. Chame get_next_slots ou check_availability e ofereça alternativas.",
+    };
   }
   await cancelReminderForAppointment(appointmentId);
   await pool.query(

@@ -165,12 +165,21 @@ export function AppointmentsList({ range }: AppointmentsListProps) {
             const status = statusMap[appointment.status] ?? statusMap.pending;
             const dateStr = formatAppointmentDate(appointment.scheduled_date);
             const timeStr = formatAppointmentTime(appointment.scheduled_time);
+            const aptDate =
+              appointment.scheduled_date &&
+              String(appointment.scheduled_date).slice(0, 10);
+            const dateParam =
+              aptDate && /^\d{4}-\d{2}-\d{2}$/.test(aptDate) ? aptDate : null;
+            const search =
+              dateParam
+                ? `?from=${dateParam}&to=${dateParam}&date=${dateParam}&grade_view=day`
+                : "";
             return (
               <button
                 type="button"
                 key={appointment.id}
                 onClick={() =>
-                  navigate("/app/agendamentos", {
+                  navigate(`/app/agendamentos${search}`, {
                     state: { editAppointment: appointment },
                   })
                 }

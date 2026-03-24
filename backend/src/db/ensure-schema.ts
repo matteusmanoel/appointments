@@ -99,5 +99,36 @@ export async function ensureCriticalSchema(): Promise<void> {
     .catch((e) => {
       if (!isUndefinedTableOrColumn(e)) throw e;
     });
+
+  // Prevent duplicate messages per conversation when syncing from provider (e.g. provider_message_id).
+  await pool
+    .query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ai_messages_conversation_provider_message_id_key
+       ON public.ai_messages (conversation_id, provider_message_id) WHERE provider_message_id IS NOT NULL`
+    )
+    .catch(() => {});
+
+  // Booking buffer (minutes between appointments) per barbershop; 0–30.
+  await pool
+    .query(
+      `ALTER TABLE public.barbershop_ai_settings
+       ADD COLUMN IF NOT EXISTS booking_buffer_minutes int NOT NULL DEFAULT 0`
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
+  await pool
+    .query(
+      `ALTER TABLE public.barbershop_ai_settings
+       DROP CONSTRAINT IF EXISTS barbershop_ai_settings_booking_buffer_minutes_check`
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE public.barbershop_ai_settings
+       ADD CONSTRAINT barbershop_ai_settings_booking_buffer_minutes_check
+       CHECK (booking_buffer_minutes >= 0 AND booking_buffer_minutes <= 30)`
+    )
+    .catch(() => {});
 }
 

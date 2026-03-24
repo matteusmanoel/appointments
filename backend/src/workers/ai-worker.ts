@@ -243,7 +243,9 @@ async function processOneJob(): Promise<boolean> {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         }
         const openai = new OpenAI({ apiKey: config.openaiApiKey });
-        const result = await runAgent(barbershopId, conversationId, fromPhone, openai);
+        const result = await runAgent(barbershopId, conversationId, fromPhone, openai, {
+          persistAssistantMessages: false,
+        });
       reply = result.reply;
       if (result.state === "appointment_created") {
         await enqueueOutboundEvent(barbershopId, "appointment_created", {

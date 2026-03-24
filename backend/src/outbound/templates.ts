@@ -14,19 +14,42 @@ export type ReminderVars = {
   cancelLink?: string;
 };
 
+/** Formata YYYY-MM-DD para DD/MM/YYYY. */
+function formatDateBr(isoDate: string): string {
+  const [y, m, d] = isoDate.split("-");
+  return d && m && y ? `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}` : isoDate;
+}
+
+/** Primeiro nome para saudação (ex.: "Mateus Ferreira" → "Mateus"). */
+function firstName(fullName: string | undefined): string {
+  if (!fullName?.trim()) return "";
+  return fullName.trim().split(/\s+/)[0] ?? "";
+}
+
 export function buildReminder24h(v: ReminderVars): string {
-  const name = v.clientName ? ` ${v.clientName},` : "";
-  const service = v.serviceNames ? ` (${v.serviceNames})` : "";
-  const barber = v.barberName ? ` com ${v.barberName}` : "";
-  let msg = `Oi${name} lembrete: você tem agendamento${service} no dia ${v.date} às ${v.time}${barber}.`;
+  const first = firstName(v.clientName);
+  const greeting = first ? `Fala, ${first}!` : "Fala!";
+  const dateBr = formatDateBr(v.date);
+
+  const lines: string[] = [
+    `${greeting} Só passando pra lembrar do seu agendamento:`,
+    "",
+    v.serviceNames ? `- Serviços: ${v.serviceNames}` : null,
+    `- Data: ${dateBr} às ${v.time}`,
+    v.barberName ? `- Barbeiro: ${v.barberName}` : null,
+  ].filter((line): line is string => line !== null);
+
+  let msg = lines.join("\n").trim();
+
   if (v.rescheduleLink || v.cancelLink) {
-    msg += " Precisa reagendar ou cancelar? ";
-    if (v.rescheduleLink) msg += `Reagendar: ${v.rescheduleLink}. `;
-    if (v.cancelLink) msg += `Cancelar: ${v.cancelLink}.`;
+    msg += "\n\nPrecisa reagendar ou cancelar?\n";
+    if (v.rescheduleLink) msg += `Reagendar: ${v.rescheduleLink}\n`;
+    if (v.cancelLink) msg += `Cancelar: ${v.cancelLink}`;
   } else if (v.bookingLink) {
-    msg += ` Reagendar pelo link: ${v.bookingLink}`;
+    msg += `\n\nReagendar pelo link: ${v.bookingLink}`;
   }
-  msg += " Até lá!";
+
+  msg += "\n\nEsperamos por você. Até lá!";
   return msg.trim();
 }
 

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db.js";
 import { setConversationPaused } from "../ai/runtime-pause.js";
+import { canonicalizeBrPhoneDigits, brPhoneMatchKeys } from "../lib/phone-match.js";
 
 const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "";
 const accessToken = process.env.WHATSAPP_ACCESS_TOKEN ?? "";
@@ -295,10 +296,15 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
       const barbershopId = r.rows[0]?.barbershop_id;
       if (barbershopId) {
         if (parsed.fromPhone) {
+          const canonicalPhone = canonicalizeBrPhoneDigits(parsed.fromPhone) ?? parsed.fromPhone;
+          const matchKeys = brPhoneMatchKeys(canonicalPhone);
           const conv = await pool.query<{ id: string }>(
             `SELECT id FROM public.ai_conversations
-             WHERE barbershop_id = $1 AND channel = 'whatsapp' AND external_thread_id = $2 LIMIT 1`,
-            [barbershopId, parsed.fromPhone]
+             WHERE barbershop_id = $1 AND channel = 'whatsapp'
+               AND (external_thread_id = $2 OR regexp_replace(external_thread_id, '[^0-9]', '', 'g') = ANY($3::text[]))
+             ORDER BY last_message_at DESC NULLS LAST
+             LIMIT 1`,
+            [barbershopId, canonicalPhone, matchKeys]
           );
           const conversationId = conv.rows[0]?.id;
           if (conversationId) {
@@ -416,7 +422,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
     return;
   }
 
-  const fromPhone = parsed.fromPhone;
+  const canonicalPhone = canonicalizeBrPhoneDigits(parsed.fromPhone) ?? parsed.fromPhone;
   const text = parsed.text;
   const providerEventId = parsed.providerEventId;
 
@@ -425,7 +431,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
       `INSERT INTO public.whatsapp_inbound_events (barbershop_id, provider, provider_event_id, from_phone, payload, received_at)
        VALUES ($1, 'uazapi', $2, $3, $4, now())
        ON CONFLICT (provider, provider_event_id) DO NOTHING RETURNING id`,
-      [barbershopId, providerEventId, fromPhone, JSON.stringify(body)]
+      [barbershopId, providerEventId, canonicalPhone, JSON.stringify(body)]
     );
     if (inserted.rows.length === 0) {
       console.info("[uazapi webhook] duplicate providerEventId=%s skipped", providerEventId);
@@ -433,22 +439,22 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
       return;
     }
 
+    const optOutMatchKeys = brPhoneMatchKeys(canonicalPhone);
     const optOutPattern = /^(parar|n[aã]o\s*quero\s*receber|cancelar\s*inscri[cç][aã]o|opt\s*out|remover|n[aã]o\s*receber\s*mais|sair\s*da\s*lista)$/i;
     const trimmed = (text || "").trim().toLowerCase();
     if (optOutPattern.test(trimmed) || (trimmed.includes("parar") && trimmed.length < 50)) {
-      const normalized = fromPhone.replace(/\D/g, "");
-      if (normalized) {
+      if (canonicalPhone) {
         const updated = await pool.query(
           `UPDATE public.clients SET marketing_opt_out = true, updated_at = now()
-           WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = $2`,
-          [barbershopId, normalized]
+           WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])`,
+          [barbershopId, optOutMatchKeys]
         );
         if (updated.rowCount === 0) {
           await pool.query(
             `INSERT INTO public.clients (barbershop_id, name, phone, marketing_opt_out, updated_at)
              VALUES ($1, 'Cliente', $2, true, now())
              ON CONFLICT (barbershop_id, phone) DO UPDATE SET marketing_opt_out = true, updated_at = now()`,
-            [barbershopId, normalized]
+            [barbershopId, canonicalPhone]
           );
         }
       }
@@ -460,7 +466,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
        ON CONFLICT (barbershop_id, channel, external_thread_id)
        DO UPDATE SET last_message_at = now(), updated_at = now()
        RETURNING id`,
-      [barbershopId, fromPhone]
+      [barbershopId, canonicalPhone]
     );
     const conversationId = conv.rows[0]?.id;
     if (!conversationId) {
@@ -474,7 +480,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
       [conversationId, text.slice(0, 64 * 1024), providerEventId]
     );
 
-    const payloadJson = { fromPhone, text, providerEventId, event: body?.event };
+    const payloadJson = { fromPhone: canonicalPhone, text, providerEventId, event: body?.event };
     const jobInsert = await pool.query<{ id: string }>(
       `INSERT INTO public.ai_jobs (barbershop_id, conversation_id, type, payload_json, status, run_after)
        VALUES ($1, $2, 'process_inbound_message', $3, 'queued', now())

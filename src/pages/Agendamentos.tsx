@@ -95,6 +95,14 @@ import { DateHourPicker } from "@/components/ui/date-hour-picker";
 import { MonthPicker } from "@/components/ui/month-picker";
 import { YearPicker } from "@/components/ui/year-picker";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   FiltersBar,
@@ -192,7 +200,7 @@ const appointmentFormSchema = z.object({
     .enum(["pending", "confirmed", "completed", "cancelled", "no_show"])
     .optional(),
   price: z.number().min(0).optional(),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 type AppointmentFormValues = z.infer<typeof appointmentFormSchema>;
@@ -211,7 +219,7 @@ const clientCreateSchema = z.object({
       "E-mail inválido",
     ),
   notes: z.string().optional(),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 const barberCreateSchema = z.object({
@@ -220,7 +228,7 @@ const barberCreateSchema = z.object({
   email: z.string().optional(),
   status: z.enum(["active", "inactive", "break"]),
   commission_percentage: z.coerce.number().min(0).max(100),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 const defaultBarberSchedule: Record<
@@ -245,7 +253,7 @@ const serviceCreateSchema = z.object({
     .enum(["corte", "combo", "barba", "adicional", "tratamento"])
     .optional()
     .default("corte"),
-  barbershop_id: z.string().uuid().optional(),
+  barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
 export default function Agendamentos() {
@@ -315,6 +323,8 @@ export default function Agendamentos() {
   const [editingAppointment, setEditingAppointment] =
     useState<Appointment | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Appointment | null>(null);
+  const [completeTarget, setCompleteTarget] = useState<Appointment | null>(null);
+  const [completeTime, setCompleteTime] = useState<string>("");
   const [viewMode, setViewMode] = useState<"grade" | "lista">(initialView);
   const [listRange, setListRange] = useState<{
     from: Date | null;
@@ -496,7 +506,13 @@ export default function Agendamentos() {
 
   const createClientForm = useForm<z.infer<typeof clientCreateSchema>>({
     resolver: zodResolver(clientCreateSchema),
-    defaultValues: { name: "", phone: "", email: "", notes: "", barbershop_id: "" },
+    defaultValues: {
+      name: "",
+      phone: "",
+      email: "",
+      notes: "",
+      barbershop_id: "",
+    },
   });
   const createBarberForm = useForm<z.infer<typeof barberCreateSchema>>({
     resolver: zodResolver(barberCreateSchema),
@@ -764,6 +780,7 @@ export default function Agendamentos() {
         notes?: string;
         price?: number;
         service_ids?: string[];
+        completed_time?: string;
       };
     }) => appointmentsApi.update(id, body),
     onSuccess: (updated) => {
@@ -851,9 +868,15 @@ export default function Agendamentos() {
     })();
     return list.some((apt) => {
       if (apt.barber_id !== barberId) return false;
-      const [h, m] = apt.scheduled_time.split(":").map(Number);
+      const [h, m] = String(apt.scheduled_time).slice(0, 5).split(":").map(Number);
       const startMins = (h ?? 0) * 60 + (m ?? 0);
-      const endMins = startMins + apt.duration_minutes;
+      const endMins =
+        apt.status === "completed" && apt.completed_time != null
+          ? (() => {
+              const [eh, em] = String(apt.completed_time).slice(0, 5).split(":").map(Number);
+              return (eh ?? 0) * 60 + (em ?? 0);
+            })()
+          : startMins + (apt.duration_minutes ?? 0);
       return slotMins >= startMins && slotMins < endMins;
     });
   };
@@ -886,14 +909,20 @@ export default function Agendamentos() {
     const endMins = startMins + (computedTotals.totalDuration ?? 30);
     return !editDayAppointments.some((apt) => {
       if (apt.id === editingAppointment.id) return false;
-      if (apt.status === "cancelled") return false;
+      if (apt.status === "cancelled" || apt.status === "no_show") return false;
       if (apt.barber_id !== editBarberId) return false;
       const [ah, am] = String(apt.scheduled_time)
         .slice(0, 5)
         .split(":")
         .map(Number);
       const aStart = (ah ?? 0) * 60 + (am ?? 0);
-      const aEnd = aStart + (apt.duration_minutes ?? 30);
+      const aEnd =
+        apt.status === "completed" && apt.completed_time != null
+          ? (() => {
+              const [eh, em] = String(apt.completed_time).slice(0, 5).split(":").map(Number);
+              return (eh ?? 0) * 60 + (em ?? 0);
+            })()
+          : aStart + (apt.duration_minutes ?? 30);
       return startMins < aEnd && endMins > aStart;
     });
   };
@@ -1010,7 +1039,11 @@ export default function Agendamentos() {
 
   const onSubmit = async (values: AppointmentFormValues) => {
     try {
-      if (!editingAppointment && selectedScope === "__all__" && !values.barbershop_id) {
+      if (
+        !editingAppointment &&
+        selectedScope === "__all__" &&
+        !values.barbershop_id
+      ) {
         form.setError("barbershop_id", { message: "Selecione a filial." });
         return;
       }
@@ -1583,7 +1616,10 @@ export default function Agendamentos() {
             </div>
           </TabsContent>
 
-          <TabsContent value="lista" className="mt-0 flex flex-col flex-1 min-h-0">
+          <TabsContent
+            value="lista"
+            className="mt-0 flex flex-col flex-1 min-h-0"
+          >
             <div className="space-y-4 flex flex-col flex-1 min-h-0">
               <FiltersBar
                 left={
@@ -1755,41 +1791,54 @@ export default function Agendamentos() {
         contentClassName={editingAppointment ? "sm:max-w-4xl" : "sm:max-w-2xl"}
         footer={
           <>
-            <div className="flex items-center gap-2">
-              {editingAppointment && appointmentModalMode === "view" ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 border-border"
-                  onClick={() => setAppointmentModalMode("edit")}
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Editar agendamento
-                </Button>
-              ) : editingAppointment && appointmentModalMode === "edit" ? (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const snap = editFormSnapshotRef.current;
-                    if (snap) form.reset(snap);
-                    setAppointmentModalMode("view");
-                  }}
-                >
-                  Cancelar edição
-                </Button>
-              ) : null}
-              <Button variant="outline" onClick={() => setFormOpen(false)}>
-                {editingAppointment && appointmentModalMode === "edit"
-                  ? "Cancelar"
-                  : editingAppointment
-                    ? "Fechar"
-                    : "Cancelar"}
-              </Button>
-            </div>
-            <div className="flex flex-nowrap items-center justify-end gap-2 overflow-x-auto">
+            {(editingAppointment && appointmentModalMode === "edit") ||
+            !editingAppointment ? (
+              <div className="flex items-center gap-2">
+                {editingAppointment && appointmentModalMode === "edit" ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        const snap = editFormSnapshotRef.current;
+                        if (snap) form.reset(snap);
+                        setAppointmentModalMode("view");
+                      }}
+                    >
+                      Cancelar edição
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setFormOpen(false)}
+                    >
+                      Cancelar
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="outline" onClick={() => setFormOpen(false)}>
+                    Cancelar
+                  </Button>
+                )}
+              </div>
+            ) : null}
+            <div
+              className={
+                editingAppointment && appointmentModalMode === "view"
+                  ? "col-span-2 flex flex-nowrap items-center gap-2 overflow-x-auto"
+                  : "flex flex-nowrap items-center justify-end gap-2 overflow-x-auto"
+              }
+            >
               {editingAppointment && appointmentModalMode === "view" ? (
                 <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 border-border"
+                    onClick={() => setAppointmentModalMode("edit")}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Editar
+                  </Button>
                   <Button
                     type="button"
                     size="sm"
@@ -1815,20 +1864,13 @@ export default function Agendamentos() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    onClick={() =>
-                      inlineUpdateMutation
-                        .mutateAsync({
-                          id: editingAppointment.id,
-                          body: { status: "completed" },
-                        })
-                        .then(() => {
-                          toastSuccess("Marcado como concluído.");
-                          setFormOpen(false);
-                        })
-                        .catch((e) =>
-                          toastError("Não foi possível concluir.", e),
-                        )
-                    }
+                    onClick={() => {
+                      const now = new Date();
+                      setCompleteTime(
+                        `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+                      );
+                      setCompleteTarget(editingAppointment);
+                    }}
                   >
                     <BadgeCheck className="h-4 w-4 mr-1 sm:mr-2" />
                     Concluir
@@ -2002,7 +2044,9 @@ export default function Agendamentos() {
                         </p>
                         <p className="text-base font-medium text-foreground mt-0.5">
                           {selectedServices.length > 0
-                            ? serviceLabel(selectedServices.map((s) => s.name))
+                            ? serviceLabel(
+                                selectedServices.map((s) => s.name),
+                              )
                             : serviceLabel(
                                 editingAppointment.service_names,
                                 editingAppointment.service_name,
@@ -2051,40 +2095,43 @@ export default function Agendamentos() {
             )}
             {(!editingAppointment || appointmentModalMode === "edit") && (
               <div className="grid gap-4 md:grid-cols-2">
-                {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && !editingAppointment && (
-                  <div className="md:col-span-2">
-                    <FormField
-                      control={form.control}
-                      name="barbershop_id"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>
-                            Filial <span className="text-destructive">*</span>
-                          </FormLabel>
-                          <Select
-                            value={field.value || ""}
-                            onValueChange={field.onChange}
-                            required
-                          >
-                            <FormControl>
-                              <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Selecione a filial" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              {profile.barbershops.map((b) => (
-                                <SelectItem key={b.id} value={b.id}>
-                                  {b.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                )}
+                {selectedScope === "__all__" &&
+                  profile?.barbershops &&
+                  profile.barbershops.length > 0 &&
+                  !editingAppointment && (
+                    <div className="md:col-span-2">
+                      <FormField
+                        control={form.control}
+                        name="barbershop_id"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              Filial <span className="text-destructive">*</span>
+                            </FormLabel>
+                            <Select
+                              value={field.value || ""}
+                              onValueChange={field.onChange}
+                              required
+                            >
+                              <FormControl>
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Selecione a filial" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
+                                {profile.barbershops.map((b) => (
+                                  <SelectItem key={b.id} value={b.id}>
+                                    {b.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
                 {!editingAppointment && (
                   <div className="md:col-span-2">
                     <FormField
@@ -2417,6 +2464,68 @@ export default function Agendamentos() {
         />
       )}
 
+      <Dialog
+        open={!!completeTarget}
+        onOpenChange={(open) => {
+          if (!open) setCompleteTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Concluir agendamento</DialogTitle>
+            <DialogDescription>
+              Informe o horário em que o serviço foi finalizado. O restante do
+              período ficará disponível para novos agendamentos.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-2">
+              <FormLabel htmlFor="complete-time">Horário de término</FormLabel>
+              <Input
+                id="complete-time"
+                type="time"
+                value={completeTime}
+                onChange={(e) => setCompleteTime(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCompleteTarget(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!completeTarget) return;
+                const time = completeTime.trim().slice(0, 5);
+                if (!/^\d{2}:\d{2}$/.test(time)) {
+                  toastError("Informe um horário válido (HH:mm).");
+                  return;
+                }
+                inlineUpdateMutation
+                  .mutateAsync({
+                    id: completeTarget.id,
+                    body: { status: "completed", completed_time: time },
+                  })
+                  .then(() => {
+                    toastSuccess("Marcado como concluído.");
+                    setCompleteTarget(null);
+                    setFormOpen(false);
+                  })
+                  .catch((e) =>
+                    toastError("Não foi possível concluir.", e),
+                  );
+              }}
+              disabled={inlineUpdateMutation.isPending}
+            >
+              Concluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <EntityFormDialog
         open={createClientOpen}
         onOpenChange={setCreateClientOpen}
@@ -2433,7 +2542,9 @@ export default function Agendamentos() {
             <Button
               onClick={createClientForm.handleSubmit((v) => {
                 if (selectedScope === "__all__" && !v.barbershop_id) {
-                  createClientForm.setError("barbershop_id", { message: "Selecione a filial." });
+                  createClientForm.setError("barbershop_id", {
+                    message: "Selecione a filial.",
+                  });
                   return;
                 }
                 createClientMutation.mutate(v);
@@ -2449,41 +2560,49 @@ export default function Agendamentos() {
           <form
             onSubmit={createClientForm.handleSubmit((v) => {
               if (selectedScope === "__all__" && !v.barbershop_id) {
-                createClientForm.setError("barbershop_id", { message: "Selecione a filial." });
+                createClientForm.setError("barbershop_id", {
+                  message: "Selecione a filial.",
+                });
                 return;
               }
               createClientMutation.mutate(v);
             })}
             className="space-y-4"
           >
-            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && (
-              <FormField
-                control={createClientForm.control}
-                name="barbershop_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Filial <span className="text-destructive">*</span></FormLabel>
-                    <Select
-                      value={field.value || ""}
-                      onValueChange={field.onChange}
-                      required
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Selecione a filial" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {profile.barbershops.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
+            {selectedScope === "__all__" &&
+              profile?.barbershops &&
+              profile.barbershops.length > 0 && (
+                <FormField
+                  control={createClientForm.control}
+                  name="barbershop_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Filial <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <Select
+                        value={field.value || ""}
+                        onValueChange={field.onChange}
+                        required
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Selecione a filial" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {profile.barbershops.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             <FormField
               control={createClientForm.control}
               name="name"
@@ -2568,7 +2687,9 @@ export default function Agendamentos() {
             <Button
               onClick={createBarberForm.handleSubmit((v) => {
                 if (selectedScope === "__all__" && !v.barbershop_id) {
-                  createBarberForm.setError("barbershop_id", { message: "Selecione a filial." });
+                  createBarberForm.setError("barbershop_id", {
+                    message: "Selecione a filial.",
+                  });
                   return;
                 }
                 createBarberMutation.mutate(v);
@@ -2584,37 +2705,49 @@ export default function Agendamentos() {
           <form
             onSubmit={createBarberForm.handleSubmit((v) => {
               if (selectedScope === "__all__" && !v.barbershop_id) {
-                createBarberForm.setError("barbershop_id", { message: "Selecione a filial." });
+                createBarberForm.setError("barbershop_id", {
+                  message: "Selecione a filial.",
+                });
                 return;
               }
               createBarberMutation.mutate(v);
             })}
             className="space-y-4"
           >
-            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && (
-              <FormField
-                control={createBarberForm.control}
-                name="barbershop_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Filial <span className="text-destructive">*</span></FormLabel>
-                    <Select value={field.value || ""} onValueChange={field.onChange} required>
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Selecione a filial" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {profile.barbershops.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
+            {selectedScope === "__all__" &&
+              profile?.barbershops &&
+              profile.barbershops.length > 0 && (
+                <FormField
+                  control={createBarberForm.control}
+                  name="barbershop_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Filial <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <Select
+                        value={field.value || ""}
+                        onValueChange={field.onChange}
+                        required
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Selecione a filial" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {profile.barbershops.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             <FormField
               control={createBarberForm.control}
               name="name"
@@ -2713,7 +2846,9 @@ export default function Agendamentos() {
             <Button
               onClick={createServiceForm.handleSubmit((v) => {
                 if (selectedScope === "__all__" && !v.barbershop_id) {
-                  createServiceForm.setError("barbershop_id", { message: "Selecione a filial." });
+                  createServiceForm.setError("barbershop_id", {
+                    message: "Selecione a filial.",
+                  });
                   return;
                 }
                 createServiceMutation.mutate(v);
@@ -2729,37 +2864,49 @@ export default function Agendamentos() {
           <form
             onSubmit={createServiceForm.handleSubmit((v) => {
               if (selectedScope === "__all__" && !v.barbershop_id) {
-                createServiceForm.setError("barbershop_id", { message: "Selecione a filial." });
+                createServiceForm.setError("barbershop_id", {
+                  message: "Selecione a filial.",
+                });
                 return;
               }
               createServiceMutation.mutate(v);
             })}
             className="space-y-4"
           >
-            {selectedScope === "__all__" && profile?.barbershops && profile.barbershops.length > 0 && (
-              <FormField
-                control={createServiceForm.control}
-                name="barbershop_id"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Filial <span className="text-destructive">*</span></FormLabel>
-                    <Select value={field.value || ""} onValueChange={field.onChange} required>
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Selecione a filial" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {profile.barbershops.map((b) => (
-                          <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            )}
+            {selectedScope === "__all__" &&
+              profile?.barbershops &&
+              profile.barbershops.length > 0 && (
+                <FormField
+                  control={createServiceForm.control}
+                  name="barbershop_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Filial <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <Select
+                        value={field.value || ""}
+                        onValueChange={field.onChange}
+                        required
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Selecione a filial" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {profile.barbershops.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
             <FormField
               control={createServiceForm.control}
               name="name"

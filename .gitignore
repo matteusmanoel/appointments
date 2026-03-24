@@ -18,6 +18,8 @@ bun.lockb
 
 # Env files (mantém apenas templates manuais)
 .env
+.env.prod
+.env.staging
 .env.*.local
 .env.local
 .env.development
