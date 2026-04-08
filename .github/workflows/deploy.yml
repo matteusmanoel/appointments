@@ -68,7 +68,6 @@ jobs:
             --s3-bucket "${ARTIFACT_BUCKET}" \
             --s3-key "api/latest.zip" \
             --region ${{ env.AWS_REGION }}
-        if: ${{ secrets.ARTIFACT_BUCKET != '' && secrets.DATABASE_URL != '' && secrets.JWT_SECRET != '' }}
 
   deploy-static:
     name: Deploy static
@@ -107,4 +106,3 @@ jobs:
             aws s3 sync dist-docs/docs "s3://${STATIC_BUCKET}/docs" --delete --region ${{ env.AWS_REGION }}
           fi
           aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*" --region ${{ env.AWS_REGION }}
-        if: ${{ secrets.AWS_ROLE_ARN != '' }}
