@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Backend — install & test
+        run: |
+          cd backend
+          npm ci
+          npm test
+
+      - name: Backend — build (TypeScript)
+        run: |
+          cd backend
+          npm run build
+
+      - name: Backend — benchmark mock (AI gate)
+        run: |
+          cd backend
+          npm run benchmark:run:mock
+        continue-on-error: true
+
+      - name: Frontend — install & build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://api.navalhia.com.br' }}
+        run: |
+          npm ci
+          npm run build

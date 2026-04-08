@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { publicApi } from "@/lib/api";
 import { getTimeSlotsForDay } from "@/lib/slots";
-import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
+import { formatPhoneBR, formatPhoneDisplay, parsePhoneBR } from "@/lib/input-masks";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
   Tooltip,
@@ -284,7 +284,7 @@ export default function PublicBooking() {
     const barber = selectedBarber?.name ?? "Não tenho preferência";
     const dateLabel = format(selectedDate, "dd/MM/yyyy", { locale: ptBR });
     const weekday = format(selectedDate, "EEEE", { locale: ptBR });
-    const phoneLabel = clientPhone ? formatPhoneBR(clientPhone) : "—";
+    const phoneLabel = clientPhone ? formatPhoneDisplay(clientPhone) : "—";
     const nameLabel = clientName?.trim() ? clientName.trim() : "—";
 
     return [

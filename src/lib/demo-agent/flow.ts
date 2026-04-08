@@ -28,8 +28,10 @@ import {
 import * as tools from "./tools";
 import { DEFAULT_DEMO_CATALOG } from "./catalog";
 
-const OPENING_MESSAGE =
-  "Salve! 😄 Bora deixar na régua? Quer ver os serviços ou já quer agendar? ✂️";
+function buildDemoOpeningMessage(barbershopName: string): string {
+  const n = barbershopName.trim() || "barbearia";
+  return `Olá! Bem-vindo à ${n}!\n\nQuer ver os serviços disponíveis ou já prefere agendar um horário?`;
+}
 
 const MAX_TURNS = 20;
 const MAX_MESSAGE_LENGTH = 400;
@@ -214,7 +216,7 @@ export function runDemoAgent(
   // --- Greeting ---
   if (isGreeting(trimmed)) {
     return {
-      message: OPENING_MESSAGE,
+      message: buildDemoOpeningMessage(catalog.barbershopName),
       suggestions: ["Ver serviços", "Quero agendar"],
       trace: [],
       state: nextState,

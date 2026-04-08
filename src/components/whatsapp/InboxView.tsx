@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   Bot,
+  Brain,
   Check,
   CheckCheck,
   ChevronDown,
@@ -20,9 +21,12 @@ import {
   RefreshCw,
   Send,
   Search,
+  Scissors,
   Star,
   User,
   UserRound,
+  Trash2,
+  Trash2Icon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,7 +59,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { clientsApi, whatsappApi } from "@/lib/api";
+import { clientsApi, whatsappApi, type ClientMemory } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
@@ -63,6 +67,86 @@ import { IncidentReportModal, mergeIncidentPatch } from "./IncidentReportModal";
 
 function normalizeDigits(v: string): string {
   return (v || "").replace(/\D/g, "");
+}
+
+// Small collapsible panel showing AI memory for the selected conversation's client
+function ClientMemoryPanel({ phone }: { phone: string }) {
+  const { data: memory, isLoading } = useQuery({
+    queryKey: ["inbox-client-memory", phone],
+    queryFn: () => clientsApi.getMemoryByPhone(phone),
+    staleTime: 2 * 60 * 1000,
+    retry: false,
+  });
+
+  if (isLoading) return null;
+  if (!memory) return null;
+
+  const services = (memory.preferred_services ?? []) as string[];
+  const hasData =
+    services.length > 0 ||
+    memory.preferred_barber_name ||
+    memory.no_show_count > 0 ||
+    memory.communication_style !== "unknown" ||
+    memory.notes_safe;
+
+  if (!hasData) return null;
+
+  const styleLabels: Record<string, string> = {
+    formal: "Formal",
+    informal: "Informal",
+    direct: "Direto",
+    chatty: "Conversador",
+    unknown: "Desconhecido",
+  };
+
+  return (
+    <div className="rounded-lg border border-border/70 bg-background/70 p-3 space-y-2">
+      <div className="flex items-center gap-1.5">
+        <Brain className="h-3.5 w-3.5 text-primary" />
+        <p className="text-xs font-semibold text-muted-foreground">
+          Memória da IA
+        </p>
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          {Math.round(memory.overall_confidence * 100)}% conf.
+        </span>
+      </div>
+      {services.length > 0 && (
+        <div className="flex items-start gap-1">
+          <Scissors className="h-3 w-3 mt-0.5 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">{services.join(", ")}</p>
+        </div>
+      )}
+      {memory.preferred_barber_name && (
+        <div className="flex items-start gap-1">
+          <User className="h-3 w-3 mt-0.5 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">
+            Barbeiro: {memory.preferred_barber_name}
+          </p>
+        </div>
+      )}
+      {memory.communication_style !== "unknown" && (
+        <div className="flex items-start gap-1">
+          <MessageCircle className="h-3 w-3 mt-0.5 text-muted-foreground shrink-0" />
+          <p className="text-xs text-muted-foreground">
+            Tom:{" "}
+            {styleLabels[memory.communication_style] ??
+              memory.communication_style}
+          </p>
+        </div>
+      )}
+      {memory.no_show_count > 0 && (
+        <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          {memory.no_show_count} no-show{memory.no_show_count > 1 ? "s" : ""}
+        </div>
+      )}
+      {memory.notes_safe && (
+        <p className="text-xs text-muted-foreground italic border-t border-border/50 pt-2">
+          {memory.notes_safe}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function safeParseJson<T>(value: string | null): T | null {
@@ -76,7 +160,7 @@ function safeParseJson<T>(value: string | null): T | null {
 
 function getBarbershopStorageKey(suffix: string): string {
   const stored = safeParseJson<{ barbershop_id?: string }>(
-    localStorage.getItem("profile")
+    localStorage.getItem("profile"),
   );
   const bid = stored?.barbershop_id || "default";
   return `navalhia_wa_${suffix}_${bid}_v1`;
@@ -109,7 +193,7 @@ function highlightText(text: string, query: string): React.ReactNode {
         className="rounded bg-yellow-200/70 px-0.5 text-foreground dark:bg-yellow-500/30"
       >
         {text.slice(start, end)}
-      </mark>
+      </mark>,
     );
     lastIndex = end;
     if (re.lastIndex === match.index) re.lastIndex++; // safety
@@ -118,7 +202,10 @@ function highlightText(text: string, query: string): React.ReactNode {
   return <>{parts}</>;
 }
 
-function MessageStatusIcon(props: { deliveryStatus?: string | null; isPending?: boolean }) {
+function MessageStatusIcon(props: {
+  deliveryStatus?: string | null;
+  isPending?: boolean;
+}) {
   if (props.isPending) {
     return <Clock className="h-3.5 w-3.5 opacity-80" />;
   }
@@ -137,15 +224,12 @@ export type InboxViewProps = {
   whatsappConnected: boolean;
 };
 
-export function InboxView({
-  isActive,
-  whatsappConnected,
-}: InboxViewProps) {
+export function InboxView({ isActive, whatsappConnected }: InboxViewProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "ai" | "manual">(
-    "all"
+    "all",
   );
   const [selectedConversationId, setSelectedConversationId] = useState<
     string | null
@@ -165,7 +249,8 @@ export function InboxView({
   const [showInbox, setShowInbox] = useState(true);
   const [showDetails, setShowDetails] = useState(true);
   const [showToolMessages, setShowToolMessages] = useState(false);
-  const [incidentReportConversationId, setIncidentReportConversationId] = useState<string | null>(null);
+  const [incidentReportConversationId, setIncidentReportConversationId] =
+    useState<string | null>(null);
 
   const whatsappConfigQuery = useQuery({
     queryKey: ["integrations", "whatsapp"],
@@ -174,7 +259,9 @@ export function InboxView({
     staleTime: 30_000,
   });
   const aiPausedUntil = whatsappConfigQuery.data?.ai_paused_until;
-  const isGlobalAiPaused = Boolean(aiPausedUntil && new Date(aiPausedUntil) > new Date());
+  const isGlobalAiPaused = Boolean(
+    aiPausedUntil && new Date(aiPausedUntil) > new Date(),
+  );
 
   const conversationsQuery = useQuery({
     queryKey: [
@@ -198,21 +285,31 @@ export function InboxView({
 
   useEffect(() => {
     const pins = safeParseJson<string[]>(
-      localStorage.getItem(getBarbershopStorageKey("pins"))
+      localStorage.getItem(getBarbershopStorageKey("pins")),
     );
-    setPinnedIds(Array.isArray(pins) ? pins.filter((x) => typeof x === "string") : []);
+    setPinnedIds(
+      Array.isArray(pins) ? pins.filter((x) => typeof x === "string") : [],
+    );
     const seen = safeParseJson<Record<string, string>>(
-      localStorage.getItem(getBarbershopStorageKey("seen"))
+      localStorage.getItem(getBarbershopStorageKey("seen")),
     );
-    setSeenMap(seen && typeof seen === "object" && !Array.isArray(seen) ? seen : {});
+    setSeenMap(
+      seen && typeof seen === "object" && !Array.isArray(seen) ? seen : {},
+    );
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(getBarbershopStorageKey("pins"), JSON.stringify(pinnedIds));
+    localStorage.setItem(
+      getBarbershopStorageKey("pins"),
+      JSON.stringify(pinnedIds),
+    );
   }, [pinnedIds]);
 
   useEffect(() => {
-    localStorage.setItem(getBarbershopStorageKey("seen"), JSON.stringify(seenMap));
+    localStorage.setItem(
+      getBarbershopStorageKey("seen"),
+      JSON.stringify(seenMap),
+    );
   }, [seenMap]);
 
   const sortedConversations = useMemo(() => {
@@ -229,19 +326,23 @@ export function InboxView({
 
   const selectedConversation = useMemo(
     () => conversations.find((c) => c.id === selectedConversationId) ?? null,
-    [conversations, selectedConversationId]
+    [conversations, selectedConversationId],
   );
 
   useEffect(() => {
     if (!selectedConversationId && conversations.length > 0) {
-      setSelectedConversationId(sortedConversations[0]?.id ?? conversations[0].id);
+      setSelectedConversationId(
+        sortedConversations[0]?.id ?? conversations[0].id,
+      );
     }
     if (
       selectedConversationId &&
       conversations.length > 0 &&
       !conversations.some((c) => c.id === selectedConversationId)
     ) {
-      setSelectedConversationId(sortedConversations[0]?.id ?? conversations[0].id);
+      setSelectedConversationId(
+        sortedConversations[0]?.id ?? conversations[0].id,
+      );
     }
   }, [conversations, sortedConversations, selectedConversationId]);
 
@@ -269,9 +370,16 @@ export function InboxView({
   });
 
   const incidentMessagesQuery = useQuery({
-    queryKey: ["integrations", "whatsapp", "incident-messages", incidentReportConversationId],
+    queryKey: [
+      "integrations",
+      "whatsapp",
+      "incident-messages",
+      incidentReportConversationId,
+    ],
     queryFn: () =>
-      whatsappApi.getConversationMessages(incidentReportConversationId!, { limit: 60 }),
+      whatsappApi.getConversationMessages(incidentReportConversationId!, {
+        limit: 60,
+      }),
     enabled: isActive && !!incidentReportConversationId,
   });
   const incidentAiSettingsQuery = useQuery({
@@ -281,22 +389,32 @@ export function InboxView({
   });
 
   const updateAiSettingsMutation = useMutation({
-    mutationFn: (body: { agent_profile?: Record<string, unknown>; additional_instructions?: string | null }) =>
-      whatsappApi.updateAiSettings(body),
+    mutationFn: (body: {
+      agent_profile?: Record<string, unknown>;
+      additional_instructions?: string | null;
+    }) => whatsappApi.updateAiSettings(body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp", "ai-settings"] });
+      queryClient.invalidateQueries({
+        queryKey: ["integrations", "whatsapp", "ai-settings"],
+      });
       toastSuccess("Rascunho aplicado.");
     },
-    onError: (e) => toastError(e instanceof Error ? e.message : "Falha ao aplicar"),
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Falha ao aplicar"),
   });
   const publishAiSettingsMutation = useMutation({
     mutationFn: () => whatsappApi.publishAiSettings(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp", "ai-settings"] });
-      queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp", "ai-versions"] });
+      queryClient.invalidateQueries({
+        queryKey: ["integrations", "whatsapp", "ai-settings"],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["integrations", "whatsapp", "ai-versions"],
+      });
       toastSuccess("Ajustes publicados.");
     },
-    onError: (e) => toastError(e instanceof Error ? e.message : "Falha ao publicar"),
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Falha ao publicar"),
   });
 
   const sendMutation = useMutation({
@@ -320,10 +438,24 @@ export function InboxView({
       setMessageInput("");
 
       await queryClient.cancelQueries({
-        queryKey: ["integrations", "whatsapp", "conversations", conversationId, "messages"],
+        queryKey: [
+          "integrations",
+          "whatsapp",
+          "conversations",
+          conversationId,
+          "messages",
+        ],
       });
 
-      const previous = queryClient.getQueryData<{ messages: Array<{ id: string; role: "user" | "assistant" | "tool"; content: string; created_at: string; tool_name?: string | null }> }>([
+      const previous = queryClient.getQueryData<{
+        messages: Array<{
+          id: string;
+          role: "user" | "assistant" | "tool";
+          content: string;
+          created_at: string;
+          tool_name?: string | null;
+        }>;
+      }>([
         "integrations",
         "whatsapp",
         "conversations",
@@ -344,8 +476,14 @@ export function InboxView({
         },
       ];
       queryClient.setQueryData(
-        ["integrations", "whatsapp", "conversations", conversationId, "messages"],
-        { messages: nextMessages }
+        [
+          "integrations",
+          "whatsapp",
+          "conversations",
+          conversationId,
+          "messages",
+        ],
+        { messages: nextMessages },
       );
 
       // mark as seen immediately
@@ -362,19 +500,44 @@ export function InboxView({
     onSuccess: (data, _text, ctx) => {
       if (ctx?.conversationId && ctx?.tempId && data?.message_id) {
         queryClient.setQueryData(
-          ["integrations", "whatsapp", "conversations", ctx.conversationId, "messages"],
-          (old: { messages: Array<{ id: string; role: string; content: string; created_at: string; delivery_status?: string }> } | undefined) => {
+          [
+            "integrations",
+            "whatsapp",
+            "conversations",
+            ctx.conversationId,
+            "messages",
+          ],
+          (
+            old:
+              | {
+                  messages: Array<{
+                    id: string;
+                    role: string;
+                    content: string;
+                    created_at: string;
+                    delivery_status?: string;
+                  }>;
+                }
+              | undefined,
+          ) => {
             if (!old?.messages) return old;
             return {
               messages: old.messages.map((m) =>
                 m.id === ctx.tempId
-                  ? { ...m, id: data.message_id, delivery_status: "sent" as const }
-                  : m
+                  ? {
+                      ...m,
+                      id: data.message_id,
+                      delivery_status: "sent" as const,
+                    }
+                  : m,
               ),
             };
-          }
+          },
         );
-        messageRefs.current.set(data.message_id, messageRefs.current.get(ctx.tempId) ?? null);
+        messageRefs.current.set(
+          data.message_id,
+          messageRefs.current.get(ctx.tempId) ?? null,
+        );
         messageRefs.current.delete(ctx.tempId);
       }
       toastSuccess("Mensagem enviada.");
@@ -383,12 +546,24 @@ export function InboxView({
       if (ctx?.conversationId) {
         if (ctx.previous) {
           queryClient.setQueryData(
-            ["integrations", "whatsapp", "conversations", ctx.conversationId, "messages"],
-            ctx.previous
+            [
+              "integrations",
+              "whatsapp",
+              "conversations",
+              ctx.conversationId,
+              "messages",
+            ],
+            ctx.previous,
           );
         } else {
           queryClient.invalidateQueries({
-            queryKey: ["integrations", "whatsapp", "conversations", ctx.conversationId, "messages"],
+            queryKey: [
+              "integrations",
+              "whatsapp",
+              "conversations",
+              ctx.conversationId,
+              "messages",
+            ],
           });
         }
       }
@@ -413,17 +588,26 @@ export function InboxView({
   });
 
   const syncConversationMutation = useMutation({
-    mutationFn: (conversationId: string) => whatsappApi.syncConversationMessages(conversationId),
+    mutationFn: (conversationId: string) =>
+      whatsappApi.syncConversationMessages(conversationId),
     onSuccess: (data, conversationId) => {
-      if (data.inserted > 0) toastSuccess(`${data.inserted} mensagem(ns) sincronizada(s).`);
+      if (data.inserted > 0)
+        toastSuccess(`${data.inserted} mensagem(ns) sincronizada(s).`);
       queryClient.invalidateQueries({
-        queryKey: ["integrations", "whatsapp", "conversations", conversationId, "messages"],
+        queryKey: [
+          "integrations",
+          "whatsapp",
+          "conversations",
+          conversationId,
+          "messages",
+        ],
       });
       queryClient.invalidateQueries({
         queryKey: ["integrations", "whatsapp", "conversations"],
       });
     },
-    onError: (e) => toastError(e instanceof Error ? e.message : "Falha ao sincronizar"),
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Falha ao sincronizar"),
   });
 
   const lastSyncByConversationRef = useRef<Record<string, number>>({});
@@ -584,8 +768,10 @@ export function InboxView({
   const messages = messagesQuery.data?.messages ?? [];
   const displayedMessages = useMemo(
     () =>
-      showToolMessages ? messages : messages.filter((m) => m.role === "user" || m.role === "assistant"),
-    [messages, showToolMessages]
+      showToolMessages
+        ? messages
+        : messages.filter((m) => m.role === "user" || m.role === "assistant"),
+    [messages, showToolMessages],
   );
   const lastMessageCreatedAt = messages.length
     ? messages[messages.length - 1]!.created_at
@@ -597,7 +783,8 @@ export function InboxView({
     if (!lastMessageCreatedAt) return;
     setSeenMap((prev) => {
       const prevSeen = prev[selectedConversationId];
-      if (!prevSeen) return { ...prev, [selectedConversationId]: lastMessageCreatedAt };
+      if (!prevSeen)
+        return { ...prev, [selectedConversationId]: lastMessageCreatedAt };
       const prevT = new Date(prevSeen).getTime();
       const nextT = new Date(lastMessageCreatedAt).getTime();
       if (!Number.isFinite(prevT) || nextT > prevT) {
@@ -636,7 +823,7 @@ export function InboxView({
       const el = messageRefs.current.get(id);
       if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     },
-    [matchMessageIds]
+    [matchMessageIds],
   );
 
   const goNextMatch = useCallback(() => {
@@ -667,7 +854,8 @@ export function InboxView({
   useEffect(() => {
     if (!selectedConversationId) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      const isNewConversation = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k";
+      const isNewConversation =
+        (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k";
       if (isNewConversation) {
         e.preventDefault();
         setNewConversationOpen(true);
@@ -715,9 +903,9 @@ export function InboxView({
 
   const gridColsClass =
     showInbox && showDetails
-      ? "lg:grid-cols-[360px_minmax(0,1fr)_360px]"
+      ? "lg:grid-cols-[minmax(380px,26vw)_minmax(0,1fr)_360px]"
       : showInbox && !showDetails
-        ? "lg:grid-cols-[360px_minmax(0,1fr)]"
+        ? "lg:grid-cols-[minmax(380px,26vw)_minmax(0,1fr)]"
         : !showInbox && showDetails
           ? "lg:grid-cols-[minmax(0,1fr)_360px]"
           : "lg:grid-cols-[minmax(0,1fr)]";
@@ -751,7 +939,9 @@ export function InboxView({
                     <PanelLeft className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{showInbox ? "Ocultar lista" : "Mostrar lista"}</TooltipContent>
+                <TooltipContent>
+                  {showInbox ? "Ocultar lista" : "Mostrar lista"}
+                </TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -761,12 +951,16 @@ export function InboxView({
                     variant={showDetails ? "default" : "ghost"}
                     className="h-7 w-7"
                     onClick={() => setShowDetails((v) => !v)}
-                    aria-label={showDetails ? "Ocultar detalhes" : "Mostrar detalhes"}
+                    aria-label={
+                      showDetails ? "Ocultar detalhes" : "Mostrar detalhes"
+                    }
                   >
                     <PanelRight className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>{showDetails ? "Ocultar painel" : "Mostrar painel"}</TooltipContent>
+                <TooltipContent>
+                  {showDetails ? "Ocultar painel" : "Mostrar painel"}
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           </div>
@@ -792,7 +986,10 @@ export function InboxView({
                   aria-label="Atualizar lista"
                 >
                   <RefreshCw
-                    className={cn("h-4 w-4", conversationsQuery.isRefetching && "animate-spin")}
+                    className={cn(
+                      "h-4 w-4",
+                      conversationsQuery.isRefetching && "animate-spin",
+                    )}
                   />
                 </Button>
               </TooltipTrigger>
@@ -836,7 +1033,12 @@ export function InboxView({
           </TooltipProvider>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Mais opções">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="Mais opções"
+              >
                 <MoreVertical className="h-4 w-4 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
@@ -845,133 +1047,152 @@ export function InboxView({
                 <Link to="/app/integracoes">Configurar conexão</Link>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowInbox((v) => !v)}>
-                {showInbox ? "Ocultar lista de conversas" : "Mostrar lista de conversas"}
+                {showInbox
+                  ? "Ocultar lista de conversas"
+                  : "Mostrar lista de conversas"}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowDetails((v) => !v)}>
-                {showDetails ? "Ocultar painel de detalhes" : "Mostrar painel de detalhes"}
+                {showDetails
+                  ? "Ocultar painel de detalhes"
+                  : "Mostrar painel de detalhes"}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
-      <div className={cn("grid grid-cols-1 gap-3 flex-1 min-h-0 overflow-hidden", gridColsClass)}>
+      <div
+        className={cn(
+          "grid grid-cols-1 gap-3 flex-1 min-h-0 overflow-hidden",
+          gridColsClass,
+        )}
+      >
         {showInbox && (
-        <div className="rounded-xl border border-border/70 bg-card flex flex-col min-h-0 shadow-sm overflow-hidden">
-          <div className="p-3 border-b border-border/70 space-y-2">
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Buscar por nome ou telefone..."
-              className="h-9"
-            />
-            <div className="flex items-center gap-1 rounded-md bg-muted/40 p-1">
-              {[
-                { id: "all", label: "Todas" },
-                { id: "ai", label: "IA" },
-                { id: "manual", label: "Manual" },
-              ].map((item) => (
-                <Button
-                  key={item.id}
-                  type="button"
-                  size="sm"
-                  variant={statusFilter === item.id ? "default" : "ghost"}
-                  className="h-7 flex-1"
-                  onClick={() =>
-                    setStatusFilter(item.id as "all" | "ai" | "manual")
-                  }
-                >
-                  {item.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {sortedConversations.map((c) => {
-                const isPinned = pinnedIds.includes(c.id);
-                const seenAt = seenMap[c.id];
-                const lastAt = c.last_message?.created_at ?? c.last_message_at ?? null;
-                const unread =
-                  !!lastAt &&
-                  (!seenAt ||
-                    new Date(lastAt).getTime() >
-                      new Date(seenAt).getTime());
-                return (
-                  <div
-                    key={c.id}
-                    className={cn(
-                      "group relative w-full rounded-lg border transition-all",
-                      selectedConversationId === c.id
-                        ? "bg-primary/10 border-primary/50 shadow-sm"
-                        : "bg-background border-border/70 hover:bg-muted/40 hover:border-border"
-                    )}
+          <div className="rounded-xl border border-border/70 bg-card flex flex-col min-h-0 shadow-sm overflow-hidden">
+            <div className="p-3 border-b border-border/70 space-y-2">
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por nome ou telefone..."
+                className="h-9"
+              />
+              <div className="flex items-center gap-1 rounded-md bg-muted/40 p-1">
+                {[
+                  { id: "all", label: "Todas" },
+                  { id: "ai", label: "IA" },
+                  { id: "manual", label: "Manual" },
+                ].map((item) => (
+                  <Button
+                    key={item.id}
+                    type="button"
+                    size="sm"
+                    variant={statusFilter === item.id ? "default" : "ghost"}
+                    className="h-7 flex-1"
+                    onClick={() =>
+                      setStatusFilter(item.id as "all" | "ai" | "manual")
+                    }
                   >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedConversationId(c.id)}
-                      className="w-full text-left px-3 py-2"
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <ScrollArea className="flex-1 min-h-0">
+              <div className="px-1.5 py-2 space-y-1.5">
+                {sortedConversations.map((c) => {
+                  const isPinned = pinnedIds.includes(c.id);
+                  const seenAt = seenMap[c.id];
+                  const lastAt =
+                    c.last_message?.created_at ?? c.last_message_at ?? null;
+                  const unread =
+                    !!lastAt &&
+                    (!seenAt ||
+                      new Date(lastAt).getTime() > new Date(seenAt).getTime());
+                  return (
+                    <div
+                      key={c.id}
+                      className={cn(
+                        "group relative w-full rounded-lg border transition-all",
+                        selectedConversationId === c.id
+                          ? "bg-primary/10 border-primary/50 shadow-sm"
+                          : "bg-background border-border/70 hover:bg-muted/40 hover:border-border",
+                      )}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <span className="font-medium text-sm truncate block">
-                            {c.client_name ||
-                              c.client_phone ||
-                              c.external_thread_id}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground truncate block">
-                            {c.client_phone || c.external_thread_id}
-                          </span>
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <div className="flex items-center gap-1">
-                            {unread && (
-                              <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                            )}
-                            {c.paused_until &&
-                            new Date(c.paused_until).getTime() > Date.now() ? (
-                              <Badge variant="secondary">Manual</Badge>
-                            ) : (
-                              <Badge variant="outline">IA</Badge>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedConversationId(c.id)}
+                        className="w-full text-left px-5 py-2.5 min-w-0"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="font-medium text-sm truncate block">
+                              {c.client_name ||
+                                c.client_phone ||
+                                c.external_thread_id}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground truncate block">
+                              {c.client_phone || c.external_thread_id}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-1">
+                              {unread && (
+                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                              )}
+                              {c.paused_until &&
+                              new Date(c.paused_until).getTime() >
+                                Date.now() ? (
+                                <Badge variant="secondary">Manual</Badge>
+                              ) : (
+                                <Badge variant="outline">IA</Badge>
+                              )}
+                            </div>
+                            {c.last_message_at && (
+                              <span className="text-[10px] text-muted-foreground">
+                                {formatTimeHm(c.last_message_at)}
+                              </span>
                             )}
                           </div>
-                          {c.last_message_at && (
-                            <span className="text-[10px] text-muted-foreground">
-                              {formatTimeHm(c.last_message_at)}
-                            </span>
-                          )}
                         </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground line-clamp-2 mt-1.5">
-                        {c.last_message?.content || "Sem mensagens"}
-                      </p>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={isPinned ? "Desafixar conversa" : "Fixar conversa"}
-                      className={cn(
-                        "absolute right-2 top-2 hidden group-hover:inline-flex items-center justify-center rounded-md border bg-background/80 p-1 text-muted-foreground hover:text-foreground",
-                        isPinned && "inline-flex text-primary border-primary/30"
-                      )}
-                      onClick={() => {
-                        setPinnedIds((prev) => {
-                          if (prev.includes(c.id)) return prev.filter((x) => x !== c.id);
-                          return [c.id, ...prev].slice(0, 50);
-                        });
-                      }}
-                    >
-                      <Star className={cn("h-3.5 w-3.5", isPinned && "fill-primary")} />
-                    </button>
+                        <p className="text-xs text-muted-foreground line-clamp-2 mt-1.5">
+                          {c.last_message?.content || "Sem mensagens"}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={
+                          isPinned ? "Desafixar conversa" : "Fixar conversa"
+                        }
+                        className={cn(
+                          "absolute right-2 top-2 hidden group-hover:inline-flex items-center justify-center rounded-md border bg-background/80 p-1 text-muted-foreground hover:text-foreground",
+                          isPinned &&
+                            "inline-flex text-primary border-primary/30",
+                        )}
+                        onClick={() => {
+                          setPinnedIds((prev) => {
+                            if (prev.includes(c.id))
+                              return prev.filter((x) => x !== c.id);
+                            return [c.id, ...prev].slice(0, 50);
+                          });
+                        }}
+                      >
+                        <Star
+                          className={cn(
+                            "h-3.5 w-3.5",
+                            isPinned && "fill-primary",
+                          )}
+                        />
+                      </button>
+                    </div>
+                  );
+                })}
+                {conversations.length === 0 && (
+                  <div className="p-3 text-sm text-muted-foreground">
+                    Nenhuma conversa encontrada.
                   </div>
-                );
-              })}
-              {conversations.length === 0 && (
-                <div className="p-3 text-sm text-muted-foreground">
-                  Nenhuma conversa encontrada.
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
         )}
 
         <div className="rounded-xl border border-border/70 bg-card flex flex-col min-h-0 shadow-sm overflow-hidden">
@@ -991,7 +1212,11 @@ export function InboxView({
               </p>
               {selectedIsManual && selectedPausedUntil && (
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Manual até <span className="font-medium">{formatTimeHm(selectedPausedUntil)}</span> (auto-retoma)
+                  Manual até{" "}
+                  <span className="font-medium">
+                    {formatTimeHm(selectedPausedUntil)}
+                  </span>{" "}
+                  (auto-retoma)
                 </p>
               )}
             </div>
@@ -1015,11 +1240,19 @@ export function InboxView({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => syncConversationMutation.mutate(selectedConversationId)}
+                        onClick={() =>
+                          syncConversationMutation.mutate(
+                            selectedConversationId,
+                          )
+                        }
                         disabled={syncConversationMutation.isPending}
                       >
                         <RefreshCw
-                          className={cn("h-4 w-4 mr-1", syncConversationMutation.isPending && "animate-spin")}
+                          className={cn(
+                            "h-4 w-4 mr-1",
+                            syncConversationMutation.isPending &&
+                              "animate-spin",
+                          )}
                         />
                         Sync
                       </Button>
@@ -1055,7 +1288,7 @@ export function InboxView({
                     disabled={assumeConversationMutation.isPending}
                   >
                     <PauseCircle className="h-4 w-4 mr-1" />
-                    Assumir conversa
+                    Assumir
                   </Button>
                 )
               )}
@@ -1068,27 +1301,35 @@ export function InboxView({
                     onClick={() => {
                       const messages = messagesQuery.data?.messages ?? [];
                       const transcript = messages
-                        .map((m) =>
-                          `${m.role === "user" ? "Cliente" : "Atendente"}: ${m.content}`
+                        .map(
+                          (m) =>
+                            `${m.role === "user" ? "Cliente" : "Atendente"}: ${m.content}`,
                         )
                         .join("\n");
                       const intro =
                         "Conversa exportada do Atendimento WhatsApp. Analise e sugira ajustes no agente.\n\n---\n\n";
                       sessionStorage.setItem(
                         "navalhia_diagnostic_transcript",
-                        intro + transcript
+                        intro + transcript,
                       );
-                      navigate("/app/integracoes?step=preview&openDiagnostic=1");
+                      navigate(
+                        "/app/integracoes?step=preview&openDiagnostic=1",
+                      );
                     }}
                   >
-                    <FileText className="h-4 w-4 mr-1" />
-                    Enviar para diagnóstico
+                    <Search className="h-4 w-4 mr-1" />
+                    Diagnóstico
                   </Button>
                 )}
               {selectedConversation && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Abrir menu da conversa">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      aria-label="Abrir menu da conversa"
+                    >
                       <MoreVertical className="h-4 w-4 text-muted-foreground" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -1096,10 +1337,14 @@ export function InboxView({
                     <DropdownMenuItem
                       onClick={() => setShowToolMessages((v) => !v)}
                     >
-                      {showToolMessages ? "Ocultar mensagens técnicas" : "Mostrar mensagens técnicas"}
+                      {showToolMessages
+                        ? "Ocultar mensagens técnicas"
+                        : "Mostrar mensagens técnicas"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => setIncidentReportConversationId(selectedConversationId)}
+                      onClick={() =>
+                        setIncidentReportConversationId(selectedConversationId)
+                      }
                     >
                       <AlertTriangle className="h-4 w-4 mr-1" />
                       Reportar problema
@@ -1108,6 +1353,7 @@ export function InboxView({
                       onClick={() => setDeleteConfirmOpen(true)}
                       className="text-destructive focus:text-destructive"
                     >
+                      <Trash2Icon className="h-4 w-4 mr-1" />
                       Deletar conversa
                     </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -1137,7 +1383,9 @@ export function InboxView({
                   <div className="px-3 pb-3 space-y-2">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
-                        <label className="text-xs text-muted-foreground">Nome</label>
+                        <label className="text-xs text-muted-foreground">
+                          Nome
+                        </label>
                         <Input
                           value={contactName}
                           onChange={(e) => setContactName(e.target.value)}
@@ -1146,7 +1394,9 @@ export function InboxView({
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-muted-foreground">Telefone</label>
+                        <label className="text-xs text-muted-foreground">
+                          Telefone
+                        </label>
                         <Input
                           value={contactPhone}
                           onChange={(e) => setContactPhone(e.target.value)}
@@ -1156,7 +1406,9 @@ export function InboxView({
                       </div>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground">Observações</label>
+                      <label className="text-xs text-muted-foreground">
+                        Observações
+                      </label>
                       <Textarea
                         value={contactNotes}
                         onChange={(e) => setContactNotes(e.target.value)}
@@ -1170,7 +1422,9 @@ export function InboxView({
                       onClick={handleSaveContact}
                       disabled={patchContactMutation.isPending}
                     >
-                      {patchContactMutation.isPending ? "Salvando…" : "Salvar contato"}
+                      {patchContactMutation.isPending
+                        ? "Salvando…"
+                        : "Salvar contato"}
                     </Button>
                   </div>
                 </CollapsibleContent>
@@ -1193,20 +1447,39 @@ export function InboxView({
               <Badge variant="outline" className="font-normal">
                 {findQuery.trim()
                   ? `${matchMessageIds.length} resultado(s)${
-                      matchMessageIds.length > 0 ? ` • ${activeMatchIdx + 1}/${matchMessageIds.length}` : ""
+                      matchMessageIds.length > 0
+                        ? ` • ${activeMatchIdx + 1}/${matchMessageIds.length}`
+                        : ""
                     }`
                   : "Digite para buscar"}
               </Badge>
               <div className="flex items-center gap-1">
-                <Button type="button" size="sm" variant="ghost" onClick={goPrevMatch} disabled={matchMessageIds.length === 0}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={goPrevMatch}
+                  disabled={matchMessageIds.length === 0}
+                >
                   Anterior
                 </Button>
-                <Button type="button" size="sm" variant="ghost" onClick={goNextMatch} disabled={matchMessageIds.length === 0}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={goNextMatch}
+                  disabled={matchMessageIds.length === 0}
+                >
                   Próximo
                 </Button>
               </div>
               <div className="flex-1" />
-              <Button type="button" size="sm" variant="ghost" onClick={() => setFindOpen(false)}>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setFindOpen(false)}
+              >
                 Fechar
               </Button>
             </div>
@@ -1217,53 +1490,58 @@ export function InboxView({
               {displayedMessages.map((m) => {
                 const isMatch =
                   !!findQuery.trim() &&
-                  (m.content || "").toLowerCase().includes(findQuery.trim().toLowerCase());
+                  (m.content || "")
+                    .toLowerCase()
+                    .includes(findQuery.trim().toLowerCase());
                 const isActive = matchMessageIds[activeMatchIdx] === m.id;
                 const isPending = m.id.startsWith("tmp-");
                 return (
-                <div
-                  key={m.id}
-                  ref={(el) => {
-                    messageRefs.current.set(m.id, el);
-                  }}
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-sm max-w-[86%] whitespace-pre-wrap",
-                    m.role === "user"
-                      ? "bg-background border"
-                      : "ml-auto bg-primary text-primary-foreground"
-                    ,
-                    isMatch && "ring-1 ring-yellow-500/40",
-                    isActive && "ring-2 ring-yellow-500/80"
-                  )}
-                >
-                  <div className="mb-1 flex items-center gap-1.5 text-[10px] opacity-80">
-                    {m.role === "user" ? (
-                      <UserRound className="h-3 w-3" />
-                    ) : (
-                      <Bot className="h-3 w-3" />
+                  <div
+                    key={m.id}
+                    ref={(el) => {
+                      messageRefs.current.set(m.id, el);
+                    }}
+                    className={cn(
+                      "rounded-lg px-3 py-2 text-sm max-w-[72%] whitespace-pre-wrap break-words",
+                      m.role === "user"
+                        ? "bg-background border"
+                        : "ml-auto bg-primary text-primary-foreground",
+                      isMatch && "ring-1 ring-yellow-500/40",
+                      isActive && "ring-2 ring-yellow-500/80",
                     )}
-                    <span>{m.role === "user" ? "Cliente" : "Atendente"}</span>
-                    <span>•</span>
-                    <span>
-                      {new Date(m.created_at).toLocaleTimeString("pt-BR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                    {m.role === "assistant" && (
-                      <>
-                        <span>•</span>
-                        <MessageStatusIcon deliveryStatus={m.delivery_status} isPending={isPending} />
-                      </>
-                    )}
+                  >
+                    <div className="mb-1 flex items-center gap-1.5 text-[10px] opacity-80">
+                      {m.role === "user" ? (
+                        <UserRound className="h-3 w-3" />
+                      ) : (
+                        <Bot className="h-3 w-3" />
+                      )}
+                      <span>{m.role === "user" ? "Cliente" : "Atendente"}</span>
+                      <span>•</span>
+                      <span>
+                        {new Date(m.created_at).toLocaleTimeString("pt-BR", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      {m.role === "assistant" && (
+                        <>
+                          <span>•</span>
+                          <MessageStatusIcon
+                            deliveryStatus={m.delivery_status}
+                            isPending={isPending}
+                          />
+                        </>
+                      )}
+                    </div>
+                    {m.content
+                      ? highlightText(m.content, findQuery)
+                      : m.role === "tool"
+                        ? "[tool]"
+                        : ""}
                   </div>
-                  {m.content
-                    ? highlightText(m.content, findQuery)
-                    : m.role === "tool"
-                    ? "[tool]"
-                    : ""}
-                </div>
-              )})}
+                );
+              })}
               {!selectedConversationId && (
                 <div className="text-sm text-muted-foreground flex items-center gap-2">
                   <MessageCircle className="h-4 w-4" />
@@ -1297,7 +1575,11 @@ export function InboxView({
             <Button
               type="button"
               onClick={() => sendMutation.mutate(messageInput)}
-              disabled={!selectedConversationId || sendMutation.isPending || !messageInput.trim()}
+              disabled={
+                !selectedConversationId ||
+                sendMutation.isPending ||
+                !messageInput.trim()
+              }
               className="h-[52px] w-[52px] p-0 shrink-0"
             >
               <Send className="h-4 w-4" />
@@ -1306,172 +1588,182 @@ export function InboxView({
         </div>
 
         {showDetails && (
-        <div className="hidden lg:flex rounded-xl border border-border/70 bg-card flex-col min-h-0 shadow-sm overflow-hidden">
-          <div className="p-3 border-b border-border/70">
-            <p className="text-sm font-semibold">Detalhes</p>
-            <p className="text-xs text-muted-foreground">
-              Pin, contato e controles do atendimento.
-            </p>
-          </div>
-          {!selectedConversation ? (
-            <div className="p-4 text-sm text-muted-foreground">
-              Selecione uma conversa para ver detalhes.
+          <div className="hidden lg:flex rounded-xl border border-border/70 bg-card flex-col min-h-0 shadow-sm overflow-hidden">
+            <div className="p-3 border-b border-border/70">
+              <p className="text-sm font-semibold">Detalhes</p>
+              <p className="text-xs text-muted-foreground">
+                Pin, contato e controles do atendimento.
+              </p>
             </div>
-          ) : (
-            <ScrollArea className="flex-1">
-              <div className="p-3 space-y-3">
-                <div className="rounded-lg border border-border/70 bg-background/70 p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">
-                        {selectedConversation.client_name ||
-                          selectedConversation.client_phone ||
-                          selectedConversation.external_thread_id}
+            {!selectedConversation ? (
+              <div className="p-4 text-sm text-muted-foreground">
+                Selecione uma conversa para ver detalhes.
+              </div>
+            ) : (
+              <ScrollArea className="flex-1">
+                <div className="p-3 space-y-3">
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {selectedConversation.client_name ||
+                            selectedConversation.client_phone ||
+                            selectedConversation.external_thread_id}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {selectedConversation.client_phone ||
+                            selectedConversation.external_thread_id}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const id = selectedConversation.id;
+                          setPinnedIds((prev) =>
+                            prev.includes(id)
+                              ? prev.filter((x) => x !== id)
+                              : [id, ...prev].slice(0, 50),
+                          );
+                        }}
+                      >
+                        <Star
+                          className={cn(
+                            "h-4 w-4 mr-1",
+                            pinnedIds.includes(selectedConversation.id) &&
+                              "fill-primary text-primary",
+                          )}
+                        />
+                        {pinnedIds.includes(selectedConversation.id)
+                          ? "Fixada"
+                          : "Fixar"}
+                      </Button>
+                    </div>
+                    {selectedIsManual && selectedPausedUntil && (
+                      <p className="text-[11px] text-muted-foreground mt-2">
+                        Manual até{" "}
+                        <span className="font-medium">
+                          {formatTimeHm(selectedPausedUntil)}
+                        </span>{" "}
+                        (auto-retoma)
                       </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {selectedConversation.client_phone ||
-                          selectedConversation.external_thread_id}
-                      </p>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      Contato
+                    </p>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-muted-foreground">
+                        Nome
+                      </label>
+                      <Input
+                        value={contactName}
+                        onChange={(e) => setContactName(e.target.value)}
+                        placeholder="Nome do cliente"
+                        className="h-8"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-muted-foreground">
+                        Telefone
+                      </label>
+                      <Input
+                        value={contactPhone}
+                        onChange={(e) => setContactPhone(e.target.value)}
+                        placeholder="Telefone"
+                        className="h-8"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-muted-foreground">
+                        Observações
+                      </label>
+                      <Textarea
+                        value={contactNotes}
+                        onChange={(e) => setContactNotes(e.target.value)}
+                        placeholder="Notas sobre o cliente"
+                        className="min-h-[92px]"
+                      />
                     </div>
                     <Button
                       type="button"
-                      variant="outline"
                       size="sm"
-                      onClick={() => {
-                        const id = selectedConversation.id;
-                        setPinnedIds((prev) =>
-                          prev.includes(id)
-                            ? prev.filter((x) => x !== id)
-                            : [id, ...prev].slice(0, 50)
-                        );
-                      }}
+                      onClick={handleSaveContact}
+                      disabled={patchContactMutation.isPending}
                     >
-                      <Star
-                        className={cn(
-                          "h-4 w-4 mr-1",
-                          pinnedIds.includes(selectedConversation.id) &&
-                            "fill-primary text-primary"
-                        )}
-                      />
-                      {pinnedIds.includes(selectedConversation.id)
-                        ? "Fixada"
-                        : "Fixar"}
+                      {patchContactMutation.isPending ? "Salvando…" : "Salvar"}
                     </Button>
                   </div>
-                  {selectedIsManual && selectedPausedUntil && (
-                    <p className="text-[11px] text-muted-foreground mt-2">
-                      Manual até{" "}
-                      <span className="font-medium">
-                        {formatTimeHm(selectedPausedUntil)}
-                      </span>{" "}
-                      (auto-retoma)
+
+                  <div className="rounded-lg border border-border/70 bg-background/70 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      Atendimento
                     </p>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedConversation.paused_until &&
+                      new Date(selectedConversation.paused_until).getTime() >
+                        Date.now() ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            resumeConversationMutation.mutate(
+                              selectedConversation.id,
+                            )
+                          }
+                          disabled={resumeConversationMutation.isPending}
+                        >
+                          <PlayCircle className="h-4 w-4 mr-1" />
+                          Retomar IA
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            assumeConversationMutation.mutate(
+                              selectedConversation.id,
+                            )
+                          }
+                          disabled={assumeConversationMutation.isPending}
+                        >
+                          <PauseCircle className="h-4 w-4 mr-1" />
+                          Assumir
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setDeleteConfirmOpen(true)}
+                      >
+                        Deletar
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* AI Memory panel — shown when client phone is known */}
+                  {selectedConversation.client_phone && (
+                    <ClientMemoryPanel
+                      phone={selectedConversation.client_phone}
+                    />
                   )}
                 </div>
-
-                <div className="rounded-lg border border-border/70 bg-background/70 p-3 space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground">
-                    Contato
-                  </p>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] text-muted-foreground">
-                      Nome
-                    </label>
-                    <Input
-                      value={contactName}
-                      onChange={(e) => setContactName(e.target.value)}
-                      placeholder="Nome do cliente"
-                      className="h-8"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] text-muted-foreground">
-                      Telefone
-                    </label>
-                    <Input
-                      value={contactPhone}
-                      onChange={(e) => setContactPhone(e.target.value)}
-                      placeholder="Telefone"
-                      className="h-8"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] text-muted-foreground">
-                      Observações
-                    </label>
-                    <Textarea
-                      value={contactNotes}
-                      onChange={(e) => setContactNotes(e.target.value)}
-                      placeholder="Notas sobre o cliente"
-                      className="min-h-[92px]"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleSaveContact}
-                    disabled={patchContactMutation.isPending}
-                  >
-                    {patchContactMutation.isPending ? "Salvando…" : "Salvar"}
-                  </Button>
-                </div>
-
-                <div className="rounded-lg border border-border/70 bg-background/70 p-3 space-y-2">
-                  <p className="text-xs font-semibold text-muted-foreground">
-                    Atendimento
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedConversation.paused_until &&
-                    new Date(selectedConversation.paused_until).getTime() >
-                      Date.now() ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          resumeConversationMutation.mutate(
-                            selectedConversation.id
-                          )
-                        }
-                        disabled={resumeConversationMutation.isPending}
-                      >
-                        <PlayCircle className="h-4 w-4 mr-1" />
-                        Retomar IA
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          assumeConversationMutation.mutate(
-                            selectedConversation.id
-                          )
-                        }
-                        disabled={assumeConversationMutation.isPending}
-                      >
-                        <PauseCircle className="h-4 w-4 mr-1" />
-                        Assumir
-                      </Button>
-                    )}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDeleteConfirmOpen(true)}
-                    >
-                      Deletar
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </ScrollArea>
-          )}
-        </div>
+              </ScrollArea>
+            )}
+          </div>
         )}
       </div>
 
-      <CommandDialog open={newConversationOpen} onOpenChange={setNewConversationOpen}>
+      <CommandDialog
+        open={newConversationOpen}
+        onOpenChange={setNewConversationOpen}
+      >
         <CommandInput
           placeholder="Buscar cliente por nome/telefone…"
           value={clientPickerQuery}
@@ -1479,7 +1771,9 @@ export function InboxView({
         />
         <CommandList>
           <CommandEmpty>
-            {clientsQuery.isLoading ? "Carregando..." : "Nenhum cliente encontrado."}
+            {clientsQuery.isLoading
+              ? "Carregando..."
+              : "Nenhum cliente encontrado."}
           </CommandEmpty>
           <CommandGroup heading="Clientes">
             {(clientsQuery.data ?? []).slice(0, 20).map((c) => (
@@ -1517,7 +1811,8 @@ export function InboxView({
               </CommandItem>
             ) : (
               <div className="px-2 py-2 text-xs text-muted-foreground">
-                Digite um telefone (mín. 8 dígitos) para iniciar uma nova conversa.
+                Digite um telefone (mín. 8 dígitos) para iniciar uma nova
+                conversa.
               </div>
             )}
           </CommandGroup>
@@ -1547,27 +1842,43 @@ export function InboxView({
             transcript={incidentMessagesQuery.data.messages
               .filter((m) => m.role !== "tool")
               .slice(-30)
-              .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }))}
+              .map((m) => ({
+                role: m.role as "user" | "assistant",
+                content: m.content,
+              }))}
             settingsSnapshot={{
-              agent_profile: (incidentAiSettingsQuery.data.agent_profile ?? {}) as Record<string, unknown>,
-              additional_instructions: incidentAiSettingsQuery.data.additional_instructions ?? null,
+              agent_profile: (incidentAiSettingsQuery.data.agent_profile ??
+                {}) as Record<string, unknown>,
+              additional_instructions:
+                incidentAiSettingsQuery.data.additional_instructions ?? null,
             }}
             conversationId={incidentReportConversationId}
-            currentProfileForDiff={(incidentAiSettingsQuery.data.agent_profile ?? {}) as Record<string, unknown>}
+            currentProfileForDiff={
+              (incidentAiSettingsQuery.data.agent_profile ?? {}) as Record<
+                string,
+                unknown
+              >
+            }
             onApplyDraft={(res) => {
               const merged = mergeIncidentPatch(
-                (incidentAiSettingsQuery.data!.agent_profile ?? {}) as Record<string, unknown>,
+                (incidentAiSettingsQuery.data!.agent_profile ?? {}) as Record<
+                  string,
+                  unknown
+                >,
                 incidentAiSettingsQuery.data!.additional_instructions ?? null,
-                res
+                res,
               );
               updateAiSettingsMutation.mutate(merged);
               setIncidentReportConversationId(null);
             }}
             onApplyAndPublish={(res) => {
               const merged = mergeIncidentPatch(
-                (incidentAiSettingsQuery.data!.agent_profile ?? {}) as Record<string, unknown>,
+                (incidentAiSettingsQuery.data!.agent_profile ?? {}) as Record<
+                  string,
+                  unknown
+                >,
                 incidentAiSettingsQuery.data!.additional_instructions ?? null,
-                res
+                res,
               );
               updateAiSettingsMutation.mutate(merged, {
                 onSuccess: () => publishAiSettingsMutation.mutate(),

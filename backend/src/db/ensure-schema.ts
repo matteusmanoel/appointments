@@ -80,13 +80,32 @@ export async function ensureCriticalSchema(): Promise<void> {
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         barbershop_id uuid NOT NULL REFERENCES public.barbershops(id) ON DELETE CASCADE,
         conversation_id uuid NOT NULL REFERENCES public.ai_conversations(id) ON DELETE CASCADE,
-        event_type text NOT NULL CHECK (event_type IN ('paused', 'resumed')),
-        triggered_by text NOT NULL CHECK (triggered_by IN ('auto', 'manual', 'rule', 'keyword', 'agent_failure')),
+        event_type text NOT NULL CHECK (event_type IN ('paused', 'resumed', 'pending_review')),
+        triggered_by text NOT NULL CHECK (triggered_by IN ('auto', 'manual', 'rule', 'keyword', 'agent_failure', 'delivery_failure', 'job_failure')),
         reason text,
         created_at timestamptz NOT NULL DEFAULT now()
       )`
     )
     .catch(() => {});
+
+  // Widen check constraints to include worker-generated event types added after initial schema.
+  await pool.query(`ALTER TABLE public.ai_handoff_events DROP CONSTRAINT IF EXISTS ai_handoff_events_event_type_check`).catch(() => {});
+  await pool.query(
+    `ALTER TABLE public.ai_handoff_events ADD CONSTRAINT ai_handoff_events_event_type_check
+     CHECK (event_type IN ('paused', 'resumed', 'pending_review'))`
+  ).catch(() => {});
+  await pool.query(`ALTER TABLE public.ai_handoff_events DROP CONSTRAINT IF EXISTS ai_handoff_events_triggered_by_check`).catch(() => {});
+  await pool.query(
+    `ALTER TABLE public.ai_handoff_events ADD CONSTRAINT ai_handoff_events_triggered_by_check
+     CHECK (triggered_by IN ('auto', 'manual', 'rule', 'keyword', 'agent_failure', 'delivery_failure', 'job_failure'))`
+  ).catch(() => {});
+
+  // Track conversations that need human follow-up (populated by the AI worker on job failure/delivery failure).
+  await pool.query(
+    `ALTER TABLE public.ai_conversations ADD COLUMN IF NOT EXISTS needs_human_followup boolean NOT NULL DEFAULT false`
+  ).catch((e) => {
+    if (!isUndefinedTableOrColumn(e)) throw e;
+  });
 
   // Message delivery (UI check / double-check).
   await pool
@@ -130,5 +149,16 @@ export async function ensureCriticalSchema(): Promise<void> {
        CHECK (booking_buffer_minutes >= 0 AND booking_buffer_minutes <= 30)`
     )
     .catch(() => {});
+
+  // Barbershop geo (WhatsApp location pin)
+  await pool
+    .query(
+      `ALTER TABLE public.barbershops
+       ADD COLUMN IF NOT EXISTS latitude double precision,
+       ADD COLUMN IF NOT EXISTS longitude double precision`,
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
 }
 

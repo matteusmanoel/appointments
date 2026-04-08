@@ -2,7 +2,13 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
-import { barbershopHasAutomation, cancelReminderForAppointment, scheduleReminderForAppointment } from "../outbound/scheduled-messages.js";
+import {
+  barbershopHasAutomation,
+  cancelReminderForAppointment,
+  scheduleReminder2hForAppointment,
+  scheduleReminderForAppointment,
+} from "../outbound/scheduled-messages.js";
+import { updateClientMemoryFromAppointmentEvent } from "../ai/memory/client-memory.js";
 
 const statusEnum = z.enum(["pending", "confirmed", "completed", "cancelled", "no_show"]);
 const createBody = z.object({
@@ -253,10 +259,23 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
            WHERE a.id = $1 AND a.barbershop_id = $2`,
           [appointment.id, barbershopId]
         )
-        .then((r) => {
+        .then(async (r) => {
           const row = r.rows[0];
           if (!row?.public_token) return;
-          return scheduleReminderForAppointment({
+          await scheduleReminderForAppointment({
+            barbershopId,
+            appointmentId: appointment.id,
+            publicToken: row.public_token,
+            clientPhone: row.client_phone,
+            clientName: row.client_name,
+            barberName: row.barber_name,
+            serviceNames: serviceNamesArr,
+            scheduledDate: scheduled_date,
+            scheduledTime: timeNorm,
+            slug: row.slug,
+            timezone: row.timezone,
+          });
+          await scheduleReminder2hForAppointment({
             barbershopId,
             appointmentId: appointment.id,
             publicToken: row.public_token,
@@ -452,6 +471,74 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
       values
     );
   }
+  const shouldCancelReminders = parsed.data.status === "cancelled" || parsed.data.status === "no_show";
+  const shouldRescheduleReminders =
+    (parsed.data.scheduled_date !== undefined || parsed.data.scheduled_time !== undefined) &&
+    parsed.data.status !== "cancelled" &&
+    parsed.data.status !== "no_show";
+  if (shouldCancelReminders || shouldRescheduleReminders) {
+    await cancelReminderForAppointment(req.params.id);
+  }
+  if (shouldRescheduleReminders) {
+    const reminderRow = await pool.query<{
+      client_phone: string;
+      client_name: string | null;
+      barber_name: string;
+      slug: string | null;
+      timezone: string;
+      public_token: string;
+      scheduled_date: string;
+      scheduled_time: string;
+      service_names: string[];
+    }>(
+      `SELECT c.phone AS client_phone, c.name AS client_name, b.name AS barber_name, bs.slug,
+              COALESCE(ais.timezone, 'America/Sao_Paulo') AS timezone, a.public_token,
+              a.scheduled_date::text AS scheduled_date, to_char(a.scheduled_time, 'HH24:MI') AS scheduled_time,
+              COALESCE(
+                (SELECT array_agg(COALESCE(aps.service_name, s.name) ORDER BY aps.position)
+                 FROM public.appointment_services aps
+                 LEFT JOIN public.services s ON s.id = aps.service_id
+                 WHERE aps.appointment_id = a.id),
+                ARRAY[]::text[]
+              ) AS service_names
+       FROM public.appointments a
+       JOIN public.clients c ON c.id = a.client_id
+       JOIN public.barbers b ON b.id = a.barber_id
+       JOIN public.barbershops bs ON bs.id = a.barbershop_id
+       LEFT JOIN public.barbershop_ai_settings ais ON ais.barbershop_id = a.barbershop_id
+       WHERE a.id = $1 AND a.barbershop_id = $2`,
+      [req.params.id, barbershopId]
+    );
+    const rr = reminderRow.rows[0];
+    if (rr?.public_token && await barbershopHasAutomation(barbershopId)) {
+      await scheduleReminderForAppointment({
+        barbershopId,
+        appointmentId: req.params.id,
+        publicToken: rr.public_token,
+        clientPhone: rr.client_phone,
+        clientName: rr.client_name,
+        barberName: rr.barber_name,
+        serviceNames: rr.service_names,
+        scheduledDate: rr.scheduled_date,
+        scheduledTime: rr.scheduled_time,
+        slug: rr.slug,
+        timezone: rr.timezone,
+      });
+      await scheduleReminder2hForAppointment({
+        barbershopId,
+        appointmentId: req.params.id,
+        publicToken: rr.public_token,
+        clientPhone: rr.client_phone,
+        clientName: rr.client_name,
+        barberName: rr.barber_name,
+        serviceNames: rr.service_names,
+        scheduledDate: rr.scheduled_date,
+        scheduledTime: rr.scheduled_time,
+        slug: rr.slug,
+        timezone: rr.timezone,
+      });
+    }
+  }
   const r = await pool.query(
     `SELECT a.*,
             (SELECT COALESCE(array_agg(aps.service_id ORDER BY aps.position), ARRAY[]::uuid[]) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_ids,
@@ -462,6 +549,52 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
   const out = r.rows[0];
   if (out && Array.isArray(out.service_names) && out.service_names.length) {
     out.service_name = out.service_names[0];
+  }
+
+  // Memory hooks for high-signal events: completed and no_show
+  // Fire-and-forget — never block the response
+  if (parsed.data.status === "completed" || parsed.data.status === "no_show") {
+    updateClientMemoryFromAppointmentEvent({
+      eventType: parsed.data.status === "completed" ? "appointment_completed" : "appointment_no_show",
+      barbershopId,
+      clientId: row.client_id,
+      barberId: row.barber_id,
+      serviceNames: Array.isArray(out?.service_names) ? out.service_names.filter(Boolean) : [],
+      // Pass scheduled_time for time-range inference (used on completed only)
+      date: parsed.data.status === "completed"
+        ? String(out?.scheduled_time ?? row.scheduled_time ?? "").slice(0, 5)
+        : undefined,
+    }).catch((err: unknown) => {
+      console.warn("[appointments] memory hook failed:", err instanceof Error ? err.message : err);
+    });
+  }
+
+  if (parsed.data.status === "cancelled") {
+    const waitlistCandidate = await pool.query<{
+      id: string;
+      client_name: string | null;
+      client_phone: string;
+      desired_date: string;
+    }>(
+      `UPDATE public.appointment_waitlist
+       SET status = 'notified', updated_at = now()
+       WHERE id = (
+         SELECT w.id
+         FROM public.appointment_waitlist w
+         WHERE w.barbershop_id = $1
+           AND w.status = 'active'
+           AND w.desired_date = COALESCE($2::date, CURRENT_DATE)
+           AND ($3::uuid IS NULL OR w.barber_id IS NULL OR w.barber_id = $3::uuid)
+         ORDER BY w.created_at ASC
+         LIMIT 1
+       )
+       RETURNING id, client_name, client_phone, desired_date::text`
+      ,
+      [barbershopId, out?.scheduled_date ?? null, out?.barber_id ?? null]
+    );
+    if (waitlistCandidate.rows[0]) {
+      out.waitlist_candidate = waitlistCandidate.rows[0];
+    }
   }
   res.json(out ?? existing.rows[0]);
 });
@@ -477,5 +610,32 @@ appointmentsRouter.delete("/:id", async (req: Request, res: Response): Promise<v
     return;
   }
   await cancelReminderForAppointment(req.params.id);
-  res.json({ id: r.rows[0].id, status: "cancelled" });
+  const deletedMeta = await pool.query<{ scheduled_date: string; barber_id: string }>(
+    "SELECT scheduled_date::text, barber_id FROM public.appointments WHERE id = $1",
+    [req.params.id]
+  );
+  const scheduledDate = deletedMeta.rows[0]?.scheduled_date ?? null;
+  const barberId = deletedMeta.rows[0]?.barber_id ?? null;
+  const waitlistCandidate = await pool.query<{
+    id: string;
+    client_name: string | null;
+    client_phone: string;
+    desired_date: string;
+  }>(
+    `UPDATE public.appointment_waitlist
+     SET status = 'notified', updated_at = now()
+     WHERE id = (
+       SELECT w.id
+       FROM public.appointment_waitlist w
+       WHERE w.barbershop_id = $1
+         AND w.status = 'active'
+         AND w.desired_date = COALESCE($2::date, CURRENT_DATE)
+         AND ($3::uuid IS NULL OR w.barber_id IS NULL OR w.barber_id = $3::uuid)
+       ORDER BY w.created_at ASC
+       LIMIT 1
+     )
+     RETURNING id, client_name, client_phone, desired_date::text`,
+    [barbershopId, scheduledDate, barberId]
+  );
+  res.json({ id: r.rows[0].id, status: "cancelled", waitlist_candidate: waitlistCandidate.rows[0] ?? null });
 });

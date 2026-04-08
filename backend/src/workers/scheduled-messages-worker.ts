@@ -1,8 +1,14 @@
 import { pool } from "../db.js";
 import { config } from "../config.js";
 import { decrypt } from "../integrations/encryption.js";
-import { sendText } from "../integrations/uazapi/client.js";
-import { runDailyFollowUp30dSweepWithLock } from "../outbound/scheduled-messages.js";
+import { sendLocation, sendText } from "../integrations/uazapi/client.js";
+import {
+  runBirthdaySweepWithLock,
+  runDailyFollowUp30dSweepWithLock,
+  runDailyFollowUpNoAppointmentSweepWithLock,
+  runDailyOpeningSummarySweepWithLock,
+  runDailyPlanBillingSweepWithLock,
+} from "../outbound/scheduled-messages.js";
 
 const POLL_MS = 30_000;
 const MAX_ATTEMPTS = 5;
@@ -27,28 +33,21 @@ function getHourInTimezone(tz: string): number {
   }
 }
 
-function nextWindowStart(tz: string): Date {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = formatter.formatToParts(now);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "0";
-  const year = parseInt(get("year"), 10);
-  const month = parseInt(get("month"), 10) - 1;
-  const day = parseInt(get("day"), 10);
-  const hour = parseInt(get("hour"), 10);
-  if (hour < SEND_WINDOW_START) {
-    return new Date(year, month, day, SEND_WINDOW_START, 0, 0);
-  }
-  const next = new Date(year, month, day + 1, SEND_WINDOW_START, 0, 0);
-  return next;
+async function nextWindowStart(tz: string): Promise<Date> {
+  const hour = getHourInTimezone(tz);
+  const dayOffset = hour < SEND_WINDOW_START ? 0 : 1;
+  const r = await pool.query<{ run_after: Date }>(
+    `SELECT (
+      make_timestamptz(
+        EXTRACT(year FROM ((now() AT TIME ZONE $1) + ($2::int * interval '1 day')))::int,
+        EXTRACT(month FROM ((now() AT TIME ZONE $1) + ($2::int * interval '1 day')))::int,
+        EXTRACT(day FROM ((now() AT TIME ZONE $1) + ($2::int * interval '1 day')))::int,
+        $3::int, 0, 0, $1
+      )
+    ) AS run_after`,
+    [tz, dayOffset, SEND_WINDOW_START]
+  );
+  return r.rows[0]?.run_after ?? new Date(Date.now() + 60 * 60 * 1000);
 }
 
 async function getUazapiToken(barbershopId: string): Promise<string | null> {
@@ -153,7 +152,7 @@ async function processOne(): Promise<boolean> {
 
       const hour = getHourInTimezone(tz);
       if (hour < SEND_WINDOW_START || hour >= SEND_WINDOW_END) {
-        await postponeToWindow(id, nextWindowStart(tz));
+        await postponeToWindow(id, await nextWindowStart(tz));
         continue;
       }
 
@@ -187,6 +186,41 @@ async function processOne(): Promise<boolean> {
       }
 
       await sendText({ token, number: to_phone, text: body });
+
+      const locRow = await pool.query<{
+        name: string;
+        address: string | null;
+        latitude: number | null;
+        longitude: number | null;
+      }>(
+        `SELECT name, address, latitude, longitude FROM public.barbershops WHERE id = $1`,
+        [barbershopId],
+      );
+      const lr = locRow.rows[0];
+      if (
+        lr &&
+        lr.latitude != null &&
+        lr.longitude != null &&
+        (lr.address?.trim() || lr.name)
+      ) {
+        try {
+          await sendLocation({
+            token,
+            number: to_phone,
+            name: (lr.name ?? "Barbearia").trim() || "Barbearia",
+            address: (lr.address ?? lr.name ?? "").trim() || "Barbearia",
+            latitude: lr.latitude,
+            longitude: lr.longitude,
+          });
+        } catch (locErr) {
+          console.warn(
+            "[scheduled-messages-worker] sendLocation failed id=%s: %s",
+            id,
+            locErr instanceof Error ? locErr.message : String(locErr),
+          );
+        }
+      }
+
       await markSent(id);
       console.info("[scheduled-messages-worker] sent id=%s barbershopId=%s type=%s", id, barbershopId, type);
     } catch (e) {
@@ -201,7 +235,13 @@ async function processOne(): Promise<boolean> {
 /** Run one cycle: daily sweep once, then process batches up to maxBatches. Used by Lambda and by runLoop. */
 export async function runScheduledMessagesCycle(options?: { maxBatches?: number }): Promise<{ processed: number }> {
   const maxBatches = options?.maxBatches ?? 20;
-  await runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily sweep:", e));
+  await Promise.all([
+    runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
+    runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
+    runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
+    runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
+    runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
+  ]);
   let processed = 0;
   while (processed < maxBatches) {
     try {
@@ -221,10 +261,22 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 async function runLoop(): Promise<void> {
   console.info("[scheduled-messages-worker] started");
   setTimeout(() => {
-    runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily sweep:", e));
+    void Promise.all([
+      runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
+      runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
+      runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
+      runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
+      runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
+    ]);
   }, 60_000);
   setInterval(() => {
-    runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily sweep:", e));
+    void Promise.all([
+      runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
+      runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
+      runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
+      runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
+      runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
+    ]);
   }, ONE_DAY_MS);
   while (true) {
     const { processed } = await runScheduledMessagesCycle({ maxBatches: 20 });

@@ -10,7 +10,7 @@ import {
   type AppointmentListItem,
   serviceLabel,
 } from "@/lib/api";
-import { formatPhoneBR } from "@/lib/input-masks";
+import { formatPhoneDisplay } from "@/lib/input-masks";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import {
   Select,
@@ -124,7 +124,7 @@ function getCellValue(apt: AppointmentListItem, colId: (typeof COLUMN_IDS)[numbe
     case "cliente":
       return apt.client_name ?? "—";
     case "telefone":
-      return apt.client_phone ? formatPhoneBR(apt.client_phone) : "—";
+      return apt.client_phone ? formatPhoneDisplay(apt.client_phone) : "—";
     case "barbeiro":
       return apt.barber_name ?? "—";
     case "servicos":

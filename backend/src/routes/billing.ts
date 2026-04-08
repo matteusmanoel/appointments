@@ -7,6 +7,7 @@ import { pool } from "../db.js";
 import { config } from "../config.js";
 import { sendOnboardingEmail } from "../lib/ses.js";
 import { requireJwt, getBarbershopId, type JwtPayload } from "../middleware/auth.js";
+import { schedulePaymentReminder } from "../outbound/scheduled-messages.js";
 
 const stripe = config.stripeSecretKey ? new Stripe(config.stripeSecretKey, { apiVersion: "2025-02-24.acacia" }) : null;
 
@@ -110,6 +111,64 @@ async function handleStripeEvent(event: Stripe.Event): Promise<void> {
       [subscription.status, subscription.id]
     ).catch(() => {});
   }
+  if (event.type === "invoice.payment_failed") {
+    const invoice = event.data.object as Stripe.Invoice;
+    await handleInvoicePaymentFailed(invoice);
+  }
+}
+
+async function handleInvoicePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
+  if (!stripe) return;
+  const customerId =
+    typeof invoice.customer === "string"
+      ? invoice.customer
+      : (invoice.customer?.id ?? "");
+  if (!customerId) return;
+
+  const shop = await pool.query<{
+    id: string;
+    name: string;
+    stripe_customer_id: string | null;
+  }>(
+    `SELECT id, name, stripe_customer_id
+     FROM public.barbershops
+     WHERE stripe_customer_id = $1
+     LIMIT 1`,
+    [customerId]
+  );
+  const row = shop.rows[0];
+  if (!row) return;
+
+  const admin = await pool.query<{ phone: string | null }>(
+    `SELECT phone
+     FROM public.profiles
+     WHERE barbershop_id = $1
+       AND role = 'admin'
+       AND phone IS NOT NULL
+     ORDER BY created_at ASC
+     LIMIT 1`,
+    [row.id]
+  );
+  const toPhone = (admin.rows[0]?.phone ?? "").replace(/\D/g, "");
+  if (!toPhone) return;
+
+  let portalLink = `${config.appUrl.replace(/\/$/, "")}/app/configuracoes`;
+  try {
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: `${config.appUrl.replace(/\/$/, "")}/app/configuracoes`,
+    });
+    portalLink = portalSession.url;
+  } catch (e) {
+    console.warn("[billing] failed to create portal session for payment reminder:", e);
+  }
+
+  await schedulePaymentReminder({
+    barbershopId: row.id,
+    toPhone,
+    barbershopName: row.name,
+    portalLink,
+  });
 }
 
 async function creditFollowupFromSession(session: Stripe.Checkout.Session): Promise<void> {

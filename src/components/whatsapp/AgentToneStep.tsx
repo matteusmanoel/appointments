@@ -1,9 +1,15 @@
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AgentProfile } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+const BARBERSHOP_EMOJIS = [
+  "✂️", "💈", "🪒", "🧔", "👨", "💪", "🔥", "✨", "👍", "🙌",
+  "😄", "😊", "🤝", "⭐", "💯", "🎯", "📅", "⏰", "📍", "🙏",
+];
 
 const TONE_PRESETS: { id: string; label: string; desc: string; example: string }[] = [
   { id: "default", label: "Padrão", desc: "Curto, simpático, descolado. Gírias leves.", example: "Oi! Tudo bem? Em que posso ajudar?" },
@@ -63,10 +69,13 @@ export function AgentToneStep({
         <CardHeader className="py-3 px-4">
           <Label className="text-sm font-medium">Emojis</Label>
         </CardHeader>
-        <CardContent className="pt-0 px-4 pb-4">
+        <CardContent className="pt-0 px-4 pb-4 space-y-3">
           <RadioGroup
-            value={p.emojiLevel ?? "medium"}
-            onValueChange={(v) => onChange({ emojiLevel: v as "none" | "low" | "medium" })}
+            value={p.emojiLevel ?? "none"}
+            onValueChange={(v) => {
+              const level = v as "none" | "low" | "medium";
+              onChange({ emojiLevel: level, allowedEmojis: level === "none" ? [] : p.allowedEmojis });
+            }}
             className="flex flex-wrap gap-4"
           >
             <div className="flex items-center gap-2">
@@ -82,6 +91,58 @@ export function AgentToneStep({
               <Label htmlFor="emoji-medium" className="font-normal">Moderado</Label>
             </div>
           </RadioGroup>
+          {(p.emojiLevel ?? "none") !== "none" && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Selecione os emojis permitidos (deixe vazio para liberar todos):
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {BARBERSHOP_EMOJIS.map((emoji) => {
+                  const allowed = p.allowedEmojis ?? [];
+                  const selected = allowed.includes(emoji);
+                  return (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => {
+                        const current = p.allowedEmojis ?? [];
+                        const next = selected
+                          ? current.filter((e) => e !== emoji)
+                          : [...current, emoji];
+                        onChange({ allowedEmojis: next });
+                      }}
+                      className={cn(
+                        "text-lg rounded-md border p-1.5 transition-colors hover:bg-muted",
+                        selected ? "border-primary bg-primary/10" : "border-border"
+                      )}
+                      title={emoji}
+                    >
+                      {emoji}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <Label className="text-sm font-medium">Figurinhas</Label>
+        </CardHeader>
+        <CardContent className="pt-0 px-4 pb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm">Enviar figurinhas</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Permite o agente enviar figurinhas após confirmações (requer cadastro na aba Figurinhas)
+              </p>
+            </div>
+            <Switch
+              checked={p.stickersEnabled ?? false}
+              onCheckedChange={(v) => onChange({ stickersEnabled: v })}
+            />
+          </div>
         </CardContent>
       </Card>
       <Card>
@@ -122,6 +183,31 @@ export function AgentToneStep({
             <div className="flex items-center gap-2">
               <RadioGroupItem value="direct" id="sales-direct" />
               <Label htmlFor="sales-direct" className="font-normal">Direto</Label>
+            </div>
+          </RadioGroup>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <Label className="text-sm font-medium">Uso de gírias</Label>
+        </CardHeader>
+        <CardContent className="pt-0 px-4 pb-4">
+          <RadioGroup
+            value={p.slangLevel ?? "low"}
+            onValueChange={(v) => onChange({ slangLevel: v as "low" | "medium" | "high" })}
+            className="flex flex-wrap gap-4"
+          >
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="low" id="slang-low" />
+              <Label htmlFor="slang-low" className="font-normal">Poucas</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="medium" id="slang-medium" />
+              <Label htmlFor="slang-medium" className="font-normal">Moderado</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <RadioGroupItem value="high" id="slang-high" />
+              <Label htmlFor="slang-high" className="font-normal">Bastante</Label>
             </div>
           </RadioGroup>
         </CardContent>

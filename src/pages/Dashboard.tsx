@@ -2,15 +2,39 @@ import { lazy, Suspense, useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { StatCard } from "@/components/dashboard/StatCard";
+import { AiHealthCard } from "@/components/dashboard/AiHealthCard";
 import { AppointmentsList } from "@/components/dashboard/AppointmentsList";
 import { RankingCard } from "@/components/dashboard/RankingCard";
-import { Calendar, DollarSign, Users, TrendingUp, MessageCircle, AlertCircle } from "lucide-react";
+import {
+  Calendar,
+  DollarSign,
+  Users,
+  TrendingUp,
+  MessageCircle,
+  AlertCircle,
+} from "lucide-react";
 
-const RevenueChart = lazy(() => import("@/components/dashboard/RevenueChart").then((m) => ({ default: m.RevenueChart })));
-const TopServices = lazy(() => import("@/components/dashboard/TopServices").then((m) => ({ default: m.TopServices })));
+const RevenueChart = lazy(() =>
+  import("@/components/dashboard/RevenueChart").then((m) => ({
+    default: m.RevenueChart,
+  })),
+);
+const TopServices = lazy(() =>
+  import("@/components/dashboard/TopServices").then((m) => ({
+    default: m.TopServices,
+  })),
+);
 import { startOfMonth, format, differenceInDays } from "date-fns";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { appointmentsApi, barbershopsApi, barbersApi, servicesApi, whatsappApi, integrationsApi, reportsApi } from "@/lib/api";
+import {
+  appointmentsApi,
+  barbershopsApi,
+  barbersApi,
+  servicesApi,
+  whatsappApi,
+  integrationsApi,
+  reportsApi,
+} from "@/lib/api";
 import { getTimeSlotsForDay } from "@/lib/slots";
 import { useAuth } from "@/contexts/AuthContext";
 import { SetupChecklist } from "@/components/SetupChecklist";
@@ -44,8 +68,10 @@ export default function Dashboard() {
     return { from: startOfMonth(now), to: now };
   });
 
-  const fromStr = range?.from && range?.to ? format(range.from, "yyyy-MM-dd") : null;
-  const toStr = range?.from && range?.to ? format(range.to, "yyyy-MM-dd") : null;
+  const fromStr =
+    range?.from && range?.to ? format(range.from, "yyyy-MM-dd") : null;
+  const toStr =
+    range?.from && range?.to ? format(range.to, "yyyy-MM-dd") : null;
   const today = todayISO();
 
   const { data: appointments = [] } = useQuery({
@@ -76,7 +102,10 @@ export default function Dashboard() {
 
   const isRange = !!fromStr && !!toStr;
   const confirmed = useMemo(
-    () => appointments.filter((a) => a.status === "confirmed" || a.status === "pending"),
+    () =>
+      appointments.filter(
+        (a) => a.status === "confirmed" || a.status === "pending",
+      ),
     [appointments],
   );
   const completed = useMemo(
@@ -98,7 +127,8 @@ export default function Dashboard() {
   const activeBarbersCount = barbers.filter(
     (b) => b.status === "active" || b.status === "break",
   ).length;
-  const capacityMinutesPerDay = openSlots * 30 * Math.max(1, activeBarbersCount);
+  const capacityMinutesPerDay =
+    openSlots * 30 * Math.max(1, activeBarbersCount);
   const bookedMinutes = useMemo(
     () =>
       appointments
@@ -127,8 +157,7 @@ export default function Dashboard() {
     : "Baseado na agenda de hoje";
 
   const setupLoading =
-    barbershop === undefined ||
-    (barbershop !== null && services === undefined);
+    barbershop === undefined || (barbershop !== null && services === undefined);
   const setupError = barbershop === null;
 
   return (
@@ -148,7 +177,10 @@ export default function Dashboard() {
           <div>
             <h1 className="page-title">Salve, {greetingName}! 👋</h1>
             <p className="page-subtitle">
-              {isRange ? "Resumo do período selecionado." : "Agenda organizada para hoje."} Você tem{" "}
+              {isRange
+                ? "Resumo do período selecionado."
+                : "Agenda organizada para hoje."}{" "}
+              Você tem{" "}
               <span className="font-medium text-foreground">
                 {countPeriod} atendimentos
               </span>{" "}
@@ -156,7 +188,11 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="mt-2 w-full md:mt-0 md:w-auto">
-            <DateRangePicker value={range} onChange={setRange} className="w-full md:w-auto" />
+            <DateRangePicker
+              value={range}
+              onChange={setRange}
+              className="w-full md:w-auto"
+            />
           </div>
         </div>
       </div>
@@ -166,23 +202,34 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           <MessageCircle className="h-5 w-5 text-muted-foreground" />
           <span className="text-sm font-medium">WhatsApp:</span>
-          <span className={whatsapp?.connected ? "text-green-600 dark:text-green-400" : "text-amber-600 dark:text-amber-400"}>
+          <span
+            className={
+              whatsapp?.connected
+                ? "text-green-600 dark:text-green-400"
+                : "text-amber-600 dark:text-amber-400"
+            }
+          >
             {whatsapp?.connected ? "Conectado" : "Desconectado"}
           </span>
         </div>
-        {(automationsSummary && (automationsSummary.queued > 0 || automationsSummary.failed > 0 || automationsSummary.skipped > 0)) && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Automações:</span>
-            <span>{automationsSummary.queued} na fila</span>
-            {automationsSummary.failed > 0 && (
-              <span className="flex items-center gap-1 text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                {automationsSummary.failed} falhas
-              </span>
-            )}
-            {automationsSummary.skipped > 0 && <span>{automationsSummary.skipped} ignoradas</span>}
-          </div>
-        )}
+        {automationsSummary &&
+          (automationsSummary.queued > 0 ||
+            automationsSummary.failed > 0 ||
+            automationsSummary.skipped > 0) && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span>Automações:</span>
+              <span>{automationsSummary.queued} na fila</span>
+              {automationsSummary.failed > 0 && (
+                <span className="flex items-center gap-1 text-destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  {automationsSummary.failed} falhas
+                </span>
+              )}
+              {automationsSummary.skipped > 0 && (
+                <span>{automationsSummary.skipped} ignoradas</span>
+              )}
+            </div>
+          )}
         {whatsapp && !whatsapp.connected && (
           <Link
             to="/app/integracoes?step=connect"
@@ -193,8 +240,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {/* Stats + MVP Metrics: tudo em uma grid só */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
           title={isRange ? "Faturamento no período" : "Faturamento Hoje"}
           value={`R$ ${revenuePeriod.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
@@ -218,44 +265,45 @@ export default function Dashboard() {
           title="Taxa de Ocupação"
           value={`${occupancyPct}%`}
           subtitle={occupancySubtitle}
-          helpText={isRange ? "Minutos agendados no período ÷ capacidade no período." : "Minutos agendados hoje ÷ (horário de funcionamento × barbeiros ativos, em minutos)."}
+          helpText={
+            isRange
+              ? "Minutos agendados no período ÷ capacidade no período."
+              : "Minutos agendados hoje ÷ (horário de funcionamento × barbeiros ativos, em minutos)."
+          }
           icon={<TrendingUp className="w-6 h-6" />}
           variant="accent"
         />
+        {whatsapp?.connected && <AiHealthCard />}
+        {mvpMetrics && (
+          <>
+            <StatCard
+              title="No-show (30 dias)"
+              value={`${mvpMetrics.noShowRate30d}%`}
+              subtitle="Últimos 30 dias"
+              icon={<Users className="w-5 h-5" />}
+            />
+            <StatCard
+              title="Lembretes"
+              value={`${mvpMetrics.reminders.sent} enviados`}
+              subtitle={`${mvpMetrics.reminders.failed} falhas · ${mvpMetrics.reminders.skipped} ignorados`}
+              icon={<MessageCircle className="w-5 h-5" />}
+            />
+            <StatCard
+              title="Follow-ups"
+              value={`${mvpMetrics.followUps.sent} enviados`}
+              subtitle={`${mvpMetrics.followUps.failed} falhas · ${mvpMetrics.followUps.skipped} ignorados`}
+              icon={<MessageCircle className="w-5 h-5" />}
+            />
+          </>
+        )}
       </div>
 
-      {/* MVP metrics: no-show, reminders, follow-ups */}
-      {mvpMetrics && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <StatCard
-            title="No-show (7 dias)"
-            value={`${mvpMetrics.noShowRate7d}%`}
-            subtitle="Últimos 7 dias"
-            icon={<Users className="w-5 h-5" />}
-          />
-          <StatCard
-            title="No-show (30 dias)"
-            value={`${mvpMetrics.noShowRate30d}%`}
-            subtitle="Últimos 30 dias"
-            icon={<Users className="w-5 h-5" />}
-          />
-          <StatCard
-            title="Lembretes"
-            value={`${mvpMetrics.reminders.sent} enviados`}
-            subtitle={`${mvpMetrics.reminders.failed} falhas · ${mvpMetrics.reminders.skipped} ignorados`}
-            icon={<MessageCircle className="w-5 h-5" />}
-          />
-          <StatCard
-            title="Follow-ups"
-            value={`${mvpMetrics.followUps.sent} enviados`}
-            subtitle={`${mvpMetrics.followUps.failed} falhas · ${mvpMetrics.followUps.skipped} ignorados`}
-            icon={<MessageCircle className="w-5 h-5" />}
-          />
-        </div>
-      )}
-
       {/* Charts Row (lazy so recharts loads only when Dashboard is shown) */}
-      <Suspense fallback={<div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 min-h-[240px] rounded-lg border bg-muted/30 animate-pulse" />}>
+      <Suspense
+        fallback={
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8 min-h-[240px] rounded-lg border bg-muted/30 animate-pulse" />
+        }
+      >
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           <RevenueChart range={range} />
           <TopServices range={range} />

@@ -23,49 +23,58 @@ export function runSetupTour(): Driver | null {
     {
       element: "[data-tour='configuracoes']",
       popover: {
-        title: "Configurações",
+        title: "1. Configure sua barbearia",
         description:
-          "Comece aqui: defina o nome da sua NavalhIA, horário de funcionamento e o link de agendamento (slug) que seus clientes usarão.",
-        side: "right",
-        align: "start",
+          "Comece por aqui. Defina o nome da sua barbearia, o horário de funcionamento e o link de agendamento (slug) que você vai compartilhar com seus clientes.",
+        side: "right" as const,
+        align: "start" as const,
       },
     },
     {
       element: "[data-tour='servicos']",
       popover: {
-        title: "Serviços",
-        description: "Cadastre os serviços (Corte, Barba, Combo, etc.) com preço e duração. Recomendamos pelo menos 3.",
-        side: "right",
-        align: "start",
+        title: "2. Cadastre seus serviços",
+        description:
+          "Adicione os serviços que você oferece — Corte, Barba, Combo e outros — com preço e duração. A IA usa essas informações para agendar automaticamente pelo WhatsApp.",
+        side: "right" as const,
+        align: "start" as const,
       },
     },
     {
       element: "[data-tour='barbeiros']",
       popover: {
-        title: "Barbeiros",
-        description: "Cadastre pelo menos um barbeiro. Eles aparecerão na agenda e no link de agendamento.",
-        side: "right",
-        align: "start",
+        title: "3. Adicione seus barbeiros",
+        description:
+          "Cadastre pelo menos um barbeiro. Eles aparecerão na agenda, no link de agendamento e serão atribuídos automaticamente pela IA conforme a disponibilidade.",
+        side: "right" as const,
+        align: "start" as const,
       },
     },
     {
       element: "[data-tour='agendamentos']",
       popover: {
-        title: "Agendamentos",
-        description: "Aqui ficam todos os agendamentos. Depois de configurar o link em Configurações, compartilhe com seus clientes.",
-        side: "right",
-        align: "start",
+        title: "4. Acompanhe sua agenda",
+        description:
+          "Aqui você visualiza e gerencia todos os agendamentos — em grade diária/mensal ou em lista com filtros. Quando estiver tudo configurado, compartilhe o link e comece a receber agendamentos.",
+        side: "right" as const,
+        align: "start" as const,
       },
     },
   ];
 
   const driverObj = driver({
     showProgress: true,
+    animate: true,
+    allowClose: true,
+    overlayOpacity: 0.6,
+    stagePadding: 8,
+    stageRadius: 8,
     steps,
-    nextBtnText: "Próximo",
-    prevBtnText: "Anterior",
-    doneBtnText: "Concluir",
+    nextBtnText: "Próximo →",
+    prevBtnText: "← Anterior",
+    doneBtnText: "Começar agora",
     progressText: "{{current}} de {{total}}",
+    popoverClass: "navalhia-tour-popover",
     onDestroyed: () => {
       if (typeof localStorage !== "undefined") localStorage.setItem(TOUR_DONE_KEY, "1");
       if (typeof sessionStorage !== "undefined") sessionStorage.removeItem(TOUR_TRIGGER_KEY);

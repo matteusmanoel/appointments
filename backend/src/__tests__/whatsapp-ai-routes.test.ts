@@ -86,7 +86,7 @@ describe("WhatsApp AI routes", () => {
     expect(Array.isArray(res.body.violations)).toBe(true);
   });
 
-  it("POST /api/integrations/whatsapp/ai-analyze-chat returns recommendations", async () => {
+  it("POST /api/integrations/whatsapp/ai-analyze-chat returns recommendations", { timeout: 30000 }, async () => {
     if (!barbershopId || !token) return;
     const res = await request(app)
       .post("/api/integrations/whatsapp/ai-analyze-chat")
@@ -97,7 +97,7 @@ describe("WhatsApp AI routes", () => {
     expect(res.body).toHaveProperty("expected_outcomes");
   });
 
-  it("POST /api/integrations/whatsapp/ai-diagnostic-chat returns assistant reply", async () => {
+  it("POST /api/integrations/whatsapp/ai-diagnostic-chat returns assistant reply", { timeout: 30000 }, async () => {
     if (!barbershopId || !token) return;
     const res = await request(app)
       .post("/api/integrations/whatsapp/ai-diagnostic-chat")

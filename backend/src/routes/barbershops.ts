@@ -30,6 +30,8 @@ const updateBody = z.object({
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   address: z.string().optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
   business_hours: businessHoursSchema.optional(),
   slug: slugSchema.optional(),
 });
@@ -73,7 +75,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { name, phone, email, address, business_hours, slug } = parsed.data;
+  const { name, phone, email, address, latitude, longitude, business_hours, slug } = parsed.data;
   const updates: string[] = [];
   const values: unknown[] = [];
   let i = 1;
@@ -93,6 +95,14 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
     updates.push(`address = $${i++}`);
     values.push(address);
   }
+  if (latitude !== undefined) {
+    updates.push(`latitude = $${i++}`);
+    values.push(latitude);
+  }
+  if (longitude !== undefined) {
+    updates.push(`longitude = $${i++}`);
+    values.push(longitude);
+  }
   if (business_hours !== undefined) {
     updates.push(`business_hours = $${i++}`);
     values.push(JSON.stringify(business_hours));
@@ -103,7 +113,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
   }
   if (updates.length === 0) {
     const r = await pool.query(
-      "SELECT id, name, phone, email, address, business_hours, slug FROM public.barbershops WHERE id = $1",
+      "SELECT id, name, phone, email, address, latitude, longitude, business_hours, slug FROM public.barbershops WHERE id = $1",
       [barbershopId]
     );
     res.json(r.rows[0] ?? { error: "Not found" });
@@ -111,7 +121,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
   }
   values.push(barbershopId);
   const r = await pool.query(
-    `UPDATE public.barbershops SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING id, name, phone, email, address, business_hours, slug, created_at, updated_at`,
+    `UPDATE public.barbershops SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING id, name, phone, email, address, latitude, longitude, business_hours, slug, created_at, updated_at`,
     values
   );
   if (r.rows.length === 0) {

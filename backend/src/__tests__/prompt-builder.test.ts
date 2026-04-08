@@ -156,7 +156,7 @@ describe("prompt-builder", () => {
 
     it("rejects invalid enum values", () => {
       const out = normalizeProfile({ emojiLevel: "high" });
-      expect(out.emojiLevel).toBe("medium");
+      expect(out.emojiLevel).toBe(DEFAULT_AGENT_PROFILE.emojiLevel);
     });
   });
 });

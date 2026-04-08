@@ -122,6 +122,9 @@ const barbershopSchema = z.object({
   phone: z.string().optional(),
   email: z.string().optional(),
   address: z.string().optional(),
+  latitude: z.string().optional(),
+  longitude: z.string().optional(),
+  pix_key: z.string().max(150).optional(),
 });
 
 type BarbershopFormValues = z.infer<typeof barbershopSchema>;
@@ -252,13 +255,10 @@ export default function Configuracoes() {
     staleTime: 2 * 60 * 1000,
   });
 
+  type BarbershopPatchPayload = Parameters<typeof barbershopsApi.patch>[0];
+
   const patchMutation = useMutation({
-    mutationFn: (
-      body: BarbershopFormValues & {
-        business_hours?: BusinessHours;
-        slug?: string;
-      },
-    ) => barbershopsApi.patch(body),
+    mutationFn: (body: BarbershopPatchPayload) => barbershopsApi.patch(body),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["barbershop"] });
       if (variables.business_hours !== undefined) setHoursOpen(false);
@@ -491,6 +491,8 @@ export default function Configuracoes() {
       phone: "",
       email: "",
       address: "",
+      latitude: "",
+      longitude: "",
     },
   });
 
@@ -501,6 +503,15 @@ export default function Configuracoes() {
         phone: parsePhoneBR(barbershop.phone ?? ""),
         email: barbershop.email ?? "",
         address: barbershop.address ?? "",
+        latitude:
+          barbershop.latitude != null && !Number.isNaN(barbershop.latitude)
+            ? String(barbershop.latitude)
+            : "",
+        longitude:
+          barbershop.longitude != null && !Number.isNaN(barbershop.longitude)
+            ? String(barbershop.longitude)
+            : "",
+        pix_key: (barbershop as Record<string, unknown>).pix_key as string ?? "",
       });
     }
   }, [businessOpen, barbershop, form]);
@@ -508,7 +519,43 @@ export default function Configuracoes() {
   const openBusiness = () => setBusinessOpen(true);
 
   const onSubmitBusiness = async (values: BarbershopFormValues) => {
-    await withToast(patchMutation.mutateAsync(values), {
+    const latRaw = values.latitude?.trim().replace(",", ".") ?? "";
+    const lngRaw = values.longitude?.trim().replace(",", ".") ?? "";
+    if ((latRaw && !lngRaw) || (!latRaw && lngRaw)) {
+      toastError("Informe latitude e longitude juntos, ou deixe os dois vazios.");
+      return;
+    }
+    let latitude: number | null | undefined;
+    let longitude: number | null | undefined;
+    if (latRaw && lngRaw) {
+      const lat = parseFloat(latRaw);
+      const lng = parseFloat(lngRaw);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+        toastError("Latitude inválida (-90 a 90).");
+        return;
+      }
+      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+        toastError("Longitude inválida (-180 a 180).");
+        return;
+      }
+      latitude = lat;
+      longitude = lng;
+    } else if (
+      barbershop &&
+      (barbershop.latitude != null || barbershop.longitude != null)
+    ) {
+      latitude = null;
+      longitude = null;
+    }
+    const body = {
+      name: values.name,
+      phone: values.phone,
+      email: values.email,
+      address: values.address,
+      ...(latitude !== undefined ? { latitude, longitude } : {}),
+      pix_key: values.pix_key?.trim() || null,
+    };
+    await withToast(patchMutation.mutateAsync(body), {
       successMessage: "Dados salvos.",
       errorMessage: "Erro ao salvar dados.",
     });
@@ -794,44 +841,46 @@ export default function Configuracoes() {
           <h2 className="text-lg font-semibold text-foreground mb-4">
             Zona de Perigo
           </h2>
-          <div className="stat-card border-destructive/20">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <h3 className="font-medium text-foreground">
-                  Excluir unidade (filial)
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Remove esta barbearia e todos os dados vinculados a ela.
-                  Irreversível.
-                </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="stat-card border-destructive/20">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h3 className="font-medium text-foreground">
+                    Excluir unidade (filial)
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Remove esta barbearia e todos os dados vinculados a ela.
+                    Irreversível.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setDeleteBarbershopConfirmOpen(true)}
+                >
+                  Excluir unidade
+                </Button>
               </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setDeleteBarbershopConfirmOpen(true)}
-              >
-                Excluir unidade
-              </Button>
             </div>
-          </div>
-          <div className="stat-card border-destructive/20">
-            <div className="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <h3 className="font-medium text-foreground">
-                  Excluir conta inteira
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Remove todas as filiais, assinatura e dados da conta. Apenas o
-                  dono da conta pode fazer isso.
-                </p>
+            <div className="stat-card border-destructive/20">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h3 className="font-medium text-foreground">
+                    Excluir conta inteira
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Remove todas as filiais, assinatura e dados da conta. Apenas o
+                    dono da conta pode fazer isso.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setDeleteAccountConfirmOpen(true)}
+                >
+                  Excluir conta
+                </Button>
               </div>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setDeleteAccountConfirmOpen(true)}
-              >
-                Excluir conta
-              </Button>
             </div>
           </div>
         </div>
@@ -931,6 +980,68 @@ export default function Configuracoes() {
                         {...field}
                       />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="latitude"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Latitude</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="-23.5616"
+                          {...field}
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Coordenadas do Google Maps; usadas para enviar o pin da
+                        barbearia no WhatsApp.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="longitude"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Longitude</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="-46.6562"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={form.control}
+                name="pix_key"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Chave PIX</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="text"
+                        placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"
+                        {...field}
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Usada para cobranças recorrentes de planos via WhatsApp.
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}

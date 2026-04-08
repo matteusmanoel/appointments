@@ -78,7 +78,7 @@ function ApiKeysTab() {
 
   return (
     <>
-      <div className="flex flex-col gap-6 h-full min-h-[400px]">
+      <div className="flex flex-col gap-6 w-full min-h-0">
         <div className="flex items-center gap-2">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10">
             <Key className="h-5 w-5 text-primary" aria-hidden />
@@ -470,7 +470,7 @@ export default function Integracoes() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-border/80 bg-card/50 overflow-hidden">
+      <div className="rounded-xl border border-border/80 bg-card/50 overflow-hidden min-h-0">
         <WhatsAppSetupStepper
           connectStepContent={connectStepContent}
           apiKeysContent={<ApiKeysTab />}

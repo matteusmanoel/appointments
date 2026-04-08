@@ -1,4 +1,4 @@
-# Deploy API (Lambda) and static (S3 + CloudFront) on push to main.
+# Deploy API + workers (Lambda) and static (S3 + CloudFront) on push to main.
 # Requires: AWS OIDC role (infra/ci/oidc-github-role.yaml) and GitHub secrets:
 #   AWS_ROLE_ARN, ARTIFACT_BUCKET, DATABASE_URL, JWT_SECRET, VITE_API_URL
 # Optional: CORS_ORIGIN, JWT_EXPIRES_IN, STRIPE_*, FROM_EMAIL, APP_URL (for API)
@@ -55,6 +55,16 @@ jobs:
           aws s3 cp ../dist.zip "s3://${ARTIFACT_BUCKET}/api/latest.zip" --region ${{ env.AWS_REGION }}
           aws lambda update-function-code \
             --function-name navalhia-api-prod \
+            --s3-bucket "${ARTIFACT_BUCKET}" \
+            --s3-key "api/latest.zip" \
+            --region ${{ env.AWS_REGION }}
+          aws lambda update-function-code \
+            --function-name navalhia-worker-ai-prod \
+            --s3-bucket "${ARTIFACT_BUCKET}" \
+            --s3-key "api/latest.zip" \
+            --region ${{ env.AWS_REGION }}
+          aws lambda update-function-code \
+            --function-name navalhia-worker-scheduled-prod \
             --s3-bucket "${ARTIFACT_BUCKET}" \
             --s3-key "api/latest.zip" \
             --region ${{ env.AWS_REGION }}

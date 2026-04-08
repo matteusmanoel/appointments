@@ -27,30 +27,104 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Plus, Pencil, Trash2, GripVertical, Download } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  GripVertical,
+  Download,
+  AlertTriangle,
+} from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { AgentProfile, CustomRule } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const RULE_PACKS: { id: string; name: string; rules: Omit<CustomRule, "id">[] }[] = [
+// Heuristic patterns that may indicate risky instructions
+const RISK_PATTERNS = [
+  /ignor[ae]/i,
+  /esqueça\s+as?\s+regras?/i,
+  /não\s+segu[ei]r/i,
+  /bypass/i,
+  /desativ[ae]/i,
+  /system\s*prompt/i,
+  /prompt\s*injection/i,
+  /ignore\s+(all|previous|prior)/i,
+  /forget\s+(all|previous|prior)/i,
+  /disregard/i,
+  /reveal\s+(the|your)\s+(prompt|instructions?|system)/i,
+  /act\s+as\s+if/i,
+  /jailbreak/i,
+];
+
+function detectRuleRisk(rule: CustomRule): string | null {
+  const texts = [
+    ...(rule.do ?? []),
+    ...(rule.dont ?? []),
+    rule.title ?? "",
+  ].join(" ");
+  for (const pattern of RISK_PATTERNS) {
+    if (pattern.test(texts)) {
+      return "Instrução suspeita detectada — revise antes de publicar.";
+    }
+  }
+  return null;
+}
+
+const RULE_PACKS: {
+  id: string;
+  name: string;
+  rules: Omit<CustomRule, "id">[];
+}[] = [
   {
     id: "mais-direto",
     name: "Mais direto",
     rules: [
-      { title: "Respostas objetivas", enabled: true, priority: 4, do: ["Seja direto; evite rodeios.", "Responda em uma ou duas frases quando possível."], dont: ["Não repita a pergunta do cliente."] },
+      {
+        title: "Respostas objetivas",
+        enabled: true,
+        priority: 4,
+        do: [
+          "Seja direto; evite rodeios.",
+          "Responda em uma ou duas frases quando possível.",
+        ],
+        dont: ["Não repita a pergunta do cliente."],
+      },
     ],
   },
   {
     id: "politica-atrasos",
     name: "Política de atrasos",
     rules: [
-      { title: "Atraso do cliente", enabled: true, priority: 4, do: ["Se o cliente atrasar mais de 15 min, avise que o horário pode ser remarcado.", "Ofereça reagendar para outro dia/hora."], dont: ["Não cobrar multa ou taxa sem política explícita da barbearia."] },
+      {
+        title: "Atraso do cliente",
+        enabled: true,
+        priority: 4,
+        do: [
+          "Se o cliente atrasar mais de 15 min, avise que o horário pode ser remarcado.",
+          "Ofereça reagendar para outro dia/hora.",
+        ],
+        dont: ["Não cobrar multa ou taxa sem política explícita da barbearia."],
+      },
     ],
   },
   {
     id: "foco-conversao",
     name: "Foco em conversão",
     rules: [
-      { title: "Sugerir agendamento", enabled: true, priority: 5, do: ["Sempre que listar serviços, sugira agendar um horário.", "Se o cliente demonstrar interesse, ofereça os próximos horários disponíveis."], dont: [] },
+      {
+        title: "Sugerir agendamento",
+        enabled: true,
+        priority: 5,
+        do: [
+          "Sempre que listar serviços, sugira agendar um horário.",
+          "Se o cliente demonstrar interesse, ofereça os próximos horários disponíveis.",
+        ],
+        dont: [],
+      },
     ],
   },
 ];
@@ -102,7 +176,7 @@ export function AgentCustomRulesStep({
       (r) =>
         r.title?.toLowerCase().includes(q) ||
         r.do?.some((d) => d.toLowerCase().includes(q)) ||
-        (r.dont ?? []).some((d) => d.toLowerCase().includes(q))
+        (r.dont ?? []).some((d) => d.toLowerCase().includes(q)),
     );
   }, [sortedRules, search]);
 
@@ -150,7 +224,7 @@ export function AgentCustomRulesStep({
   const setEnabled = (id: string, enabled: boolean) => {
     onChange({
       customRules: customRules.map((r) =>
-        r.id === id ? { ...r, enabled } : r
+        r.id === id ? { ...r, enabled } : r,
       ),
     });
   };
@@ -158,7 +232,7 @@ export function AgentCustomRulesStep({
   const setPriority = (id: string, priority: number) => {
     onChange({
       customRules: customRules.map((r) =>
-        r.id === id ? { ...r, priority } : r
+        r.id === id ? { ...r, priority } : r,
       ),
     });
   };
@@ -176,13 +250,19 @@ export function AgentCustomRulesStep({
           <div>
             <Label className="text-sm font-medium">Regras customizadas</Label>
             <p className="text-xs text-muted-foreground font-normal mt-0.5">
-              Instruções específicas da sua barbearia. Ordenadas por prioridade (maior = mais importante).
+              Instruções específicas da sua barbearia. Ordenadas por prioridade
+              (maior = mais importante).
             </p>
           </div>
           <div className="flex items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline" size="sm" disabled={customRules.length >= MAX_RULES}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={customRules.length >= MAX_RULES}
+                >
                   <Download className="h-4 w-4 mr-1.5" />
                   Importar pack
                 </Button>
@@ -232,70 +312,100 @@ export function AgentCustomRulesStep({
       <CardContent className="pt-0 px-4 pb-4">
         {customRules.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4">
-            Nenhuma regra customizada. Clique em &quot;Adicionar regra&quot; para criar.
+            Nenhuma regra customizada. Clique em &quot;Adicionar regra&quot;
+            para criar.
           </p>
         ) : (
           <ScrollArea className="h-[280px] pr-2">
             <ul className="space-y-2">
-              {filteredRules.map((rule) => (
-                <li
-                  key={rule.id}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border p-2.5 transition-colors",
-                    rule.enabled ? "bg-background" : "bg-muted/30 opacity-75"
-                  )}
-                >
-                  <Checkbox
-                    checked={rule.enabled}
-                    onCheckedChange={(c) => setEnabled(rule.id, c === true)}
-                    aria-label={`Ativar ou desativar regra: ${rule.title}`}
-                  />
-                  <span className="text-muted-foreground shrink-0" aria-hidden>
-                    <GripVertical className="h-4 w-4" />
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate">{rule.title}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {rule.do?.slice(0, 2).join(" · ") ?? "—"}
-                    </p>
-                  </div>
-                  <Select
-                    value={String(rule.priority)}
-                    onValueChange={(v) => setPriority(rule.id, parseInt(v, 10))}
+              {filteredRules.map((rule) => {
+                const riskMessage = detectRuleRisk(rule);
+                return (
+                  <li
+                    key={rule.id}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md border p-2.5 transition-colors",
+                      riskMessage
+                        ? "border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/10"
+                        : rule.enabled
+                          ? "bg-background"
+                          : "bg-muted/30 opacity-75",
+                    )}
                   >
-                    <SelectTrigger className="w-12 h-8 shrink-0">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PRIORITIES.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
-                          {n}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
-                    onClick={() => openEdit(rule)}
-                    aria-label={`Editar regra: ${rule.title}`}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
-                    onClick={() => remove(rule.id)}
-                    aria-label={`Remover regra: ${rule.title}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </li>
-              ))}
+                    <Checkbox
+                      checked={rule.enabled}
+                      onCheckedChange={(c) => setEnabled(rule.id, c === true)}
+                      aria-label={`Ativar ou desativar regra: ${rule.title}`}
+                    />
+                    <span
+                      className="text-muted-foreground shrink-0"
+                      aria-hidden
+                    >
+                      <GripVertical className="h-4 w-4" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <p className="font-medium text-sm truncate">
+                          {rule.title}
+                        </p>
+                        {riskMessage && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 rounded px-1.5 py-0.5 shrink-0 cursor-default">
+                                <AlertTriangle className="h-3 w-3" />
+                                Verificar
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs">
+                              {riskMessage}
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {rule.do?.slice(0, 2).join(" · ") ?? "—"}
+                      </p>
+                    </div>
+                    <Select
+                      value={String(rule.priority)}
+                      onValueChange={(v) =>
+                        setPriority(rule.id, parseInt(v, 10))
+                      }
+                    >
+                      <SelectTrigger className="w-12 h-8 shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PRIORITIES.map((n) => (
+                          <SelectItem key={n} value={String(n)}>
+                            {n}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => openEdit(rule)}
+                      aria-label={`Editar regra: ${rule.title}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-destructive hover:text-destructive"
+                      onClick={() => remove(rule.id)}
+                      aria-label={`Remover regra: ${rule.title}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           </ScrollArea>
         )}
@@ -308,7 +418,8 @@ export function AgentCustomRulesStep({
               {editingId ? "Editar regra" : "Nova regra"}
             </DialogTitle>
             <DialogDescription>
-              Defina o que o agente deve fazer (ou evitar) em situações específicas.
+              Defina o que o agente deve fazer (ou evitar) em situações
+              específicas.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
@@ -323,7 +434,9 @@ export function AgentCustomRulesStep({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="rule-priority">Prioridade (1–5, maior = mais importante)</Label>
+              <Label htmlFor="rule-priority">
+                Prioridade (1–5, maior = mais importante)
+              </Label>
               <Select
                 value={String(formPriority)}
                 onValueChange={(v) => setFormPriority(parseInt(v, 10))}
@@ -341,7 +454,9 @@ export function AgentCustomRulesStep({
               </Select>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="rule-do">O que fazer (uma instrução por linha, obrigatório)</Label>
+              <Label htmlFor="rule-do">
+                O que fazer (uma instrução por linha, obrigatório)
+              </Label>
               <Textarea
                 id="rule-do"
                 value={formDo}
@@ -352,7 +467,9 @@ export function AgentCustomRulesStep({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="rule-dont">O que evitar (opcional, uma por linha)</Label>
+              <Label htmlFor="rule-dont">
+                O que evitar (opcional, uma por linha)
+              </Label>
               <Textarea
                 id="rule-dont"
                 value={formDont}

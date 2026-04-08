@@ -2,7 +2,12 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { validateSlotForPublicReschedule } from "../ai/tools.js";
-import { barbershopHasAutomation, cancelReminderForAppointment, scheduleReminderForAppointment } from "../outbound/scheduled-messages.js";
+import {
+  barbershopHasAutomation,
+  cancelReminderForAppointment,
+  scheduleReminder2hForAppointment,
+  scheduleReminderForAppointment,
+} from "../outbound/scheduled-messages.js";
 
 const RESCHEDULE_CUTOFF_MINUTES = 120;
 
@@ -171,29 +176,40 @@ publicRouter.post("/appointments/:token/reschedule", async (req: Request, res: R
          WHERE a.id = $1 AND a.barbershop_id = $2`,
         [appointment.id, barbershopId]
       )
-      .then((r) => {
+      .then(async (r) => {
         const row = r.rows[0];
         if (!row) return;
-        return pool
-          .query<{ name: string }>(
-            `SELECT s.name FROM public.appointment_services aps JOIN public.services s ON s.id = aps.service_id WHERE aps.appointment_id = $1 ORDER BY aps.position`,
-            [appointment.id]
-          )
-          .then((sr) =>
-            scheduleReminderForAppointment({
-              barbershopId,
-              appointmentId: appointment.id,
-              publicToken: row.public_token,
-              clientPhone: row.client_phone,
-              clientName: row.client_name,
-              barberName: row.barber_name,
-              serviceNames: sr.rows.map((x) => x.name),
-              scheduledDate: scheduled_date,
-              scheduledTime: timeNorm,
-              slug: row.slug,
-              timezone: row.timezone,
-            })
-          );
+        const sr = await pool.query<{ name: string }>(
+          `SELECT s.name FROM public.appointment_services aps JOIN public.services s ON s.id = aps.service_id WHERE aps.appointment_id = $1 ORDER BY aps.position`,
+          [appointment.id]
+        );
+        const names = sr.rows.map((x) => x.name);
+        await scheduleReminderForAppointment({
+          barbershopId,
+          appointmentId: appointment.id,
+          publicToken: row.public_token,
+          clientPhone: row.client_phone,
+          clientName: row.client_name,
+          barberName: row.barber_name,
+          serviceNames: names,
+          scheduledDate: scheduled_date,
+          scheduledTime: timeNorm,
+          slug: row.slug,
+          timezone: row.timezone,
+        });
+        await scheduleReminder2hForAppointment({
+          barbershopId,
+          appointmentId: appointment.id,
+          publicToken: row.public_token,
+          clientPhone: row.client_phone,
+          clientName: row.client_name,
+          barberName: row.barber_name,
+          serviceNames: names,
+          scheduledDate: scheduled_date,
+          scheduledTime: timeNorm,
+          slug: row.slug,
+          timezone: row.timezone,
+        });
       });
   }).catch(() => {});
   res.status(200).json(updated ?? { ok: true });
@@ -386,10 +402,23 @@ publicRouter.post("/:slug/appointments", async (req: Request, res: Response): Pr
            WHERE b.id = $1 AND b.barbershop_id = $2`,
           [barber_id, barbershopId]
         )
-        .then((r) => {
+        .then(async (r) => {
           const row = r.rows[0];
           if (!row) return;
-          return scheduleReminderForAppointment({
+          await scheduleReminderForAppointment({
+            barbershopId,
+            appointmentId: appointment.id,
+            publicToken,
+            clientPhone: normalizedPhone,
+            clientName: client_name || null,
+            barberName: row.barber_name,
+            serviceNames: serviceNamesArr,
+            scheduledDate: scheduled_date,
+            scheduledTime: timeNorm,
+            slug,
+            timezone: row.timezone,
+          });
+          await scheduleReminder2hForAppointment({
             barbershopId,
             appointmentId: appointment.id,
             publicToken,

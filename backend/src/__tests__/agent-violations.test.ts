@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectViolations } from "../ai/agent.js";
+import { detectViolations, sanitizeClientFacingReply } from "../ai/agent.js";
 
 describe("detectViolations", () => {
   it("returns empty when reply is clean", () => {
@@ -28,5 +28,20 @@ describe("detectViolations", () => {
     expect(r).toContain("phone_ask");
     expect(r).toContain("uuid_leak");
     expect(r.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("sanitizeClientFacingReply", () => {
+  it("removes internal placeholder about ferramenta", () => {
+    const raw =
+      "*Total:* R$ [valor a ser informado na ferramenta]\nAguardamos você!";
+    const out = sanitizeClientFacingReply(raw);
+    expect(out).not.toMatch(/ferramenta/i);
+    expect(out).not.toMatch(/\[valor/);
+  });
+
+  it("strips UUIDs like stripIdsAndUuids", () => {
+    const out = sanitizeClientFacingReply("Seu id 550e8400-e29b-41d4-a716-446655440000 ok");
+    expect(out).not.toContain("550e8400");
   });
 });

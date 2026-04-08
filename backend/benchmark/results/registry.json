@@ -1,0 +1,490 @@
+[
+  {
+    "runId": "e3cdc26c-55fc-48bd-8e62-a7bbd8fa7f75",
+    "tag": "candidate",
+    "savedAt": "2026-04-03T02:18:12.666Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/e3cdc26c-55fc-48bd-8e62-a7bbd8fa7f75.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 28,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0.04,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "e3cdc26c-55fc-48bd-8e62-a7bbd8fa7f75",
+      "runAt": "2026-04-03T02:18:12.573Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 28
+    }
+  },
+  {
+    "runId": "cf84f53e-011b-47b9-81c6-bd9d14523b7d",
+    "tag": "candidate",
+    "savedAt": "2026-04-03T02:33:40.226Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/cf84f53e-011b-47b9-81c6-bd9d14523b7d.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 28,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "cf84f53e-011b-47b9-81c6-bd9d14523b7d",
+      "runAt": "2026-04-03T02:33:40.182Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 28
+    }
+  },
+  {
+    "runId": "10b1c6ba-5171-43c2-8f9a-776558654393",
+    "tag": "candidate",
+    "savedAt": "2026-04-03T02:34:26.492Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/10b1c6ba-5171-43c2-8f9a-776558654393.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 33,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "10b1c6ba-5171-43c2-8f9a-776558654393",
+      "runAt": "2026-04-03T02:34:26.442Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 33
+    }
+  },
+  {
+    "runId": "dc90f803-57c0-4ede-bdc0-b64311f2f993",
+    "tag": "candidate",
+    "savedAt": "2026-04-03T02:35:37.835Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/dc90f803-57c0-4ede-bdc0-b64311f2f993.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 33,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "dc90f803-57c0-4ede-bdc0-b64311f2f993",
+      "runAt": "2026-04-03T02:35:37.788Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 33
+    }
+  },
+  {
+    "runId": "d4398540-584e-4651-a70e-6a7bd63e0b68",
+    "tag": "archived",
+    "savedAt": "2026-04-03T02:51:59.210Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/d4398540-584e-4651-a70e-6a7bd63e0b68.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 37,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "d4398540-584e-4651-a70e-6a7bd63e0b68",
+      "runAt": "2026-04-03T02:51:59.157Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 37
+    }
+  },
+  {
+    "runId": "86dfbd09-211e-445b-8f9a-ca59e2ce3498",
+    "tag": "candidate",
+    "savedAt": "2026-04-03T02:52:09.967Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/86dfbd09-211e-445b-8f9a-ca59e2ce3498.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 37,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "86dfbd09-211e-445b-8f9a-ca59e2ce3498",
+      "runAt": "2026-04-03T02:52:09.920Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 37
+    }
+  },
+  {
+    "runId": "bc17d350-ef09-4464-b601-e96f08a189b7",
+    "tag": "archived",
+    "savedAt": "2026-04-03T03:07:47.613Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/bc17d350-ef09-4464-b601-e96f08a189b7.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 37,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 0,
+      "mediumViolations": 11,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        }
+      ]
+    },
+    "meta": {
+      "runId": "bc17d350-ef09-4464-b601-e96f08a189b7",
+      "runAt": "2026-04-03T03:07:47.547Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 37
+    }
+  },
+  {
+    "runId": "8c796b03-2727-46f8-acb2-2d02c94e8b67",
+    "tag": "production",
+    "savedAt": "2026-04-03T14:58:02.498Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/8c796b03-2727-46f8-acb2-2d02c94e8b67.json",
+    "summary": {
+      "avgScore": 99.61,
+      "minScore": 84,
+      "maxScore": 100,
+      "passedScenarios": 41,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 15,
+      "criticalViolations": 0,
+      "mediumViolations": 15,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.98,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 9
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 6
+        }
+      ]
+    },
+    "meta": {
+      "runId": "8c796b03-2727-46f8-acb2-2d02c94e8b67",
+      "runAt": "2026-04-03T14:58:02.195Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 41
+    }
+  },
+  {
+    "runId": "5bad0cef-eca9-4d21-9239-83f6d1c34a60",
+    "tag": "candidate",
+    "savedAt": "2026-04-06T01:14:32.326Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/5bad0cef-eca9-4d21-9239-83f6d1c34a60.json",
+    "summary": {
+      "avgScore": 93.81,
+      "minScore": 0,
+      "maxScore": 100,
+      "passedScenarios": 52,
+      "failedScenarios": 5,
+      "passThreshold": 60,
+      "totalViolations": 11,
+      "criticalViolations": 4,
+      "mediumViolations": 6,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.93,
+      "totalTokens": 345425,
+      "avgTokensPerScenario": 6060.09,
+      "avgElapsedMsPerScenario": 6760.26,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 4
+        },
+        {
+          "type": "pre_booking_claim",
+          "count": 4
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        },
+        {
+          "type": "redundant_info_request",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "5bad0cef-eca9-4d21-9239-83f6d1c34a60",
+      "runAt": "2026-04-06T01:07:37.244Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 57
+    }
+  },
+  {
+    "runId": "1b861321-fe56-4cf6-af3b-0d35fe12ea7d",
+    "tag": "candidate",
+    "savedAt": "2026-04-06T01:31:27.352Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/1b861321-fe56-4cf6-af3b-0d35fe12ea7d.json",
+    "summary": {
+      "avgScore": 99.77,
+      "minScore": 87,
+      "maxScore": 100,
+      "passedScenarios": 57,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 7,
+      "criticalViolations": 0,
+      "mediumViolations": 7,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.95,
+      "totalTokens": 353362,
+      "avgTokensPerScenario": 6199.33,
+      "avgElapsedMsPerScenario": 8836.82,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        },
+        {
+          "type": "loop_detected",
+          "count": 2
+        }
+      ]
+    },
+    "meta": {
+      "runId": "1b861321-fe56-4cf6-af3b-0d35fe12ea7d",
+      "runAt": "2026-04-06T01:22:51.913Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 57
+    }
+  },
+  {
+    "runId": "1cdc1a08-708a-4711-b145-c8dd823842c3",
+    "tag": "candidate",
+    "savedAt": "2026-04-06T17:42:18.745Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/1cdc1a08-708a-4711-b145-c8dd823842c3.json",
+    "summary": {
+      "avgScore": 98.44,
+      "minScore": 40,
+      "maxScore": 100,
+      "passedScenarios": 56,
+      "failedScenarios": 1,
+      "passThreshold": 60,
+      "totalViolations": 9,
+      "criticalViolations": 1,
+      "mediumViolations": 7,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.95,
+      "totalTokens": 362387,
+      "avgTokensPerScenario": 6357.67,
+      "avgElapsedMsPerScenario": 8406.72,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        },
+        {
+          "type": "loop_detected",
+          "count": 2
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        },
+        {
+          "type": "pre_booking_claim",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "1cdc1a08-708a-4711-b145-c8dd823842c3",
+      "runAt": "2026-04-06T17:34:07.073Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 57
+    }
+  },
+  {
+    "runId": "0330ee7b-d2e2-48f9-a131-7f8679d99f68",
+    "tag": "candidate",
+    "savedAt": "2026-04-06T17:55:54.616Z",
+    "filePath": "/Users/macteus/Projects/Pessoais/barber-harmony/backend/benchmark/results/0330ee7b-d2e2-48f9-a131-7f8679d99f68.json",
+    "summary": {
+      "avgScore": 99.54,
+      "minScore": 87,
+      "maxScore": 100,
+      "passedScenarios": 57,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 6,
+      "criticalViolations": 0,
+      "mediumViolations": 6,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.96,
+      "totalTokens": 358476,
+      "avgTokensPerScenario": 6289.05,
+      "avgElapsedMsPerScenario": 9395.7,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 5
+        },
+        {
+          "type": "redundant_info_request",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "0330ee7b-d2e2-48f9-a131-7f8679d99f68",
+      "runAt": "2026-04-06T17:46:47.169Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 57
+    }
+  }
+]

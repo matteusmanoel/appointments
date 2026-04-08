@@ -28,7 +28,7 @@ describe("scheduled-messages", () => {
     try {
       fixtures = await createScheduledMessagesFixtures({
         billingPlan: "pro",
-        appointmentOffsetDays: 1,
+        appointmentOffsetDays: 2,  // 2 days out so 24h reminder is always in the future
         appointmentTime: "14:00",
       });
       fixturesSweep1 = await createScheduledMessagesFixtures({

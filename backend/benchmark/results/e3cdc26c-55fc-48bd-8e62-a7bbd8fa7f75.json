@@ -1,0 +1,1260 @@
+{
+  "meta": {
+    "runId": "e3cdc26c-55fc-48bd-8e62-a7bbd8fa7f75",
+    "runAt": "2026-04-03T02:18:12.573Z",
+    "mode": "mock",
+    "judgeEnabled": true,
+    "totalScenarios": 28
+  },
+  "summary": {
+    "avgScore": 100,
+    "minScore": 100,
+    "maxScore": 100,
+    "passedScenarios": 28,
+    "failedScenarios": 0,
+    "passThreshold": 60,
+    "totalViolations": 11,
+    "criticalViolations": 0,
+    "mediumViolations": 11,
+    "lightViolations": 0,
+    "taskCompletionRate": 1,
+    "totalTokens": 0,
+    "avgTokensPerScenario": 0,
+    "avgElapsedMsPerScenario": 0.04,
+    "topViolations": [
+      {
+        "type": "loop_detected",
+        "count": 6
+      },
+      {
+        "type": "missing_required_tool",
+        "count": 5
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "scenarioId": "greet-01-vague",
+      "scenarioName": "Saudação vaga",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi",
+          "agentReply": "Oi! Tudo certo. Quer ver os serviços ou já agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 1
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 1
+    },
+    {
+      "scenarioId": "greet-02-seco",
+      "scenarioName": "Cliente seco",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Salve",
+          "agentReply": "Oi! Tudo certo. Quer ver os serviços ou já agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "greet-03-cordial",
+      "scenarioName": "Cliente cordial",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Bom dia! Tudo bem? Gostaria de agendar um horário.",
+          "agentReply": "Oi! Tudo certo. Quer ver os serviços ou já agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-01-direto",
+      "scenarioName": "Cliente direto ao ponto",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero cortar o cabelo 2026-04-05 às 10:00",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 0,
+          "excerpt": "Required tools not called: check_availability"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-02-indeciso",
+      "scenarioName": "Cliente indeciso",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero ir aí mas não sei bem o que fazer",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Algo rápido mesmo",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "loop_detected",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Perfeito! Vou verificar a disponibilidade pra você."
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente sugere serviços ao invés de perguntar em loop",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-03-qualquer-barbeiro",
+      "scenarioName": "Qualquer barbeiro",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero fazer a barba. Qualquer barbeiro, qualquer horário amanhã",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 0,
+          "excerpt": "Required tools not called: get_next_slots"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente propõe horários concretos",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-04-horario-exato",
+      "scenarioName": "Cliente pede horário exato",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Corte de cabelo 2026-04-06 às 14:30 com o João",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 0,
+          "excerpt": "Required tools not called: check_availability"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-05-primeiro-horario",
+      "scenarioName": "Primeiro horário disponível",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Qual o primeiro horário disponível amanhã pra corte?",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 0,
+          "excerpt": "Required tools not called: get_next_slots"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Sugere horário razoável de abertura (7h-12h) ou informa lotação",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-06-hoje",
+      "scenarioName": "Horário hoje sem hora definida",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Tem horário hoje pra corte?",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 0,
+          "excerpt": "Required tools not called: get_next_slots"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-07-mudanca-servico",
+      "scenarioName": "Mudança de serviço no meio da conversa",
+      "tags": [
+        "booking",
+        "multi-turn",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar um corte 2026-04-05 às 10:00",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Na verdade, quero barba completa, não corte",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "loop_detected",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Perfeito! Vou verificar a disponibilidade pra você."
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "book-08-conflito-agenda",
+      "scenarioName": "Conflito de agenda",
+      "tags": [
+        "booking",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar corte 2026-04-04 às 09:00",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Não tem jeito de encaixar nesse horário?",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "loop_detected",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Perfeito! Vou verificar a disponibilidade pra você."
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Oferece alternativas quando há conflito",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mgmt-01-cancelamento",
+      "scenarioName": "Cancelamento simples",
+      "tags": [
+        "cancellation",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Preciso cancelar meu horário de amanhã",
+          "agentReply": "Entendido. Vou verificar seu agendamento e cancelar pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente busca o agendamento antes de confirmar cancelamento",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mgmt-02-reagendamento",
+      "scenarioName": "Reagendamento",
+      "tags": [
+        "reschedule",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero mudar meu horário de quinta para sexta",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente consulta agendamentos existentes",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mgmt-03-no-show-retorno",
+      "scenarioName": "Retorno após no-show",
+      "tags": [
+        "no-show",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi, quero marcar novamente",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mgmt-04-lista-espera",
+      "scenarioName": "Lista de espera",
+      "tags": [
+        "waitlist",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Não tem nenhum horário hoje de jeito nenhum?",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Tudo bem, me coloca na lista de espera então",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "loop_detected",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente menciona lista de espera quando agenda está cheia",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mem-01-o-de-sempre",
+      "scenarioName": "Cliente pede 'o de sempre'",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Faz o de sempre pra mim amanhã",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente tenta recuperar preferência ou pede confirmação do serviço",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mem-02-contexto-repetido",
+      "scenarioName": "Agente não repete pergunta",
+      "tags": [
+        "booking",
+        "memory",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi, sou o Carlos. Quero agendar uma barba completa",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Qualquer horário na quarta-feira",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "loop_detected",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Perfeito! Vou verificar a disponibilidade pra você."
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "mem-03-cliente-recorrente",
+      "scenarioName": "Cliente recorrente com preferência conhecida",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Já sou cliente, faço sempre corte + barba. Quero marcar de novo",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente reconhece contexto e avança para data/hora",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-01-fora-escopo",
+      "scenarioName": "Pedido fora do escopo (pizza)",
+      "tags": [
+        "out-of-scope"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Vocês entregam pizza?",
+          "agentReply": "Aqui a gente cuida de barba e corte de cabelo. Posso ajudar com agendamento?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-02-servico-inexistente",
+      "scenarioName": "Serviço que não existe",
+      "tags": [
+        "out-of-scope",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Vocês fazem terapia capilar?",
+          "agentReply": "Aqui a gente cuida de barba e corte de cabelo. Posso ajudar com agendamento?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Informa que não tem o serviço",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-03-handoff",
+      "scenarioName": "Pedido de atendente humano",
+      "tags": [
+        "handoff"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero falar com um atendente humano",
+          "agentReply": "Claro! Um atendente vai te atender em instantes.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-04-reativacao",
+      "scenarioName": "Reativação de cliente sumido",
+      "tags": [
+        "reactivation"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Faz tempo que não apareço. Quero voltar",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-05-cobranca-amigavel",
+      "scenarioName": "Cobrança amigável de pendência",
+      "tags": [
+        "debt"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar um corte",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-06-mensagem-ambigua",
+      "scenarioName": "Mensagem completamente ambígua",
+      "tags": [
+        "edge",
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "pode ser",
+          "agentReply": "Oi! Tudo certo. Quer ver os serviços ou já agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-07-follow-up",
+      "scenarioName": "Follow-up pós-atendimento",
+      "tags": [
+        "follow-up"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Foi ótimo! Adorei o atendimento",
+          "agentReply": "Olá! Posso ajudar com agendamento ou informações sobre nossos serviços. O que você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-08-multiplos-servicos",
+      "scenarioName": "Cliente pede combo de serviços",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero fazer corte, barba e sobrancelha. Tem horário?",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Trata múltiplos serviços corretamente",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-09-sem-dados",
+      "scenarioName": "Agendamento sem nome",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero corte amanhã às 09:00 com qualquer barbeiro",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    },
+    {
+      "scenarioId": "edge-10-preferencia-barbeiro-indisponivel",
+      "scenarioName": "Barbeiro preferido indisponível",
+      "tags": [
+        "booking",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero amanhã às 14:00 com o Pedro",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "E com outro barbeiro?",
+          "agentReply": "Perfeito! Vou verificar a disponibilidade pra você.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 0
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "loop_detected",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Perfeito! Vou verificar a disponibilidade pra você."
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Quando preferido indisponível, oferece alternativa",
+          "turnIndex": 1,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 0
+    }
+  ]
+}

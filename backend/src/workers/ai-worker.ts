@@ -2,7 +2,7 @@ import { pool } from "../db.js";
 import { config } from "../config.js";
 import { decrypt } from "../integrations/encryption.js";
 import { sendText } from "../integrations/uazapi/client.js";
-import { runAgent, detectViolations } from "../ai/agent.js";
+import { runAgent, detectViolations, sanitizeClientFacingReply } from "../ai/agent.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
@@ -22,10 +22,10 @@ function isUndefinedTableOrColumn(e: unknown): boolean {
 }
 
 function sanitizeOutgoingText(text: string): string {
-  // Never leak internal IDs to WhatsApp, even if the model outputs them.
+  // Placeholders / IDs: shared sanitizer from agent, then WhatsApp formatting.
   const uuidRegex = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
   let out =
-    (text ?? "")
+    sanitizeClientFacingReply(text ?? "")
       // Convert Markdown bold to WhatsApp bold (single asterisk)
       .replace(/\*\*([^*]+)\*\*/g, "*$1*")
       .replace(/\s*\(ID:\s*[0-9a-f-]{36}\s*\)/gi, "")
@@ -47,7 +47,38 @@ function sanitizeOutgoingText(text: string): string {
     });
   }
 
+  // Safety net: collapse bulleted time lists into a 2-option conversational prompt.
+  // This prevents "robotized" slot dumps from reaching the client.
+  const bulletTimeLines = out
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => /^[-•]\s*\*?\d{1,2}([:h]\d{2})?\*?\b/i.test(l));
+  if (bulletTimeLines.length >= 2 && /\bhor[aá]rios?\s+dispon/i.test(out)) {
+    const times: string[] = [];
+    for (const line of bulletTimeLines) {
+      const m = line.match(/(\d{1,2})\s*[:h]\s*(\d{2})/i);
+      const hOnly = line.match(/(\d{1,2})\s*h\b/i);
+      if (m) {
+        const h = parseInt(m[1] ?? "", 10);
+        const mm = String(m[2] ?? "").padStart(2, "0");
+        if (Number.isFinite(h)) times.push(mm === "00" ? `${h}h` : `${h}h${mm}`);
+      } else if (hOnly) {
+        const h = parseInt(hOnly[1] ?? "", 10);
+        if (Number.isFinite(h)) times.push(`${h}h`);
+      }
+      if (times.length >= 2) break;
+    }
+    if (times.length >= 2) {
+      out = `Tenho às *${times[0]}* ou às *${times[1]}*. Qual prefere?`;
+    }
+  }
+
   return out;
+}
+
+function isPermanentUazapiSendError(message: string): boolean {
+  const m = (message ?? "").toLowerCase();
+  return m.includes("is not on whatsapp") || m.includes("not on whatsapp");
 }
 
 async function getNextJob(): Promise<{
@@ -174,7 +205,7 @@ async function isAiEnabled(barbershopId: string): Promise<boolean> {
 async function ensureAiSettingsRow(barbershopId: string): Promise<void> {
   await pool.query(
     `INSERT INTO public.barbershop_ai_settings (barbershop_id, enabled, timezone, model, temperature, updated_at)
-     VALUES ($1, true, 'America/Sao_Paulo', 'gpt-4o-mini', 0.7, now())
+     VALUES ($1, true, 'America/Sao_Paulo', 'gpt-4o-mini', 0.3, now())
      ON CONFLICT (barbershop_id) DO NOTHING`,
     [barbershopId]
   );
@@ -230,14 +261,18 @@ async function processOneJob(): Promise<boolean> {
     let reply: string;
 
     if (!aiEnabled) {
-      reply = FALLBACK_MESSAGE;
+      console.info("[ai-worker] jobId=%s AI is disabled, skipping silently barbershopId=%s", jobId, barbershopId);
+      await updateConversationLastMessage(conversationId);
+      await markJobDone(jobId);
+      return true;
     } else if (!config.openaiApiKey) {
       reply = FALLBACK_MESSAGE;
     } else {
       const usage = await getUsageAndLimit(barbershopId);
       if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
-        reply = "Desculpe, o limite de mensagens do seu plano foi atingido neste mês. Entre em contato com o suporte para fazer upgrade ou aguardar o próximo ciclo.";
+        reply =
+          "No momento estamos com alta demanda por aqui. Um atendente da equipe te responde em instantes, combinado?";
       } else {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
@@ -246,7 +281,7 @@ async function processOneJob(): Promise<boolean> {
         const result = await runAgent(barbershopId, conversationId, fromPhone, openai, {
           persistAssistantMessages: false,
         });
-      reply = result.reply;
+      reply = sanitizeClientFacingReply(result.reply);
       if (result.state === "appointment_created") {
         await enqueueOutboundEvent(barbershopId, "appointment_created", {
           conversation_id: conversationId,
@@ -258,6 +293,27 @@ async function processOneJob(): Promise<boolean> {
         [conversationId]
       );
       const isSandbox = convRow.rows[0]?.is_sandbox ?? true;
+
+      // Safety net: if the reply claims the booking was confirmed but the agent never
+      // set a state that proves a real DB write, the model may have hallucinated.
+      const FALSE_CONFIRMATION_RE =
+        /agendamento\s+confirmado|aguardamos\s+você\b|está\s+(marcado|agendado|confirmado)\b|\bconfirmei\s+(o|seu|a\s+sua?)\s+(agendamento|remarca[cç][aã]o|horário)\b/i;
+      const REAL_CONFIRMATION_STATES = new Set<string>([
+        "appointment_created",
+        "appointment_rescheduled",
+        "appointment_cancelled",
+        "plan_subscribed",
+      ]);
+      if (FALSE_CONFIRMATION_RE.test(reply) && !REAL_CONFIRMATION_STATES.has(result.state ?? "")) {
+        console.warn(
+          "[ai-worker] jobId=%s suppressed hallucinated booking confirmation (state=%s) conversationId=%s",
+          jobId,
+          result.state ?? "—",
+          conversationId
+        );
+        reply =
+          "Não consegui validar essa confirmação aqui no sistema. Um atendente confere pra você em instantes, combinado?";
+      }
       if (!isSandbox && reply) {
         const violations = detectViolations(reply);
         const emojiCount = (reply.match(/\p{Extended_Pictographic}/gu) ?? []).length;
@@ -267,7 +323,14 @@ async function processOneJob(): Promise<boolean> {
           [barbershopId, conversationId, violations, emojiCount]
         ).catch((e) => console.warn("[ai-worker] failed to insert quality metrics:", e));
       }
-      console.info("[ai-worker] jobId=%s AI reply len=%s state=%s", jobId, reply.length, result.state ?? "—");
+      console.info(
+        "[ai-worker] jobId=%s AI reply len=%s state=%s prompt_tokens=%s completion_tokens=%s",
+        jobId,
+        reply.length,
+        result.state ?? "—",
+        result.usage?.prompt_tokens ?? "—",
+        result.usage?.completion_tokens ?? "—"
+      );
       }
     }
 
@@ -291,23 +354,60 @@ async function processOneJob(): Promise<boolean> {
       const jitterMs = typingSimulation?.enabled ? (typingSimulation.jitterMs ?? 100) : 0;
 
       // Allow the model to send multiple WhatsApp messages using a delimiter.
+      // Empty reply means human handoff — do not send any message.
       const parts = String(reply ?? "")
         .split("[[MSG]]")
         .map((p) => sanitizeOutgoingText(p))
         .filter((p) => p.length > 0);
-      const toSend = parts.length ? parts : [sanitizeOutgoingText(reply)];
+      if (!parts.length) {
+        console.info("[ai-worker] jobId=%s empty reply, skipping send (human handoff)", jobId);
+        await updateConversationLastMessage(conversationId);
+        await markJobDone(jobId);
+        return true;
+      }
+      const toSend = parts;
       for (const part of toSend) {
         if (baseDelayMs > 0 || msPerChar > 0) {
           const delay = baseDelayMs + part.length * msPerChar + (jitterMs > 0 ? Math.floor(Math.random() * jitterMs) : 0);
           if (delay > 0) await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
         }
-        const sent = await sendText({ token, number: fromPhone, text: part });
-        const providerMessageId = extractProviderMessageId(sent);
-        await pool.query(
-          `INSERT INTO public.ai_messages (conversation_id, role, content, provider_message_id, delivery_status)
-           VALUES ($1, 'assistant', $2, $3, 'sent')`,
-          [conversationId, part, providerMessageId]
-        );
+        try {
+          const sent = await sendText({ token, number: fromPhone, text: part });
+          const providerMessageId = extractProviderMessageId(sent);
+          await pool.query(
+            `INSERT INTO public.ai_messages (conversation_id, role, content, provider_message_id, delivery_status)
+             VALUES ($1, 'assistant', $2, $3, 'sent')`,
+            [conversationId, part, providerMessageId]
+          );
+        } catch (e) {
+          const errMsg = e instanceof Error ? e.message : String(e);
+          if (isPermanentUazapiSendError(errMsg)) {
+            console.warn("[ai-worker] jobId=%s permanent delivery failure: %s", jobId, errMsg);
+            // Persist the attempted message as failed, and route to human followup (do not retry job).
+            await pool.query(
+              `INSERT INTO public.ai_messages (conversation_id, role, content, delivery_status)
+               VALUES ($1, 'assistant', $2, 'failed')`,
+              [conversationId, part]
+            ).catch(() => {});
+            try {
+              await pool.query(
+                `UPDATE public.ai_conversations SET needs_human_followup = true, updated_at = now() WHERE id = $1`,
+                [conversationId]
+              );
+            } catch { /* optional column */ }
+            try {
+              await pool.query(
+                `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
+                 VALUES ($1, $2, 'pending_review', 'delivery_failure', $3)`,
+                [barbershopId, conversationId, "Falha permanente ao enviar mensagem (número não está no WhatsApp)"]
+              );
+            } catch { /* optional table */ }
+            await updateConversationLastMessage(conversationId);
+            await markJobDone(jobId);
+            return true;
+          }
+          throw e;
+        }
       }
       console.info("[ai-worker] jobId=%s sent to fromPhone=%s", jobId, fromPhone);
     } else {
@@ -320,6 +420,23 @@ async function processOneJob(): Promise<boolean> {
     const errMsg = e instanceof Error ? e.message : String(e);
     console.error(`[ai-worker] job ${jobId} error:`, errMsg);
     await markJobFailed(jobId, errMsg, attempts);
+    if (attempts >= (config.aiJobMaxAttempts ?? 5)) {
+      // Mark conversation for human followup when job exhausts all retries
+      try {
+        await pool.query(
+          `UPDATE public.ai_conversations SET needs_human_followup = true, updated_at = now() WHERE id = $1`,
+          [conversationId]
+        );
+      } catch { /* column may not exist yet — safe to ignore */ }
+      try {
+        await pool.query(
+          `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
+           VALUES ($1, $2, 'pending_review', 'job_failure', 'Job atingiu limite máximo de tentativas')`,
+          [barbershopId, conversationId]
+        );
+      } catch { /* table may not exist yet — safe to ignore */ }
+      console.warn("[ai-worker] job %s dead (maxAttempts=%s), conversation %s marked for human followup", jobId, attempts, conversationId);
+    }
     return true;
   }
 }

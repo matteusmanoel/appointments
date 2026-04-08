@@ -25,6 +25,7 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,8 +53,11 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      await refetchProfile();
+      // Mark tour trigger BEFORE refetch so the MainLayout useEffect sees it when profile updates
       markSetupTourTrigger();
+      // Close modal immediately without waiting for profile cache to propagate
+      setDone(true);
+      refetchProfile();
     } catch (e) {
       toastError(e instanceof Error ? e.message : "Erro ao alterar senha");
     } finally {
@@ -62,7 +66,7 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
   };
 
   return (
-    <Dialog open={open}>
+    <Dialog open={open && !done}>
       <DialogContent
         className="sm:max-w-md"
         onPointerDownOutside={(e) => e.preventDefault()}

@@ -13,6 +13,7 @@ import { publicRouter } from "./public.js";
 import { toolsRouter } from "./tools.js";
 import { webhooksRouter } from "./webhooks.js";
 import { integrationsRouter } from "./integrations.js";
+import { plansRouter } from "./plans.js";
 
 export const apiRouter = Router();
 
@@ -30,3 +31,4 @@ apiRouter.use("/loyalty", loyaltyRouter);
 apiRouter.use("/public", publicRouter);
 apiRouter.use("/tools", toolsRouter);
 apiRouter.use("/webhooks", webhooksRouter);
+apiRouter.use("/plans", plansRouter);

@@ -34,9 +34,13 @@ export type CustomRule = {
 export type AgentProfile = {
   tonePreset: string;
   emojiLevel: EmojiLevel;
+  /** Emojis específicos permitidos (vazio = todos permitidos dentro do emojiLevel). */
+  allowedEmojis?: string[];
   slangLevel: SlangLevel;
   verbosity: Verbosity;
   salesStyle: SalesStyle;
+  /** Habilita envio de figurinhas pelo agente (requer stickers cadastrados). */
+  stickersEnabled?: boolean;
   hardRules?: AgentProfileHardRules;
   /** Regras customizadas da barbearia (ordenadas por prioridade no prompt). */
   customRules?: CustomRule[];
@@ -66,10 +70,11 @@ const FORBIDDEN_PATTERNS: Array<{ pattern: RegExp | string; reason: string }> = 
 ];
 
 const TONE_PRESET_SNIPPETS: Record<string, string> = {
-  default: "Fale estilo WhatsApp: curto, simpático, descolado. Use gírias leves. Emojis só quando fizer sentido.",
+  default:
+    "Fale estilo WhatsApp: curto e simpático. Evite gírias fortes.",
   formal: "Fale de forma educada e profissional, sem gírias. Mensagens claras e objetivas.",
   casual: "Fale bem descolado e próximo, como um amigo. Pode usar gírias e expressões do dia a dia.",
-  minimal: "Seja extremamente objetivo. Respostas curtas, sem enrolação. Mínimo de emojis.",
+  minimal: "Seja extremamente objetivo. Respostas curtas, sem enrolação.",
   sales: "Seja proativo em sugerir serviços e agendamentos. Direto ao ponto, com foco em converter.",
 };
 
@@ -104,7 +109,15 @@ function profileToSnippet(profile: AgentProfile): string {
     parts.push(`Seu papel: ${profile.role.trim()}.`);
   }
   parts.push(TONE_PRESET_SNIPPETS[profile.tonePreset] ?? TONE_PRESET_SNIPPETS.default);
-  parts.push(EMOJI_LEVEL_SNIPPETS[profile.emojiLevel] ?? EMOJI_LEVEL_SNIPPETS.medium);
+  const emojiSnippet = EMOJI_LEVEL_SNIPPETS[profile.emojiLevel] ?? EMOJI_LEVEL_SNIPPETS.none;
+  if (profile.emojiLevel !== "none" && profile.allowedEmojis && profile.allowedEmojis.length > 0) {
+    parts.push(`${emojiSnippet} Quando usar emojis, use SOMENTE estes: ${profile.allowedEmojis.join(" ")}.`);
+  } else {
+    parts.push(emojiSnippet);
+  }
+  if (profile.stickersEnabled) {
+    parts.push("Você pode enviar uma figurinha (send_sticker) após confirmações de agendamento ou saudações calorosas, no máximo 1 por conversa.");
+  }
   parts.push(SLANG_LEVEL_SNIPPETS[profile.slangLevel] ?? SLANG_LEVEL_SNIPPETS.medium);
   parts.push(VERBOSITY_SNIPPETS[profile.verbosity] ?? VERBOSITY_SNIPPETS.normal);
   parts.push(SALES_STYLE_SNIPPETS[profile.salesStyle] ?? SALES_STYLE_SNIPPETS.soft);
@@ -320,12 +333,12 @@ export function validateAdditionalInstructions(text: string | null | undefined):
   return { valid: errors.length === 0, errors };
 }
 
-/** Default profile when none is set. */
+/** Default profile when none is set (alinha com fluxo objetivo de agendamento). */
 export const DEFAULT_AGENT_PROFILE: AgentProfile = {
-  tonePreset: "default",
-  emojiLevel: "medium",
-  slangLevel: "medium",
-  verbosity: "normal",
+  tonePreset: "minimal",
+  emojiLevel: "none",
+  slangLevel: "low",
+  verbosity: "short",
   salesStyle: "soft",
   hardRules: {
     doNotAskPhone: true,
@@ -377,9 +390,13 @@ export function normalizeProfile(profile: unknown): AgentProfile {
   return {
     tonePreset: typeof p.tonePreset === "string" ? p.tonePreset : DEFAULT_AGENT_PROFILE.tonePreset,
     emojiLevel: ["none", "low", "medium"].includes(String(p.emojiLevel)) ? (p.emojiLevel as EmojiLevel) : DEFAULT_AGENT_PROFILE.emojiLevel,
+    allowedEmojis: Array.isArray(p.allowedEmojis) && (p.allowedEmojis as unknown[]).every((e) => typeof e === "string")
+      ? (p.allowedEmojis as string[]).filter(Boolean)
+      : undefined,
     slangLevel: ["low", "medium", "high"].includes(String(p.slangLevel)) ? (p.slangLevel as SlangLevel) : DEFAULT_AGENT_PROFILE.slangLevel,
     verbosity: ["short", "normal"].includes(String(p.verbosity)) ? (p.verbosity as Verbosity) : DEFAULT_AGENT_PROFILE.verbosity,
     salesStyle: ["soft", "direct"].includes(String(p.salesStyle)) ? (p.salesStyle as SalesStyle) : DEFAULT_AGENT_PROFILE.salesStyle,
+    stickersEnabled: typeof p.stickersEnabled === "boolean" ? p.stickersEnabled : undefined,
     hardRules: p.hardRules && typeof p.hardRules === "object" ? (p.hardRules as AgentProfileHardRules) : DEFAULT_AGENT_PROFILE.hardRules,
     customRules: Array.isArray(p.customRules)
       ? (p.customRules as unknown[]).map(normalizeOneCustomRule).filter((r): r is CustomRule => r != null)

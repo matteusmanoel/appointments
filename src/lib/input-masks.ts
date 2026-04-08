@@ -1,4 +1,15 @@
 /**
+ * Formata um número para exibição, removendo DDI 55 se presente (13 dígitos → 11 BR).
+ * Use em contextos de leitura/exibição. Para edição use formatPhoneBR diretamente.
+ */
+export function formatPhoneDisplay(phone: string): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  const br =
+    digits.length === 13 && digits.startsWith("55") ? digits.slice(2) : digits;
+  return formatPhoneBR(br);
+}
+
+/**
  * Formata apenas dígitos como telefone BR: (11) 98765-4321 ou (11) 3456-7890
  */
 export function formatPhoneBR(digits: string): string {

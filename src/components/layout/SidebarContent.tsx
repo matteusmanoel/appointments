@@ -19,6 +19,7 @@ import {
   BarChart3,
   HelpCircle,
   MessageCircle,
+  CreditCard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +45,7 @@ const navigation = [
   { name: "Clientes", href: "/app/clientes", icon: Users },
   { name: "Atendimento", href: "/app/whatsapp-interno", icon: MessageCircle },
   { name: "Fidelidade", href: "/app/fidelidade", icon: Trophy, pro: true },
+  { name: "Planos", href: "/app/planos", icon: CreditCard },
   { name: "Relatórios", href: "/app/relatorios", icon: BarChart3 },
 ];
 

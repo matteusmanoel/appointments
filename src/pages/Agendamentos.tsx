@@ -73,6 +73,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -87,7 +88,7 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
-import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
+import { formatPhoneBR, formatPhoneDisplay, parsePhoneBR } from "@/lib/input-masks";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -708,6 +709,12 @@ export default function Agendamentos() {
     enabled: !!editingAppointment && !!editDateStr,
   });
 
+  /** Refetch todas as queries de agenda + métricas que dependem dos mesmos dados. */
+  const invalidateAppointmentRelatedQueries = () => {
+    void queryClient.invalidateQueries({ queryKey: ["appointments"] });
+    void queryClient.invalidateQueries({ queryKey: ["reports", "mvp-metrics"] });
+  };
+
   const createMutation = useMutation({
     mutationFn: async (body: AppointmentFormValues) => {
       const ids = body.service_ids ?? [];
@@ -737,7 +744,7 @@ export default function Agendamentos() {
       return created;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      invalidateAppointmentRelatedQueries();
       setFormOpen(false);
       setSlotForCreate(null);
       setPriceManuallyEdited(false);
@@ -760,7 +767,7 @@ export default function Agendamentos() {
       };
     }) => appointmentsApi.update(id, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      invalidateAppointmentRelatedQueries();
       setFormOpen(false);
       setEditingAppointment(null);
       setPriceManuallyEdited(false);
@@ -784,7 +791,7 @@ export default function Agendamentos() {
       };
     }) => appointmentsApi.update(id, body),
     onSuccess: (updated) => {
-      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      invalidateAppointmentRelatedQueries();
       setEditingAppointment((cur) =>
         cur && cur.id === updated.id
           ? ({ ...cur, ...updated } as Appointment)
@@ -834,7 +841,7 @@ export default function Agendamentos() {
   const cancelMutation = useMutation({
     mutationFn: (id: string) => appointmentsApi.cancel(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+      invalidateAppointmentRelatedQueries();
       setCancelTarget(null);
     },
   });
@@ -1085,7 +1092,7 @@ export default function Agendamentos() {
             await appointmentsApi.update(created.id, { price: desiredPrice });
           }
           await appointmentsApi.cancel(editingAppointment.id);
-          queryClient.invalidateQueries({ queryKey: ["appointments"] });
+          invalidateAppointmentRelatedQueries();
           toastSuccess("Agendamento movido para outro barbeiro.");
           setFormOpen(false);
           setEditingAppointment(null);
@@ -1185,9 +1192,9 @@ export default function Agendamentos() {
         <Tabs
           value={viewMode}
           onValueChange={(v) => setViewMode(v as "grade" | "lista")}
-          className="w-full flex flex-col flex-1 min-h-[calc(100vh-8rem)]"
+          className="w-full flex flex-col flex-1 min-h-0"
         >
-          <TabsList className="mb-4 w-full grid grid-cols-2">
+          <TabsList className="mb-0 w-full grid grid-cols-2">
             <TabsTrigger value="grade" className="gap-2">
               <LayoutGrid className="w-4 h-4" />
               Grade
@@ -1200,7 +1207,7 @@ export default function Agendamentos() {
 
           <TabsContent
             value="grade"
-            className="mt-0 flex flex-col flex-1 min-h-0"
+            className="mt-0 pt-4 flex flex-col flex-1 min-h-0"
           >
             <div className="stat-card mb-4 shrink-0">
               <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] gap-3 items-center">
@@ -1618,9 +1625,9 @@ export default function Agendamentos() {
 
           <TabsContent
             value="lista"
-            className="mt-0 flex flex-col flex-1 min-h-0"
+            className="mt-0 flex flex-col flex-1 min-h-0 overflow-hidden"
           >
-            <div className="space-y-4 flex flex-col flex-1 min-h-0">
+            <div className="flex flex-col flex-1 min-h-0 gap-4">
               <FiltersBar
                 left={
                   <FiltersBarField label="Buscar" width="barber">
@@ -1693,6 +1700,7 @@ export default function Agendamentos() {
                   )}
                 </div>
               ) : (
+                <div className="overflow-y-auto flex-1 min-h-0 -mx-1 px-1 pb-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {listAppointments.map((apt) => (
                     <div
@@ -1716,7 +1724,7 @@ export default function Agendamentos() {
                           </p>
                           {apt.client_phone && (
                             <p className="text-xs text-muted-foreground">
-                              {formatPhoneBR(apt.client_phone)}
+                              {formatPhoneDisplay(apt.client_phone)}
                             </p>
                           )}
                         </div>
@@ -1772,6 +1780,7 @@ export default function Agendamentos() {
                       </div>
                     </div>
                   ))}
+                </div>
                 </div>
               )}
             </div>
@@ -1959,7 +1968,7 @@ export default function Agendamentos() {
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                       <span className="inline-flex items-center gap-2">
                         <Phone className="h-4 w-4" />
-                        {formatPhoneBR(editingAppointment.client_phone)}
+                        {formatPhoneDisplay(editingAppointment.client_phone)}
                       </span>
                       <button
                         type="button"
@@ -2480,7 +2489,7 @@ export default function Agendamentos() {
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
-              <FormLabel htmlFor="complete-time">Horário de término</FormLabel>
+              <Label htmlFor="complete-time">Horário de término</Label>
               <Input
                 id="complete-time"
                 type="time"

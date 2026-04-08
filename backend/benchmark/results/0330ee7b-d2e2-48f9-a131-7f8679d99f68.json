@@ -1,0 +1,3124 @@
+{
+  "meta": {
+    "runId": "0330ee7b-d2e2-48f9-a131-7f8679d99f68",
+    "runAt": "2026-04-06T17:46:47.169Z",
+    "mode": "live",
+    "judgeEnabled": false,
+    "totalScenarios": 57
+  },
+  "summary": {
+    "avgScore": 99.54,
+    "minScore": 87,
+    "maxScore": 100,
+    "passedScenarios": 57,
+    "failedScenarios": 0,
+    "passThreshold": 60,
+    "totalViolations": 6,
+    "criticalViolations": 0,
+    "mediumViolations": 6,
+    "lightViolations": 0,
+    "taskCompletionRate": 0.96,
+    "totalTokens": 358476,
+    "avgTokensPerScenario": 6289.05,
+    "avgElapsedMsPerScenario": 9395.7,
+    "topViolations": [
+      {
+        "type": "missing_required_tool",
+        "count": 5
+      },
+      {
+        "type": "redundant_info_request",
+        "count": 1
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "scenarioId": "greet-01-vague",
+      "scenarioName": "Saudação vaga",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA![[MSG]]Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 226
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 226
+    },
+    {
+      "scenarioId": "greet-02-seco",
+      "scenarioName": "Cliente seco",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Salve",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA![[MSG]]Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 84
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 84
+    },
+    {
+      "scenarioId": "greet-03-cordial",
+      "scenarioName": "Cliente cordial",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Bom dia! Tudo bem? Gostaria de agendar um horário.",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! 😊 Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4184,
+            "completionTokens": 26,
+            "totalTokens": 4210
+          },
+          "elapsedMs": 2791
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4210,
+      "totalElapsedMs": 2791
+    },
+    {
+      "scenarioId": "greet-04-tudo-bem",
+      "scenarioName": "Saudação social com pergunta de bem-estar",
+      "tags": [
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Olá tudo bem?",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4174,
+            "completionTokens": 25,
+            "totalTokens": 4199
+          },
+          "elapsedMs": 2745
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Resposta usa duas mensagens separadas ([[MSG]])",
+          "turnIndex": 0,
+          "severity": "light"
+        }
+      ],
+      "totalTokens": 4199,
+      "totalElapsedMs": 2745
+    },
+    {
+      "scenarioId": "book-01-direto",
+      "scenarioName": "Cliente direto ao ponto",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero cortar o cabelo 2026-04-08 às 10:00",
+          "agentReply": "O horário que você escolheu para *Corte e Barba* em *08/04/2026 às 10h* está disponível! Você pode ser atendido pelo *Eduardo Gustavo* ou pelo *Lucas Lima*. \n\nGostaria de confirmar esse agendamento? Por favor, me diga seu nome.",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4901,
+            "completionTokens": 65,
+            "totalTokens": 4966
+          },
+          "elapsedMs": 16924
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4966,
+      "totalElapsedMs": 16924
+    },
+    {
+      "scenarioId": "book-02-indeciso",
+      "scenarioName": "Cliente indeciso",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero ir aí mas não sei bem o que fazer",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! 😊 Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4181,
+            "completionTokens": 26,
+            "totalTokens": 4207
+          },
+          "elapsedMs": 1722
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Algo rápido mesmo",
+          "agentReply": "Entendi! Um serviço rápido que costuma agradar é o *Corte e Barba*. Posso verificar a disponibilidade para você. Que dia e horário você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4217,
+            "completionTokens": 35,
+            "totalTokens": 4252
+          },
+          "elapsedMs": 4379
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 8459,
+      "totalElapsedMs": 6101
+    },
+    {
+      "scenarioId": "book-03-qualquer-barbeiro",
+      "scenarioName": "Qualquer barbeiro",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero fazer a barba. Qualquer barbeiro, qualquer horário amanhã",
+          "agentReply": "Para amanhã, tenho os seguintes horários disponíveis para *Barba completa* com o barbeiro *Eduardo Gustavo*:\n\n* 09h00\n* 09h30\n\nQual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4717,
+            "completionTokens": 42,
+            "totalTokens": 4759
+          },
+          "elapsedMs": 8272
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente propõe horários concretos",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 4759,
+      "totalElapsedMs": 8272
+    },
+    {
+      "scenarioId": "book-04-horario-exato",
+      "scenarioName": "Cliente pede horário exato",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Corte de cabelo 2026-04-09 às 14:30 com o João",
+          "agentReply": "O horário que você solicitou para *Corte e Barba* está disponível:\n\n*Serviço:* Corte e Barba  \n*Barbeiro:* Eduardo Gustavo  \n*Data:* Quinta-feira, 09 de abril de 2026 às 14h30  \n*Total:* R$ 55,00  \n\nPor favor, me confirme seu nome para finalizar o agendamento!",
+          "toolsCalled": [
+            "check_availability",
+            "list_barbers",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5284,
+            "completionTokens": 78,
+            "totalTokens": 5362
+          },
+          "elapsedMs": 12412
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 5362,
+      "totalElapsedMs": 12412
+    },
+    {
+      "scenarioId": "book-05-primeiro-horario",
+      "scenarioName": "Primeiro horário disponível",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Qual o primeiro horário disponível amanhã pra corte?",
+          "agentReply": "Amanhã tenho às *9h* com Eduardo Gustavo ou às *9h30* com Eduardo Gustavo. Qual prefere?",
+          "toolsCalled": [
+            "get_next_slots"
+          ],
+          "violations": [],
+          "elapsedMs": 36
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Sugere horário razoável de abertura (7h-12h) ou informa lotação",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 36
+    },
+    {
+      "scenarioId": "book-06-hoje",
+      "scenarioName": "Horário hoje sem hora definida",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Tem horário hoje pra corte?",
+          "agentReply": "Claro! Tem preferência por barbeiro?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 30
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 0,
+          "excerpt": "Required tools not called: get_next_slots"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 30
+    },
+    {
+      "scenarioId": "book-10-agora-manha-slot-pick",
+      "scenarioName": "Agora de manhã + escolha de horário",
+      "tags": [
+        "booking",
+        "multi-turn",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Tem horário pra corte e barba disponível agora pela manhã?",
+          "agentReply": "Claro! Tem preferência por barbeiro?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 24
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Pode ser às 10:30",
+          "agentReply": "O horário de *10:30* não está disponível. As próximas opções para *Corte e Barba* com o Eduardo Gustavo são às *15h30* ou *16h*. Qual delas você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4936,
+            "completionTokens": 45,
+            "totalTokens": 4981
+          },
+          "elapsedMs": 7429
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 3,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Após escolher horário, pede nome (se ainda não tiver)",
+          "turnIndex": 1,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 4981,
+      "totalElapsedMs": 7453
+    },
+    {
+      "scenarioId": "book-07-mudanca-servico",
+      "scenarioName": "Mudança de serviço no meio da conversa",
+      "tags": [
+        "booking",
+        "multi-turn",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar um corte 2026-04-08 às 10:00",
+          "agentReply": "Tenho disponível o serviço de *Corte e Barba* no dia *08 de abril de 2026* às *10h* com os seguintes barbeiros:\n\n- *Eduardo Gustavo*\n- *Lucas Lima*\n\nQual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services",
+            "upsert_client"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5007,
+            "completionTokens": 51,
+            "totalTokens": 5058
+          },
+          "elapsedMs": 8416
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Na verdade, quero barba completa, não corte",
+          "agentReply": "Para o serviço de *Barba completa*, tenho disponível no dia *08 de abril de 2026* às *10h* com os seguintes barbeiros:\n\n- *Eduardo Gustavo*\n- *Lucas Lima*\n\nQual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services",
+            "upsert_client"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4891,
+            "completionTokens": 50,
+            "totalTokens": 4941
+          },
+          "elapsedMs": 5797
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 9999,
+      "totalElapsedMs": 14213
+    },
+    {
+      "scenarioId": "book-08-conflito-agenda",
+      "scenarioName": "Conflito de agenda",
+      "tags": [
+        "booking",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar corte 2026-04-07 às 09:00",
+          "agentReply": "O horário de *Corte e Barba* está disponível no dia *07 de abril de 2026* às *09h00*. \n\nOs barbeiros disponíveis são:\n- *Eduardo Gustavo*\n- *Lucas Lima*\n\nQual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4901,
+            "completionTokens": 53,
+            "totalTokens": 4954
+          },
+          "elapsedMs": 5943
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Não tem jeito de encaixar nesse horário?",
+          "agentReply": "O horário de *Corte e Barba* está disponível no dia *07 de abril de 2026* às *09h00*. Os barbeiros disponíveis são:\n\n- *Eduardo Gustavo*\n- *Lucas Lima*\n\nVocê gostaria de confirmar o agendamento com algum deles?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4968,
+            "completionTokens": 58,
+            "totalTokens": 5026
+          },
+          "elapsedMs": 5876
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 9980,
+      "totalElapsedMs": 11819
+    },
+    {
+      "scenarioId": "book-09-nome-nao-repetido-apos-falha",
+      "scenarioName": "Nome não repetido após falha de create",
+      "tags": [
+        "booking",
+        "edge",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero corte e barba 2026-04-07 às 09:00",
+          "agentReply": "O horário que você escolheu para *Corte e Barba* está disponível!\n\n*Serviço:* Corte e Barba  \n*Data:* Terça-feira, 07 de abril de 2026 às 09h00  \n*Barbeiro:* Eduardo Gustavo ou Lucas Lima  \n*Total:* R$ 55,00\n\nQual é o seu nome para confirmar o agendamento?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4901,
+            "completionTokens": 80,
+            "totalTokens": 4981
+          },
+          "elapsedMs": 8318
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Pode ser",
+          "agentReply": "O horário que você escolheu para *Corte e Barba* às *09h00* está disponível!\n\n*Serviço:* Corte e Barba  \n*Data:* Terça-feira, 07 de abril de 2026 às 09h00  \n*Barbeiro:* Eduardo Gustavo ou Lucas Lima  \n*Total:* R$ 55,00\n\nConfirma o agendamento?",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5272,
+            "completionTokens": 81,
+            "totalTokens": 5353
+          },
+          "elapsedMs": 12695
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Rafael",
+          "agentReply": "Infelizmente, o horário que você escolheu para *Corte e Barba* não foi reservado. \n\nTenho duas novas opções disponíveis para você:\n\n1. *09h00* com Eduardo Gustavo\n2. *09h30* com Eduardo Gustavo\n\nQual desses horários você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5286,
+            "completionTokens": 59,
+            "totalTokens": 5345
+          },
+          "elapsedMs": 11658
+        },
+        {
+          "turnIndex": 3,
+          "userMessage": "Pode ser às 10:00 então",
+          "agentReply": "Agendamento confirmado:\n*Serviço:* Barba completa\n*Data:* Terça-feira, 07 de abril de 2026 às 10h\n*Barbeiro:* Eduardo Gustavo\n*Endereço:* cadastre o endereço em Configurações\n*Total:* R$ 25,00\n\nAguardamos você!",
+          "agentState": "appointment_created",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "elapsedMs": 59
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 15679,
+      "totalElapsedMs": 32730
+    },
+    {
+      "scenarioId": "book-10-confirmacao-limpa-apos-agendamento",
+      "scenarioName": "Confirmação limpa ao criar agendamento",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Corte masculino 2026-04-08 às 14:00",
+          "agentReply": "O horário para *Corte masculino* está disponível no dia *08 de abril de 2026* às *14h* com os barbeiros Eduardo Gustavo ou Lucas Lima. \n\nQual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4936,
+            "completionTokens": 43,
+            "totalTokens": 4979
+          },
+          "elapsedMs": 11043
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Pode ser",
+          "agentReply": "Antes de confirmar, só para garantir: você gostaria de agendar para *Corte masculino* no dia *08 de abril de 2026* às *14h* com o barbeiro Eduardo Gustavo ou Lucas Lima?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4348,
+            "completionTokens": 46,
+            "totalTokens": 4394
+          },
+          "elapsedMs": 2275
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Lucas",
+          "agentReply": "Agendamento confirmado:\n*Serviço:* Corte masculino  \n*Data:* Quarta-feira, 08 de abril de 2026 às 14h  \n*Barbeiro:* Lucas Lima  \n*Total:* R$ 35,00  \n\nAguardamos você!",
+          "agentState": "appointment_created",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5531,
+            "completionTokens": 55,
+            "totalTokens": 5586
+          },
+          "elapsedMs": 17380
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 14959,
+      "totalElapsedMs": 30698
+    },
+    {
+      "scenarioId": "book-11-sem-exposicao-de-erro",
+      "scenarioName": "Erro de ferramenta não exposto ao cliente",
+      "tags": [
+        "booking",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero barba 2026-04-07 às 08:00",
+          "agentReply": "Você já tem um agendamento para *Barba completa* amanhã, dia *07 de abril de 2026*, às *10h* com o Eduardo. Está tudo certo com esse horário ou prefere reagendar?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4298,
+            "completionTokens": 45,
+            "totalTokens": 4343
+          },
+          "elapsedMs": 1661
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Pode ser",
+          "agentReply": "Ótimo! O agendamento para *Barba completa* amanhã, dia *07 de abril de 2026*, às *10h* com o Eduardo está confirmado. \n\nAguardamos você!",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4352,
+            "completionTokens": 43,
+            "totalTokens": 4395
+          },
+          "elapsedMs": 1918
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Carlos",
+          "agentReply": "O horário às *08:00* já foi preenchido. Prefere agendar para a parte da manhã ou da tarde? \n\nVou verificar os horários disponíveis e já te falo. Um momento!",
+          "toolsCalled": [
+            "reschedule_appointment",
+            "upsert_client"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4741,
+            "completionTokens": 42,
+            "totalTokens": 4783
+          },
+          "elapsedMs": 5143
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 13521,
+      "totalElapsedMs": 8722
+    },
+    {
+      "scenarioId": "book-12-example-txt-minimal",
+      "scenarioName": "Fluxo curto tipo example.txt (corte e barba + tarde)",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Tem horário pra corte e barba disponível agora pela tarde?",
+          "agentReply": "Claro! Tem preferência por barbeiro?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 36
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Não, pode ser qualquer um.",
+          "agentReply": "Hoje tenho às *15h30* com Eduardo Gustavo. Quer esse horário?",
+          "toolsCalled": [
+            "get_next_slots"
+          ],
+          "violations": [],
+          "elapsedMs": 51
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Pode ser as 13:30",
+          "agentReply": "Hoje tenho às *15h30* com Eduardo Gustavo. Quer esse horário?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots"
+          ],
+          "violations": [],
+          "elapsedMs": 52
+        },
+        {
+          "turnIndex": 3,
+          "userMessage": "Mateus",
+          "agentReply": "Infelizmente, não temos horário às *13h30*. Mas posso oferecer às *15h30* ou *16h* com Eduardo Gustavo. Qual desses horários prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5214,
+            "completionTokens": 36,
+            "totalTokens": 5250
+          },
+          "elapsedMs": 14061
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 5250,
+      "totalElapsedMs": 14200
+    },
+    {
+      "scenarioId": "book-13-anti-reabre-slot-apos-nome",
+      "scenarioName": "Anti-padrão chat 13 — nome após resumo não pode reofertar horários",
+      "tags": [
+        "booking",
+        "multi-turn",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Tem horário pra corte e barba disponível agora a tarde?",
+          "agentReply": "Claro! Tem preferência por barbeiro?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 28
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "As 16h está ótimo",
+          "agentReply": "Está disponível sim! Tenho o horário das *16h* para o serviço de *Corte e Barba* com os barbeiros Eduardo Gustavo ou Lucas Lima. Qual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4974,
+            "completionTokens": 39,
+            "totalTokens": 5013
+          },
+          "elapsedMs": 19418
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Mateus",
+          "agentReply": "Parece que não temos o barbeiro Mateus na nossa equipe. Os barbeiros disponíveis são:\n\n- *Eduardo Gustavo*\n- *Lucas Lima*\n\nQual deles você prefere para o seu horário às *16h*?",
+          "toolsCalled": [
+            "check_availability",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4737,
+            "completionTokens": 46,
+            "totalTokens": 4783
+          },
+          "elapsedMs": 10092
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 9796,
+      "totalElapsedMs": 29538
+    },
+    {
+      "scenarioId": "book-14-combo-vs-avulso",
+      "scenarioName": "Combo 'Corte e Barba' não vira serviço avulso",
+      "tags": [
+        "booking",
+        "multi-turn",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar corte e barba amanhã às 10h",
+          "agentReply": "Olá, Carlos! Você já tem um horário agendado amanhã às *10h* para uma barba completa com o Eduardo. Está tudo certo com esse horário ou prefere reagendar?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4294,
+            "completionTokens": 38,
+            "totalTokens": 4332
+          },
+          "elapsedMs": 2001
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Pode ser qualquer barbeiro",
+          "agentReply": "Show — vou te colocar com o *Lucas Lima* então.\n\n*Corte e Barba* • 2026-04-07 10:00 • *R$ 55,00*\n\n[[MSG]]Pra salvar aqui, qual seu nome?",
+          "toolsCalled": [
+            "check_availability"
+          ],
+          "violations": [],
+          "elapsedMs": 30
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Rafael",
+          "agentReply": "Agendado, Rafael! Corte e Barba fica R$ 55. Lucas Lima aguarda você amanhã às 10h.",
+          "agentState": "appointment_created",
+          "toolsCalled": [
+            "check_availability"
+          ],
+          "violations": [],
+          "elapsedMs": 33
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 2,
+          "excerpt": "Required tools not called: create_appointment"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4332,
+      "totalElapsedMs": 2064
+    },
+    {
+      "scenarioId": "book-15-correcao-servico",
+      "scenarioName": "Cliente corrige serviço após confirmação errada",
+      "tags": [
+        "booking",
+        "multi-turn",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar barba amanhã às 11h com Eduardo Gustavo",
+          "agentReply": "Você já tem um agendamento com o Eduardo Gustavo amanhã às 10h para a barba completa. Está tudo certo com esse horário ou prefere reagendar?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4318,
+            "completionTokens": 32,
+            "totalTokens": 4350
+          },
+          "elapsedMs": 1690
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Pode ser",
+          "agentReply": "Ótimo! Vou confirmar seu agendamento para amanhã, dia 07 de abril de 2026, às 10h com o Eduardo Gustavo para a barba completa.\n\nPosso confirmar?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4359,
+            "completionTokens": 40,
+            "totalTokens": 4399
+          },
+          "elapsedMs": 1630
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Carlos",
+          "agentReply": "O horário das 11h para a barba completa não está disponível. Posso te oferecer algumas opções:\n\nAmanhã, dia 07 de abril de 2026, temos disponíveis às 10h com o Eduardo Gustavo para a barba completa ou às 13h com o Lucas Lima para o Corte e Barba. Qual você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_services",
+            "reschedule_appointment"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5077,
+            "completionTokens": 70,
+            "totalTokens": 5147
+          },
+          "elapsedMs": 9515
+        },
+        {
+          "turnIndex": 3,
+          "userMessage": "Na verdade eu pedi corte e barba, não só barba. Pode alterar?",
+          "agentReply": "O horário das 10h para o Corte e Barba com o Lucas Lima não está disponível. Porém, posso te oferecer os seguintes horários:\n\n- 11h com Lucas Lima\n- 11h30 com Lucas Lima\n\nQual desses horários você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_barbers",
+            "list_services",
+            "reschedule_appointment"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5447,
+            "completionTokens": 53,
+            "totalTokens": 5500
+          },
+          "elapsedMs": 13267
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 19396,
+      "totalElapsedMs": 26102
+    },
+    {
+      "scenarioId": "book-16-preco-sem-placeholder",
+      "scenarioName": "Preço na confirmação nunca é placeholder",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero corte masculino amanhã às 09h30",
+          "agentReply": "Infelizmente, não temos o horário marcado para o corte masculino amanhã às *09h30*. \n\nPosso oferecer os horários com o Lucas Lima às *10h* ou com o Eduardo Gustavo às *10h* também. Qual você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4971,
+            "completionTokens": 51,
+            "totalTokens": 5022
+          },
+          "elapsedMs": 6515
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Com qualquer barbeiro",
+          "agentReply": "O horário das *10h* para o corte masculino não está disponível. \n\nPosso oferecer os seguintes horários:\n- *09h30* com Lucas Lima\n- *11h* com Lucas Lima\n\nQual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 6098,
+            "completionTokens": 48,
+            "totalTokens": 6146
+          },
+          "elapsedMs": 11524
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "João",
+          "agentReply": "Parece que você mencionou \"João\", mas preciso confirmar o horário e o serviço para prosseguir com o agendamento. \n\nVocê gostaria de agendar o *Corte masculino* com o Lucas Lima? O horário disponível seria às *09h30* ou às *11h*. Qual prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4311,
+            "completionTokens": 63,
+            "totalTokens": 4374
+          },
+          "elapsedMs": 4171
+        }
+      ],
+      "taskCompleted": false,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 2,
+          "excerpt": "Required tools not called: create_appointment"
+        }
+      ],
+      "score": 87,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 0,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 87,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 15542,
+      "totalElapsedMs": 22210
+    },
+    {
+      "scenarioId": "resched-01-basico",
+      "scenarioName": "Reagendamento básico para outro horário",
+      "tags": [
+        "reschedule",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero reagendar meu horário",
+          "agentReply": "Olá, Rafael! Você tem um agendamento amanhã, dia 07/04/2026, às 10h, para *Barba completa* com Eduardo Gustavo e também para *Corte e Barba* com Lucas Lima. Qual deles você gostaria de reagendar? E para que dia e horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4256,
+            "completionTokens": 64,
+            "totalTokens": 4320
+          },
+          "elapsedMs": 5722
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Para 2026-04-08 às 14h está bom",
+          "agentReply": "O horário de *Corte e Barba* com Lucas Lima às *14h* não está disponível, pois houve um conflito na agenda do barbeiro. Posso oferecer as seguintes alternativas:\n\n- *13h* com Lucas Lima\n- *14h30* com Lucas Lima\n- *15h* com Lucas Lima\n\nQual dessas opções você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5510,
+            "completionTokens": 74,
+            "totalTokens": 5584
+          },
+          "elapsedMs": 34658
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Sim, pode confirmar",
+          "agentReply": "Infelizmente, não consegui confirmar o horário com Lucas Lima. Contudo, tenho novas opções para o *Corte e Barba*:\n\n- *09h* com Eduardo Gustavo\n- *10h30* com Eduardo Gustavo\n\nQual dessas opções você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5821,
+            "completionTokens": 53,
+            "totalTokens": 5874
+          },
+          "elapsedMs": 18018
+        }
+      ],
+      "taskCompleted": false,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 2,
+          "excerpt": "Required tools not called: list_client_upcoming_appointments, reschedule_appointment"
+        }
+      ],
+      "score": 87,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 0,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 87,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 15778,
+      "totalElapsedMs": 58398
+    },
+    {
+      "scenarioId": "resched-02-outro-dia",
+      "scenarioName": "Reagendamento para outro dia da semana",
+      "tags": [
+        "reschedule",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Preciso reagendar para amanhã de manhã",
+          "agentReply": "Oi, Rafael! Você tem um agendamento amanhã às *10h* para Barba completa com o Eduardo e também um para Corte e Barba com o Lucas. Está tudo certo com esse horário ou prefere reagendar?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4312,
+            "completionTokens": 46,
+            "totalTokens": 4358
+          },
+          "elapsedMs": 1582
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Às 9h30 está ótimo",
+          "agentReply": "O horário das *9h30* não está disponível para o Corte e Barba. Porém, tenho algumas alternativas:\n\n- *09h00* com Eduardo Gustavo\n- *10h30* com Eduardo Gustavo\n\nQual horário você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5377,
+            "completionTokens": 50,
+            "totalTokens": 5427
+          },
+          "elapsedMs": 13911
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Pode confirmar",
+          "agentReply": "Agendamento confirmado:\n*Serviço:* Corte e Barba\n*Data:* Terça-feira, 07 de abril de 2026 às 09h00\n*Barbeiro:* Eduardo Gustavo\n*Endereço:* O endereço será informado pela equipe.\n*Total:* R$ 55,00\n\nAguardamos você!",
+          "agentState": "appointment_created",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "list_barbers",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 6098,
+            "completionTokens": 69,
+            "totalTokens": 6167
+          },
+          "elapsedMs": 24602
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 15952,
+      "totalElapsedMs": 40095
+    },
+    {
+      "scenarioId": "resched-03-servico-mantido",
+      "scenarioName": "Serviço original mantido após reagendamento",
+      "tags": [
+        "reschedule",
+        "multi-turn",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Olá, quero reagendar meu corte e barba",
+          "agentReply": "Olá, Rafael! Você tem um agendamento para *Corte e Barba* amanhã, dia 07/04/2026, às 09h. Quer reagendar para outro horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4287,
+            "completionTokens": 41,
+            "totalTokens": 4328
+          },
+          "elapsedMs": 2930
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Para 2026-04-09 às 10h",
+          "agentReply": "O horário de *Corte e Barba* para o dia 09/04/2026 às 10h está disponível. Você pode escolher entre os barbeiros Eduardo Gustavo ou Lucas Lima. Qual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5313,
+            "completionTokens": 46,
+            "totalTokens": 5359
+          },
+          "elapsedMs": 9165
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Sim",
+          "agentReply": "Ótimo! Para confirmar o agendamento, por favor, me diga seu nome.",
+          "toolsCalled": [
+            "check_availability",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4344,
+            "completionTokens": 19,
+            "totalTokens": 4363
+          },
+          "elapsedMs": 1802
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "missing_required_tool",
+          "severity": "medium",
+          "turnIndex": 2,
+          "excerpt": "Required tools not called: reschedule_appointment"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 14050,
+      "totalElapsedMs": 13897
+    },
+    {
+      "scenarioId": "resched-04-horario-indisponivel",
+      "scenarioName": "Reagendamento para horário ocupado — agente oferece alternativas",
+      "tags": [
+        "reschedule",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero reagendar para amanhã às 09:00",
+          "agentReply": "Você já tem um agendamento amanhã, dia 07 de abril de 2026, às 09h com o Eduardo para *Corte e Barba*. Está tudo certo com esse horário ou prefere reagendar?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4344,
+            "completionTokens": 45,
+            "totalTokens": 4389
+          },
+          "elapsedMs": 2014
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4389,
+      "totalElapsedMs": 2014
+    },
+    {
+      "scenarioId": "cancel-01-direto",
+      "scenarioName": "Cancelamento direto sem confirmação extra",
+      "tags": [
+        "cancellation",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Preciso cancelar meu agendamento",
+          "agentReply": "Seus agendamentos para *Corte e Barba* com o *Eduardo Gustavo* às *09h* e *Barba completa* às *10h*, ambos no dia *07/04/2026*, foram cancelados. \n\nSe precisar reagendar ou se houver algo mais em que eu possa ajudar, é só avisar!",
+          "agentState": "appointment_cancelled",
+          "toolsCalled": [
+            "cancel_appointment",
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4701,
+            "completionTokens": 73,
+            "totalTokens": 4774
+          },
+          "elapsedMs": 6844
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Sim, pode cancelar",
+          "agentReply": "Seu agendamento de *Corte e Barba* com *Lucas Lima* no dia *07/04/2026* às *10h* foi cancelado com sucesso.\n\nSe precisar reagendar ou de mais alguma coisa, estou à disposição!",
+          "agentState": "appointment_cancelled",
+          "toolsCalled": [
+            "cancel_appointment",
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4553,
+            "completionTokens": 52,
+            "totalTokens": 4605
+          },
+          "elapsedMs": 4738
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 9379,
+      "totalElapsedMs": 11582
+    },
+    {
+      "scenarioId": "cancel-02-cancelar-todos",
+      "scenarioName": "Cancelar todos os agendamentos",
+      "tags": [
+        "cancellation",
+        "multi-turn",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Pode cancelar todos os meus agendamentos",
+          "agentReply": "Seu agendamento para *Corte masculino* com *Lucas Lima* no dia *08/04/2026* às *14h* foi cancelado. Se precisar reagendar ou agendar um novo horário, estou à disposição!",
+          "agentState": "appointment_cancelled",
+          "toolsCalled": [
+            "cancel_appointment",
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4382,
+            "completionTokens": 49,
+            "totalTokens": 4431
+          },
+          "elapsedMs": 3977
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Sim, cancele todos",
+          "agentReply": "Você não possui agendamentos ativos no momento. Se precisar agendar um novo horário ou tiver mais alguma dúvida, estou à disposição!",
+          "toolsCalled": [
+            "cancel_appointment",
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4283,
+            "completionTokens": 28,
+            "totalTokens": 4311
+          },
+          "elapsedMs": 2407
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Após cancelamento, oferece reagendar ou encerra de forma amigável",
+          "turnIndex": 1,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 8742,
+      "totalElapsedMs": 6384
+    },
+    {
+      "scenarioId": "mgmt-01-cancelamento",
+      "scenarioName": "Cancelamento simples",
+      "tags": [
+        "cancellation",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Preciso cancelar meu horário de amanhã",
+          "agentReply": "Parece que você não tem agendamentos confirmados para amanhã. Se precisar de mais alguma coisa, é só avisar!",
+          "toolsCalled": [
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4267,
+            "completionTokens": 27,
+            "totalTokens": 4294
+          },
+          "elapsedMs": 2987
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4294,
+      "totalElapsedMs": 2987
+    },
+    {
+      "scenarioId": "mgmt-02-reagendamento",
+      "scenarioName": "Reagendamento",
+      "tags": [
+        "reschedule",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero mudar meu horário de quinta para sexta",
+          "agentReply": "Parece que você não tem nenhum agendamento futuro na nossa barbearia. Que tal agendar um novo horário para a próxima sexta-feira? \n\nQual horário você prefere?",
+          "toolsCalled": [
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4215,
+            "completionTokens": 36,
+            "totalTokens": 4251
+          },
+          "elapsedMs": 2558
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente consulta agendamentos existentes",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 4251,
+      "totalElapsedMs": 2558
+    },
+    {
+      "scenarioId": "mgmt-03-no-show-retorno",
+      "scenarioName": "Retorno após no-show",
+      "tags": [
+        "no-show",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi, quero marcar novamente",
+          "agentReply": "Olá, Rafael! Você não tem agendamentos futuros. Para amanhã, tenho horários disponíveis para *Corte e Barba* com o *Eduardo Gustavo* às *09h* ou *09h30*. Qual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4705,
+            "completionTokens": 50,
+            "totalTokens": 4755
+          },
+          "elapsedMs": 7634
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4755,
+      "totalElapsedMs": 7634
+    },
+    {
+      "scenarioId": "mgmt-04-lista-espera",
+      "scenarioName": "Lista de espera",
+      "tags": [
+        "waitlist",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Não tem nenhum horário hoje de jeito nenhum?",
+          "agentReply": "Fechou — pra qual serviço você quer? 👀\n\nAqui os principais:\n1. *Barba completa* - R$ 25,00 (25 min)\n2. *Corte e Barba* - R$ 55,00 (50 min)\n3. *Corte masculino* - R$ 35,00 (30 min)\n4. *Sobrancelha* - R$ 15,00 (15 min)\n\nMe diz qual você quer que eu já puxo os horários de hoje.",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 28
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Tudo bem, me coloca na lista de espera então",
+          "agentReply": "Para adicionar você à lista de espera, preciso da data desejada e do serviço que você gostaria de agendar. Você quer *Corte e Barba* mesmo? E qual data você prefere?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4358,
+            "completionTokens": 41,
+            "totalTokens": 4399
+          },
+          "elapsedMs": 1804
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [
+        {
+          "type": "redundant_info_request",
+          "severity": "medium",
+          "turnIndex": 1,
+          "excerpt": "Para adicionar você à lista de espera, preciso da data desejada e do serviço que você gostaria de agendar. Você quer *Co…"
+        }
+      ],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 8,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 2,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Agente menciona lista de espera quando agenda está cheia",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 4399,
+      "totalElapsedMs": 1832
+    },
+    {
+      "scenarioId": "mem-01-o-de-sempre",
+      "scenarioName": "Cliente pede 'o de sempre'",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Faz o de sempre pra mim amanhã",
+          "agentReply": "Não temos *o de sempre pra mim amanha* aqui 😅\n\nMas a gente faz:\n1. *Barba completa* - R$ 25,00 (25 min)\n2. *Corte e Barba* - R$ 55,00 (50 min)\n3. *Corte masculino* - R$ 35,00 (30 min)\n4. *Sobrancelha* - R$ 15,00 (15 min)\n\nGostaria de agendar um horário ou ver outras opções?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 19
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 19
+    },
+    {
+      "scenarioId": "mem-02-contexto-repetido",
+      "scenarioName": "Agente não repete pergunta",
+      "tags": [
+        "booking",
+        "memory",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi, sou o Carlos. Quero agendar uma barba completa",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4182,
+            "completionTokens": 25,
+            "totalTokens": 4207
+          },
+          "elapsedMs": 1419
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Qualquer horário na quarta-feira",
+          "agentReply": "Tenho horários disponíveis para a *Barba completa* na quarta-feira, 08 de abril de 2026, com o Eduardo Gustavo:\n\n* 09h00\n* 09h30\n* 10h00\n\nQual desses horários você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5026,
+            "completionTokens": 53,
+            "totalTokens": 5079
+          },
+          "elapsedMs": 5580
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 9286,
+      "totalElapsedMs": 6999
+    },
+    {
+      "scenarioId": "mem-03-cliente-recorrente",
+      "scenarioName": "Cliente recorrente com preferência conhecida",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Já sou cliente, faço sempre corte + barba. Quero marcar de novo",
+          "agentReply": "Olá, Carlos! Tenho disponíveis para amanhã, 07 de abril de 2026, os seguintes horários com o Eduardo Gustavo para o serviço de *Corte e Barba*:\n\n- *09h00*\n- *09h30*\n- *10h00*\n\nQual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4705,
+            "completionTokens": 61,
+            "totalTokens": 4766
+          },
+          "elapsedMs": 6015
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4766,
+      "totalElapsedMs": 6015
+    },
+    {
+      "scenarioId": "mem-04-memoria-vs-conversa-atual",
+      "scenarioName": "Conversa atual prevalece sobre memória",
+      "tags": [
+        "booking",
+        "memory",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero fazer a barba desta vez, não o corte",
+          "agentReply": "O próximo horário disponível para a *Barba completa* com o Eduardo Gustavo é às *15h30*. Outro horário é às *16h*. Qual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5059,
+            "completionTokens": 36,
+            "totalTokens": 5095
+          },
+          "elapsedMs": 7264
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 5095,
+      "totalElapsedMs": 7264
+    },
+    {
+      "scenarioId": "mem-05-baixa-confianca-nao-afirma",
+      "scenarioName": "Memória de baixa confiança não vira afirmação",
+      "tags": [
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi, quero agendar",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4174,
+            "completionTokens": 25,
+            "totalTokens": 4199
+          },
+          "elapsedMs": 1388
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4199,
+      "totalElapsedMs": 1388
+    },
+    {
+      "scenarioId": "mem-06-barbeiro-preferido",
+      "scenarioName": "Sugestão de barbeiro preferido",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero corte amanhã, sem preferência de barbeiro",
+          "agentReply": "Tenho horários disponíveis amanhã, dia *07/04/2026*, para o serviço de *Corte e Barba* com o barbeiro *Eduardo Gustavo*. As opções são:\n\n- *09h00*\n- *09h30*\n\nQual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4713,
+            "completionTokens": 56,
+            "totalTokens": 4769
+          },
+          "elapsedMs": 6467
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4769,
+      "totalElapsedMs": 6467
+    },
+    {
+      "scenarioId": "mem-07-horario-preferido",
+      "scenarioName": "Sugestão de horário preferido",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Tem horário amanhã pra corte?",
+          "agentReply": "Amanhã, temos disponibilidade para *Corte e Barba* às *09h00* e às *09h30* com o barbeiro *Eduardo Gustavo*. Qual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4709,
+            "completionTokens": 42,
+            "totalTokens": 4751
+          },
+          "elapsedMs": 6966
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4751,
+      "totalElapsedMs": 6966
+    },
+    {
+      "scenarioId": "mem-08-estilo-comunicacao-formal",
+      "scenarioName": "Tom ajustado a cliente formal",
+      "tags": [
+        "booking",
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Gostaria de agendar um horário para amanhã, se possível.",
+          "agentReply": "Tenho horários disponíveis para amanhã, 07 de abril de 2026, para o serviço *Corte e Barba* com o Eduardo Gustavo. As opções são:\n\n- *09h00*\n- *09h30*\n\nQual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4716,
+            "completionTokens": 52,
+            "totalTokens": 4768
+          },
+          "elapsedMs": 15762
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4768,
+      "totalElapsedMs": 15762
+    },
+    {
+      "scenarioId": "mem-09-completed-reforco",
+      "scenarioName": "Completed reforça preferência de serviço",
+      "tags": [
+        "memory",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi, quero marcar de novo",
+          "agentReply": "Olá, Carlos! Você gostaria de agendar o *Corte e Barba* com o *Eduardo Gustavo* novamente.\n\nTenho os seguintes horários disponíveis para amanhã, dia 07 de abril:\n\n* 09h00\n* 13h00\n\nQual horário você prefere?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_client_upcoming_appointments",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5033,
+            "completionTokens": 58,
+            "totalTokens": 5091
+          },
+          "elapsedMs": 10823
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 5091,
+      "totalElapsedMs": 10823
+    },
+    {
+      "scenarioId": "mem-10-no-show-nao-quebra-atendimento",
+      "scenarioName": "No-show registrado não impede atendimento",
+      "tags": [
+        "memory",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Oi quero agendar um corte",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! 🪒 Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4175,
+            "completionTokens": 28,
+            "totalTokens": 4203
+          },
+          "elapsedMs": 1623
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4203,
+      "totalElapsedMs": 1623
+    },
+    {
+      "scenarioId": "mem-11-historico-baixo-nao-infere-forte",
+      "scenarioName": "Histórico insuficiente não gera preferência forte",
+      "tags": [
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero marcar",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4172,
+            "completionTokens": 25,
+            "totalTokens": 4197
+          },
+          "elapsedMs": 1211
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4197,
+      "totalElapsedMs": 1211
+    },
+    {
+      "scenarioId": "mem-12-historico-contraditorio",
+      "scenarioName": "Histórico contraditório não vira preferência forte",
+      "tags": [
+        "memory"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Pode ser qualquer barbeiro, tanto faz",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! 😊 Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [
+            "get_next_slots",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4819,
+            "completionTokens": 26,
+            "totalTokens": 4845
+          },
+          "elapsedMs": 8571
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4845,
+      "totalElapsedMs": 8571
+    },
+    {
+      "scenarioId": "edge-01-fora-escopo",
+      "scenarioName": "Pedido fora do escopo (pizza)",
+      "tags": [
+        "out-of-scope"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Vocês entregam pizza?",
+          "agentReply": "Aqui eu só cuido do visual 😄\n\nQuer ver os serviços ou já quer agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 24
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 24
+    },
+    {
+      "scenarioId": "edge-02-servico-inexistente",
+      "scenarioName": "Serviço que não existe",
+      "tags": [
+        "out-of-scope",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Vocês fazem terapia capilar?",
+          "agentReply": "Não temos *terapia capilar* aqui 😅\n\nMas a gente faz:\n1. *Barba completa* - R$ 25,00 (25 min)\n2. *Corte e Barba* - R$ 55,00 (50 min)\n3. *Corte masculino* - R$ 35,00 (30 min)\n4. *Sobrancelha* - R$ 15,00 (15 min)\n\nGostaria de agendar um horário ou ver outras opções?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 49
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 49
+    },
+    {
+      "scenarioId": "edge-03-handoff",
+      "scenarioName": "Pedido de atendente humano",
+      "tags": [
+        "handoff"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero falar com um atendente humano",
+          "agentReply": "Um atendente vai te atender em instantes.",
+          "agentState": "handoff_requested",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 22
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 22
+    },
+    {
+      "scenarioId": "edge-04-reativacao",
+      "scenarioName": "Reativação de cliente sumido",
+      "tags": [
+        "reactivation"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Faz tempo que não apareço. Quero voltar",
+          "agentReply": "Não temos *tempo que nao apareco quero voltar* aqui 😅\n\nMas a gente faz:\n1. *Barba completa* - R$ 25,00 (25 min)\n2. *Corte e Barba* - R$ 55,00 (50 min)\n3. *Corte masculino* - R$ 35,00 (30 min)\n4. *Sobrancelha* - R$ 15,00 (15 min)\n\nGostaria de agendar um horário ou ver outras opções?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 20
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 0,
+      "totalElapsedMs": 20
+    },
+    {
+      "scenarioId": "edge-05-cobranca-amigavel",
+      "scenarioName": "Cobrança amigável de pendência",
+      "tags": [
+        "debt"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar um corte",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4175,
+            "completionTokens": 25,
+            "totalTokens": 4200
+          },
+          "elapsedMs": 1575
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4200,
+      "totalElapsedMs": 1575
+    },
+    {
+      "scenarioId": "edge-06-mensagem-ambigua",
+      "scenarioName": "Mensagem completamente ambígua",
+      "tags": [
+        "edge",
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "pode ser",
+          "agentReply": "Olá! Bem-vindo à Minha NavalhIA! 😊 Quer ver os serviços disponíveis ou já prefere agendar um horário?",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4172,
+            "completionTokens": 26,
+            "totalTokens": 4198
+          },
+          "elapsedMs": 1456
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4198,
+      "totalElapsedMs": 1456
+    },
+    {
+      "scenarioId": "edge-07-follow-up",
+      "scenarioName": "Follow-up pós-atendimento",
+      "tags": [
+        "follow-up"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Foi ótimo! Adorei o atendimento",
+          "agentReply": "Fico feliz em saber que você gostou do atendimento! 😊 Se precisar de algo mais ou quiser agendar um horário, é só avisar.",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4176,
+            "completionTokens": 31,
+            "totalTokens": 4207
+          },
+          "elapsedMs": 1573
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4207,
+      "totalElapsedMs": 1573
+    },
+    {
+      "scenarioId": "edge-08-multiplos-servicos",
+      "scenarioName": "Cliente pede combo de serviços",
+      "tags": [
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero fazer corte, barba e sobrancelha. Tem horário?",
+          "agentReply": "Claro! Tem preferência por barbeiro?",
+          "toolsCalled": [],
+          "violations": [],
+          "elapsedMs": 35
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 0,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": false,
+      "assertFailures": [
+        {
+          "name": "Trata múltiplos serviços corretamente",
+          "turnIndex": 0,
+          "severity": "medium"
+        }
+      ],
+      "totalTokens": 0,
+      "totalElapsedMs": 35
+    },
+    {
+      "scenarioId": "edge-09-sem-dados",
+      "scenarioName": "Agendamento sem nome",
+      "tags": [
+        "booking",
+        "multi-turn"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero corte amanhã às 09:00 com qualquer barbeiro",
+          "agentReply": "A disponibilidade para amanhã, *7 de abril de 2026* às *09h00* é a seguinte:\n\n*Serviço:* Corte e Barba  \n*Barbeiros disponíveis:* Eduardo Gustavo ou Lucas Lima  \n*Total:* R$ 55,00  \n\nQual barbeiro você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4879,
+            "completionTokens": 62,
+            "totalTokens": 4941
+          },
+          "elapsedMs": 7631
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4941,
+      "totalElapsedMs": 7631
+    },
+    {
+      "scenarioId": "edge-10-preferencia-barbeiro-indisponivel",
+      "scenarioName": "Barbeiro preferido indisponível",
+      "tags": [
+        "booking",
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero amanhã às 14:00 com o Pedro",
+          "agentReply": "Infelizmente, não temos horário disponível para *Corte e Barba* com o Pedro amanhã às *14h*. \n\nPosso te oferecer duas opções com o *Eduardo Gustavo*:\n- *09h* \n- *09h30* \n\nQual prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5732,
+            "completionTokens": 56,
+            "totalTokens": 5788
+          },
+          "elapsedMs": 12223
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "E com outro barbeiro?",
+          "agentReply": "Amanhã, temos horários disponíveis com o *Eduardo Gustavo* para *Corte e Barba* às *09h*, *09h30*, *10h*, *10h30* ou *11h*. \n\nSe preferir outro barbeiro, só temos horários com o *Eduardo Gustavo* nesse horário. O que acha?",
+          "toolsCalled": [
+            "check_availability",
+            "get_next_slots",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5058,
+            "completionTokens": 72,
+            "totalTokens": 5130
+          },
+          "elapsedMs": 5520
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 10918,
+      "totalElapsedMs": 17743
+    },
+    {
+      "scenarioId": "edge-11-localizacao-unica",
+      "scenarioName": "Localização enviada apenas uma vez",
+      "tags": [
+        "edge"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Pode me mandar a localização de vocês?",
+          "agentReply": "Desculpe, mas não consegui enviar a localização no momento. Se precisar de mais informações, estou à disposição!",
+          "toolsCalled": [
+            "send_barbershop_location"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4237,
+            "completionTokens": 24,
+            "totalTokens": 4261
+          },
+          "elapsedMs": 2205
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 10,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4261,
+      "totalElapsedMs": 2205
+    },
+    {
+      "scenarioId": "edge-12-horario-funcionamento",
+      "scenarioName": "Cliente pergunta horário de funcionamento",
+      "tags": [
+        "edge",
+        "greeting"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Qual o horário de funcionamento de vocês?",
+          "agentReply": "A nossa barbearia, *Minha NavalhIA*, funciona nos seguintes horários:\n\n- Segunda a Sexta: 09h00 às 19h00\n- Sábado: 09h00 às 18h00\n- Domingo: Fechado\n\nSe precisar agendar um horário, é só me avisar!",
+          "toolsCalled": [],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4177,
+            "completionTokens": 67,
+            "totalTokens": 4244
+          },
+          "elapsedMs": 3075
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 0,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4244,
+      "totalElapsedMs": 3075
+    },
+    {
+      "scenarioId": "edge-13-preco-apos-agendamento",
+      "scenarioName": "Cliente pergunta preço após agendamento confirmado",
+      "tags": [
+        "edge",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Quero agendar corte masculino para depois de amanhã às 14h",
+          "agentReply": "Para o dia 08 de abril de 2026, às *14h*, posso agendar o *Corte masculino* com os seguintes barbeiros disponíveis:\n\n1. *Eduardo Gustavo*\n2. *Lucas Lima*\n\nQual deles você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4896,
+            "completionTokens": 52,
+            "totalTokens": 4948
+          },
+          "elapsedMs": 5569
+        },
+        {
+          "turnIndex": 1,
+          "userMessage": "Com o Eduardo",
+          "agentReply": "O horário para o *Corte masculino* com o *Eduardo Gustavo* está disponível no dia 08 de abril de 2026, às *14h*. \n\nPosso confirmar o agendamento?",
+          "toolsCalled": [
+            "check_availability",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5282,
+            "completionTokens": 43,
+            "totalTokens": 5325
+          },
+          "elapsedMs": 8499
+        },
+        {
+          "turnIndex": 2,
+          "userMessage": "Marcelo",
+          "agentReply": "Os horários disponíveis para o *Corte e Barba* com o *Eduardo Gustavo* no dia 08 de abril de 2026 são:\n\n- *09h00*\n- *09h30*\n\nQual desses horários você prefere?",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 5322,
+            "completionTokens": 50,
+            "totalTokens": 5372
+          },
+          "elapsedMs": 9341
+        },
+        {
+          "turnIndex": 3,
+          "userMessage": "Qual o valor do serviço?",
+          "agentReply": "O valor do *Corte e Barba* é de R$ 55,00. Gostaria de agendar um horário para amanhã?",
+          "toolsCalled": [
+            "check_availability",
+            "create_appointment",
+            "get_next_slots",
+            "list_barbers",
+            "list_services"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4245,
+            "completionTokens": 30,
+            "totalTokens": 4275
+          },
+          "elapsedMs": 2266
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 19920,
+      "totalElapsedMs": 25675
+    },
+    {
+      "scenarioId": "edge-14-uuid-invalido-recovery",
+      "scenarioName": "Recuperação graciosa quando appointment_id inválido",
+      "tags": [
+        "edge",
+        "booking"
+      ],
+      "turns": [
+        {
+          "turnIndex": 0,
+          "userMessage": "Cancela meu agendamento número 1",
+          "agentReply": "Parece que você não tem agendamentos ativos no momento. Se precisar de algo mais, estou à disposição!",
+          "toolsCalled": [
+            "list_client_upcoming_appointments"
+          ],
+          "violations": [],
+          "usage": {
+            "promptTokens": 4214,
+            "completionTokens": 24,
+            "totalTokens": 4238
+          },
+          "elapsedMs": 4613
+        }
+      ],
+      "taskCompleted": true,
+      "allViolations": [],
+      "score": 100,
+      "scoreBreakdown": {
+        "base": 100,
+        "criticalPenalty": 0,
+        "mediumPenalty": 0,
+        "lightPenalty": 0,
+        "qualityBonus": 0,
+        "taskCompletionBonus": 20,
+        "toolEfficiencyBonus": 5,
+        "costPenalty": 5,
+        "final": 100,
+        "cappedByCritical": false
+      },
+      "assertsPassed": true,
+      "assertFailures": [],
+      "totalTokens": 4238,
+      "totalElapsedMs": 4613
+    }
+  ]
+}

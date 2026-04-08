@@ -140,20 +140,22 @@ integrationsRouter.get("/automations/scheduled-messages", async (req: Request, r
   );
 });
 
-/** GET /api/integrations/automations/followup/eligible — clients inactive for at least N days (last activity = max of last appointment, last WhatsApp) */
+/** GET /api/integrations/automations/followup/eligible — clients inactive for at least N days (last activity = max of last appointment, last WhatsApp), or all clients when all=1 */
 integrationsRouter.get("/automations/followup/eligible", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
-  const days = Math.min(Math.max(parseInt(String(req.query.days ?? "30"), 10) || 30, 7), 365);
+  const allClients = req.query.all === "1" || req.query.all === "true";
+  const daysRaw = req.query.days;
+  const daysParsed =
+    daysRaw === undefined || daysRaw === ""
+      ? 30
+      : parseInt(String(daysRaw), 10);
+  const days = allClients
+    ? null
+    : Math.min(Math.max(Number.isFinite(daysParsed) ? daysParsed : 30, 7), 365);
   const limit = Math.min(parseInt(String(req.query.limit ?? "100"), 10) || 100, 200);
   const search = (req.query.search as string)?.trim() || undefined;
-  const r = await pool.query<{
-    id: string;
-    name: string | null;
-    phone: string;
-    last_activity: string;
-    source: string;
-  }>(
-    `WITH last_appt AS (
+
+  const baseCte = `WITH last_appt AS (
        SELECT client_id, max(scheduled_date)::date AS d
        FROM public.appointments
        WHERE barbershop_id = $1 AND status != 'cancelled'
@@ -166,7 +168,21 @@ integrationsRouter.get("/automations/followup/eligible", async (req: Request, re
          AND ac.external_thread_id = regexp_replace(c.phone, '[^0-9]', '', 'g')
        WHERE ac.barbershop_id = $1
        GROUP BY c.id
-     )
+     )`;
+
+  const sqlAll = `${baseCte}
+     SELECT c.id, c.name, c.phone,
+       greatest(coalesce(la.d, '1970-01-01'::date), coalesce(lw.d, '1970-01-01'::date))::text AS last_activity,
+       CASE WHEN coalesce(la.d, '1970-01-01'::date) >= coalesce(lw.d, '1970-01-01'::date) THEN 'appointment' ELSE 'whatsapp' END AS source
+     FROM public.clients c
+     LEFT JOIN last_appt la ON la.client_id = c.id
+     LEFT JOIN last_wa lw ON lw.client_id = c.id
+     WHERE c.barbershop_id = $1 AND c.marketing_opt_out = false
+       AND ($2::text IS NULL OR $2 = '' OR c.name ILIKE '%' || $2 || '%' OR c.phone LIKE '%' || $2 || '%')
+     ORDER BY last_activity ASC
+     LIMIT $3`;
+
+  const sqlInactive = `${baseCte}
      SELECT c.id, c.name, c.phone,
        greatest(coalesce(la.d, '1970-01-01'::date), coalesce(lw.d, '1970-01-01'::date))::text AS last_activity,
        CASE WHEN coalesce(la.d, '1970-01-01'::date) >= coalesce(lw.d, '1970-01-01'::date) THEN 'appointment' ELSE 'whatsapp' END AS source
@@ -177,8 +193,17 @@ integrationsRouter.get("/automations/followup/eligible", async (req: Request, re
        AND greatest(coalesce(la.d, '1970-01-01'::date), coalesce(lw.d, '1970-01-01'::date)) <= (current_date - ($2::int || ' days')::interval)
        AND ($3::text IS NULL OR $3 = '' OR c.name ILIKE '%' || $3 || '%' OR c.phone LIKE '%' || $3 || '%')
      ORDER BY last_activity ASC
-     LIMIT $4`,
-    [barbershopId, days, search ?? null, limit]
+     LIMIT $4`;
+
+  const r = await pool.query<{
+    id: string;
+    name: string | null;
+    phone: string;
+    last_activity: string;
+    source: string;
+  }>(
+    allClients ? sqlAll : sqlInactive,
+    allClients ? [barbershopId, search ?? null, limit] : [barbershopId, days!, search ?? null, limit]
   );
   res.json(
     r.rows.map((row) => ({

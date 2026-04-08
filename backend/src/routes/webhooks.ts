@@ -158,6 +158,24 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
   const instanceId = body?.instanceId != null ? String(body.instanceId) : undefined;
   const instanceKey = instanceName ?? instanceId ?? "";
 
+  // Status events (Delivered/Read/Receipt) must not enqueue AI jobs — only real inbound messages.
+  const rawEventObj = anyBody.event;
+  if (rawEventObj && typeof rawEventObj === "object") {
+    const ev = rawEventObj as Record<string, unknown>;
+    const evtT = String(ev.Type ?? ev.type ?? "").trim().toLowerCase();
+    if (["delivered", "read", "receipt", "presence", "ephemeral"].includes(evtT)) {
+      return {
+        skip: true,
+        fromMe: false,
+        handoffCandidate: false,
+        instanceKey,
+        fromPhone: null,
+        text: null,
+        providerEventId: undefined,
+      };
+    }
+  }
+
   const msg = (body?.data?.message ??
     (anyBody.message as unknown) ??
     ((anyBody.event as Record<string, unknown> | undefined)?.message as unknown)) as Record<string, unknown> | undefined;
@@ -251,6 +269,11 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
     candidates.find((v) => !v.includes("@lid") && v.includes("@")) ??
     candidates.find((v) => !v.includes("@lid")) ??
     candidates[0];
+
+  // Skip group messages — WhatsApp group JIDs end with @g.us
+  if (fromRaw?.includes("@g.us") || candidates.some((v) => v.includes("@g.us"))) {
+    return { skip: true, fromMe: false, handoffCandidate: false, instanceKey, fromPhone: null, text: null, providerEventId: undefined };
+  }
 
   const providerEventId =
     (msg?.id ??
@@ -481,14 +504,31 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
     );
 
     const payloadJson = { fromPhone: canonicalPhone, text, providerEventId, event: body?.event };
-    const jobInsert = await pool.query<{ id: string }>(
-      `INSERT INTO public.ai_jobs (barbershop_id, conversation_id, type, payload_json, status, run_after)
-       VALUES ($1, $2, 'process_inbound_message', $3, 'queued', now())
+
+    // Sliding debounce: if there's already a queued job for this conversation,
+    // bump its run_after to give the client time to send follow-up messages.
+    // Otherwise insert a new job. The 30s window groups rapid messages into one AI turn.
+    const bumped = await pool.query<{ id: string }>(
+      `UPDATE public.ai_jobs
+       SET run_after = now() + interval '30 seconds', updated_at = now()
+       WHERE conversation_id = $1 AND status = 'queued'
        RETURNING id`,
-      [barbershopId, conversationId, JSON.stringify(payloadJson)]
+      [conversationId]
     );
-    const jobId = jobInsert.rows[0]?.id;
-    console.info("[uazapi webhook] enqueued jobId=%s conversationId=%s barbershopId=%s", jobId, conversationId, barbershopId);
+    let jobId: string | undefined;
+    if ((bumped.rowCount ?? 0) > 0) {
+      jobId = bumped.rows[0]?.id;
+      console.info("[uazapi webhook] debounced jobId=%s conversationId=%s barbershopId=%s", jobId, conversationId, barbershopId);
+    } else {
+      const jobInsert = await pool.query<{ id: string }>(
+        `INSERT INTO public.ai_jobs (barbershop_id, conversation_id, type, payload_json, status, run_after)
+         VALUES ($1, $2, 'process_inbound_message', $3, 'queued', now() + interval '30 seconds')
+         RETURNING id`,
+        [barbershopId, conversationId, JSON.stringify(payloadJson)]
+      );
+      jobId = jobInsert.rows[0]?.id;
+      console.info("[uazapi webhook] enqueued jobId=%s conversationId=%s barbershopId=%s", jobId, conversationId, barbershopId);
+    }
   } catch (e) {
     console.error("uazapi webhook enqueue:", e);
   }

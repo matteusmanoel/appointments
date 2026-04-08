@@ -164,6 +164,7 @@ export function AgentPreviewChatStep({
   const [diagnosticInput, setDiagnosticInput] = useState("");
   const [diagnosticAttachments, setDiagnosticAttachments] = useState<DiagnosticAttachment[]>([]);
   const [rollbackConfirmId, setRollbackConfirmId] = useState<string | null>(null);
+  const [publishConfirmPatch, setPublishConfirmPatch] = useState<DiagnosticAssistantPayload | null>(null);
   const [versionsDrawerOpen, setVersionsDrawerOpen] = useState(false);
   const [diagnosticModalOpen, setDiagnosticModalOpen] = useState(false);
   const [suiteResults, setSuiteResults] = useState<SuiteResultsState>(null);
@@ -502,7 +503,7 @@ export function AgentPreviewChatStep({
           }, true)
         }
       />
-      <div className="flex-1 min-h-[520px] flex flex-col rounded-lg border bg-muted/30 overflow-hidden">
+      <div className="flex flex-1 min-h-[420px] max-h-[min(70vh,680px)] flex-col rounded-lg border bg-muted/30 overflow-hidden">
         <div className="shrink-0 px-3 py-2 border-b bg-muted/50 text-sm font-medium flex items-center justify-between gap-2">
           <span className="flex items-center gap-2">
             <MessageCircle className="h-4 w-4" />
@@ -546,10 +547,10 @@ export function AgentPreviewChatStep({
               <div
                 key={i}
                 className={cn(
-                  "rounded-lg px-3 py-2 text-sm max-w-[85%]",
+                  "rounded-lg px-3 py-2 text-sm max-w-[72%] whitespace-pre-wrap break-words",
                   m.role === "user"
-                    ? "ml-auto bg-primary text-primary-foreground"
-                    : "bg-background border"
+                    ? "bg-background border"
+                    : "ml-auto bg-primary text-primary-foreground"
                 )}
               >
                 {m.content}
@@ -671,6 +672,35 @@ export function AgentPreviewChatStep({
           }
         }}
       />
+      {/* Publish confirmation dialog — shows diff summary before applying + publishing */}
+      <ConfirmDialog
+        open={publishConfirmPatch !== null}
+        onOpenChange={(open) => !open && setPublishConfirmPatch(null)}
+        title="Publicar alterações do diagnóstico?"
+        description={
+          publishConfirmPatch
+            ? [
+                "As alterações sugeridas serão aplicadas e publicadas imediatamente, afetando o comportamento do agente em produção.",
+                "",
+                "Alterações:",
+                ...formatPatchDiff(
+                  publishConfirmPatch.recommended_profile_patch,
+                  publishConfirmPatch.recommended_additional_instructions_patch ?? undefined,
+                  draftProfile as Record<string, unknown>,
+                  publishConfirmPatch.recommended_custom_rules_patch
+                ),
+              ].join("\n")
+            : ""
+        }
+        confirmLabel="Confirmar e publicar"
+        cancelLabel="Cancelar"
+        onConfirm={() => {
+          if (publishConfirmPatch) {
+            applyDiagnosticPatch(publishConfirmPatch, true);
+            setPublishConfirmPatch(null);
+          }
+        }}
+      />
       <Dialog open={diagnosticModalOpen} onOpenChange={setDiagnosticModalOpen}>
         <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -756,7 +786,11 @@ export function AgentPreviewChatStep({
                                 >
                                   Aplicar como rascunho
                                 </Button>
-                                <Button type="button" size="sm" onClick={() => applyDiagnosticPatch(msg.payload, true)}>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => setPublishConfirmPatch(msg.payload)}
+                                >
                                   Aplicar e publicar
                                 </Button>
                               </div>

@@ -162,4 +162,29 @@ describe("parseUazapiInbound", () => {
     expect(r.fromPhone).toBe("5511888888888");
     expect(r.text).toBe("Oi");
   });
+
+  it("skips when event.Type is Delivered (status, not a new message)", () => {
+    const body = {
+      instance: "inst1",
+      event: {
+        Type: "Delivered",
+        Chat: "5511999999999@s.whatsapp.net",
+        MessageIDs: ["mid1"],
+      },
+    };
+    const r = parseUazapiInbound(body as never);
+    expect(r.skip).toBe(true);
+  });
+
+  it("skips when event.Type is Read", () => {
+    const body = {
+      instance: "inst1",
+      event: {
+        Type: "Read",
+        Chat: "5511999999999@s.whatsapp.net",
+      },
+    };
+    const r = parseUazapiInbound(body as never);
+    expect(r.skip).toBe(true);
+  });
 });

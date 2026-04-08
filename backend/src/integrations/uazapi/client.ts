@@ -157,6 +157,40 @@ export async function sendText(params: {
   return res.json();
 }
 
+/** Envia mensagem de localização (mapa) — POST /send/location (uazapiGO V2). */
+export async function sendLocation(params: {
+  token: string;
+  number: string;
+  name: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+}): Promise<unknown> {
+  const base = getBaseUrl();
+  const normalized = params.number.replace(/\D/g, "");
+  const res = await fetchWithTimeout(`${base}/send/location`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: params.token,
+    },
+    body: JSON.stringify({
+      number: normalized,
+      name: params.name,
+      address: params.address,
+      latitude: params.latitude,
+      longitude: params.longitude,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uazapi send/location failed: ${res.status} ${text}`);
+  }
+
+  return res.json();
+}
+
 /**
  * Set webhook URL for the instance.
  * A API Uazapi (ex.: severo.uazapi.com) pode usar path/método diferentes conforme a instalação.
@@ -249,6 +283,67 @@ export async function findMessages(params: FindMessagesParams): Promise<FindMess
     throw new Error(`Uazapi message/find failed: ${res.status} ${text}`);
   }
   return res.json() as Promise<FindMessagesResult>;
+}
+
+/** Envia uma figurinha (sticker) — POST /send/media com type sticker. */
+export async function sendSticker(params: {
+  token: string;
+  number: string;
+  url: string;
+}): Promise<unknown> {
+  const base = getBaseUrl();
+  const normalized = params.number.replace(/\D/g, "");
+  const res = await fetchWithTimeout(`${base}/send/media`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: params.token,
+    },
+    body: JSON.stringify({ number: normalized, type: "sticker", url: params.url }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uazapi send/media (sticker) failed: ${res.status} ${text}`);
+  }
+
+  return res.json();
+}
+
+/** Envia botão de pagamento PIX nativo — POST /send/request-payment. */
+export async function sendPixRequest(params: {
+  token: string;
+  number: string;
+  amount: number;
+  description: string;
+  pixKey: string;
+  name: string;
+  city: string;
+}): Promise<unknown> {
+  const base = getBaseUrl();
+  const normalized = params.number.replace(/\D/g, "");
+  const res = await fetchWithTimeout(`${base}/send/request-payment`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: params.token,
+    },
+    body: JSON.stringify({
+      number: normalized,
+      amount: params.amount,
+      description: params.description,
+      pixKey: params.pixKey,
+      name: params.name,
+      city: params.city,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Uazapi send/request-payment failed: ${res.status} ${text}`);
+  }
+
+  return res.json();
 }
 
 export async function instanceDisconnect(token: string): Promise<unknown> {

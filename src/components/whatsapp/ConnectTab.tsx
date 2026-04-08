@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Check, Loader2, AlertCircle, ShieldAlert, XCircle } from "lucide-react";
+import { Check, Loader2, AlertCircle, ShieldAlert, XCircle, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { whatsappApi } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
@@ -194,7 +194,19 @@ export function ConnectTab({
   const canConnect = (hasAcceptedPolicy || (acceptedPolicy && acceptedUse)) && !startPending;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6 w-full">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+          <MessageCircle className="h-5 w-5 text-primary" aria-hidden />
+        </div>
+        <div>
+          <h3 className="text-base font-semibold text-foreground md:text-lg">Conectar WhatsApp</h3>
+          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+            Pareie seu número pelo QR Code ou código no WhatsApp Business. Depois você pode testar envio e pausar a IA para atendimento manual.
+          </p>
+        </div>
+      </div>
+
       {/* Aviso uso responsável — só quando desconectado e ainda não aceitou */}
       {!isConnected && !isConnecting && (
         <Card className="border-amber-500/50 bg-amber-500/5">
@@ -502,53 +514,57 @@ export function ConnectTab({
               Use o app <strong>WhatsApp Business</strong> no celular (não use o WhatsApp pessoal). Siga os passos abaixo:
             </p>
           </CardHeader>
-          <CardContent className="space-y-5">
-            <ol className="list-decimal list-inside space-y-2 text-sm text-foreground">
-              <li>Abra o app <strong>WhatsApp Business</strong> no celular.</li>
-              <li>Toque no menu <strong>(⋮)</strong> ou em <strong>Configurações</strong>.</li>
-              <li>Toque em <strong>Aparelhos conectados</strong> ou <strong>Dispositivos vinculados</strong>.</li>
-              <li>Toque em <strong>Conectar um dispositivo</strong>.</li>
-              <li>Escaneie o QR Code abaixo com a câmera do celular (ou use o código de pareamento).</li>
-            </ol>
+          <CardContent className="grid gap-6 md:grid-cols-2 md:gap-8">
+            <div>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-foreground">
+                <li>Abra o app <strong>WhatsApp Business</strong> no celular.</li>
+                <li>Toque no menu <strong>(⋮)</strong> ou em <strong>Configurações</strong>.</li>
+                <li>Toque em <strong>Aparelhos conectados</strong> ou <strong>Dispositivos vinculados</strong>.</li>
+                <li>Toque em <strong>Conectar um dispositivo</strong>.</li>
+                <li>Escaneie o QR Code ao lado com a câmera do celular (ou use o código de pareamento).</li>
+              </ol>
+            </div>
 
-            {statusData?.qr ? (
-              <img
-                src={
-                  typeof statusData.qr === "string" && statusData.qr.startsWith("data:")
-                    ? statusData.qr
-                    : `data:image/png;base64,${statusData.qr}`
-                }
-                alt="QR Code para pareamento no WhatsApp Business"
-                className="w-48 h-48 object-contain rounded-lg border border-border mx-auto block"
-              />
-            ) : (
-              <div className="w-48 h-48 bg-muted animate-pulse rounded-lg mx-auto" />
-            )}
-            {statusData?.pairingCode && (
-              <p className="text-sm text-muted-foreground text-center">
-                Código de pareamento: <strong className="font-mono">{statusData.pairingCode}</strong>
-              </p>
-            )}
+            <div className="flex flex-col items-center gap-4 min-w-0">
+              {statusData?.qr ? (
+                <img
+                  src={
+                    typeof statusData.qr === "string" && statusData.qr.startsWith("data:")
+                      ? statusData.qr
+                      : `data:image/png;base64,${statusData.qr}`
+                  }
+                  alt="QR Code para pareamento no WhatsApp Business"
+                  className="w-64 h-64 max-w-full object-contain rounded-xl border border-border bg-background p-2 shadow-sm"
+                />
+              ) : (
+                <div className="w-64 h-64 max-w-full bg-muted animate-pulse rounded-xl border border-border" />
+              )}
+              {statusData?.pairingCode && (
+                <p className="text-sm text-muted-foreground text-center w-full">
+                  Código de pareamento: <strong className="font-mono">{statusData.pairingCode}</strong>
+                </p>
+              )}
 
-            {onRefetchStatus && (
-              <div className="space-y-2">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Aguardando pareamento… O QR é atualizado automaticamente.</span>
-                  <span className="tabular-nums">
-                    {connectingRemainingPct <= 0
-                      ? "Atualizando…"
-                      : `${Math.ceil((connectionTimeoutSeconds * connectingRemainingPct) / 100)}s`}
-                  </span>
+              {onRefetchStatus && (
+                <div className="space-y-2 w-full max-w-sm">
+                  <div className="flex justify-between gap-2 text-xs text-muted-foreground">
+                    <span>Aguardando pareamento… O QR é atualizado automaticamente.</span>
+                    <span className="tabular-nums shrink-0">
+                      {connectingRemainingPct <= 0
+                        ? "Atualizando…"
+                        : `${Math.ceil((connectionTimeoutSeconds * connectingRemainingPct) / 100)}s`}
+                    </span>
+                  </div>
+                  <Progress value={connectingRemainingPct} className="h-2" />
                 </div>
-                <Progress value={connectingRemainingPct} className="h-2" />
-              </div>
-            )}
+              )}
 
-            {webhookWarning && (
-              <p className="text-xs text-amber-600 dark:text-amber-500 text-center max-w-sm mx-auto">
-                {webhookWarning}
-              </p>
-            )}
+              {webhookWarning && (
+                <p className="text-xs text-amber-600 dark:text-amber-500 text-center max-w-sm">
+                  {webhookWarning}
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

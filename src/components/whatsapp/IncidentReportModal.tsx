@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -12,22 +13,80 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, AlertTriangle } from "lucide-react";
+import { Loader2, AlertTriangle, BookOpen, CheckCircle2, Copy } from "lucide-react";
 import { whatsappApi } from "@/lib/api";
 
 const INCIDENT_TYPE_LABELS: Record<string, string> = {
+  // Agendamento
   double_booking: "Agendamento em horário já ocupado",
   ignored_availability: "Ignorou disponibilidade",
-  asked_phone: "Pediu telefone do cliente",
+  reagendamento_incorreto: "Reagendamento incorreto",
+  falha_fechamento: "Falha no fechamento do agendamento",
+  // Conversação
+  abertura_robotizada: "Abertura robotizada / sem naturalidade",
+  loop_conversacional: "Loop conversacional",
+  pergunta_duplicada: "Pergunta duplicada / repetida",
+  erro_retomada_tool: "Erro na retomada após tool failure",
+  // Segurança / exposição
   uuid_leak: "Mostrou ID/UUID",
-  tone_issue: "Problema de tom",
+  asked_phone: "Pediu telefone do cliente",
+  exposicao_erro_tecnico: "Exposição de erro técnico",
+  hallucination: "Resposta incoerente / inventou",
+  // Memória e contexto
+  memoria_incorreta: "Memória do cliente usada incorretamente",
   wrong_policy: "Política errada",
-  hallucination: "Resposta incoerente/inventou",
+  // Tom e estilo
+  tone_issue: "Problema de tom",
+  // Pós-atendimento
+  follow_up_ruim: "Follow-up inadequado",
+  lembrete_inadequado: "Lembrete inadequado",
+  cobranca_ruim: "Cobrança problemática",
+  // Operacional
+  concorrencia_ruido: "Concorrência / ruído operacional",
+};
+
+const INCIDENT_GROUPS: Array<{ label: string; types: string[] }> = [
+  {
+    label: "Agendamento",
+    types: ["double_booking", "ignored_availability", "reagendamento_incorreto", "falha_fechamento"],
+  },
+  {
+    label: "Conversação",
+    types: ["abertura_robotizada", "loop_conversacional", "pergunta_duplicada", "erro_retomada_tool"],
+  },
+  {
+    label: "Segurança / Exposição",
+    types: ["uuid_leak", "asked_phone", "exposicao_erro_tecnico", "hallucination"],
+  },
+  {
+    label: "Memória e Contexto",
+    types: ["memoria_incorreta", "wrong_policy"],
+  },
+  {
+    label: "Tom e Estilo",
+    types: ["tone_issue"],
+  },
+  {
+    label: "Pós-atendimento",
+    types: ["follow_up_ruim", "lembrete_inadequado", "cobranca_ruim"],
+  },
+  {
+    label: "Operacional",
+    types: ["concorrencia_ruido"],
+  },
+];
+
+const SEVERITY_LABELS: Record<string, { label: string; color: string }> = {
+  critical: { label: "Crítica", color: "destructive" },
+  medium: { label: "Média", color: "secondary" },
+  light: { label: "Leve", color: "outline" },
 };
 
 export type IncidentDiagnoseResult = {
@@ -118,6 +177,8 @@ function formatDiffLines(
   return lines;
 }
 
+type Step = "select" | "loading" | "result" | "saving" | "saved";
+
 export function IncidentReportModal({
   open,
   onClose,
@@ -141,10 +202,14 @@ export function IncidentReportModal({
   onApplyDraft: (result: IncidentDiagnoseResult) => void;
   onApplyAndPublish: (result: IncidentDiagnoseResult) => void;
 }) {
-  const [step, setStep] = useState<"select" | "loading" | "result">("select");
+  const [step, setStep] = useState<Step>("select");
   const [incidentType, setIncidentType] = useState<string>("");
+  const [severity, setSeverity] = useState<"critical" | "medium" | "light">("medium");
   const [managerNote, setManagerNote] = useState("");
   const [result, setResult] = useState<IncidentDiagnoseResult | null>(null);
+  const [savedIncidentId, setSavedIncidentId] = useState<string | null>(null);
+  const [savedScenarioDraft, setSavedScenarioDraft] = useState<Record<string, unknown> | null>(null);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleAnalyze = async () => {
@@ -169,11 +234,45 @@ export function IncidentReportModal({
     }
   };
 
+  const handleSaveToBenchmark = async () => {
+    setError(null);
+    setStep("saving");
+    try {
+      const saved = await whatsappApi.saveIncident({
+        incident_type: incidentType,
+        severity,
+        manager_note: managerNote.trim() || undefined,
+        conversation_id: conversationId,
+        transcript,
+        settings_snapshot: settingsSnapshot,
+        diagnosis_result: result ? (result as unknown as Record<string, unknown>) : undefined,
+      });
+      setSavedIncidentId(saved.id);
+      setSavedScenarioDraft(saved.benchmark_scenario_draft);
+      setStep("saved");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Falha ao salvar incidente");
+      setStep("result");
+    }
+  };
+
+  const handleCopyDraft = () => {
+    if (!savedScenarioDraft) return;
+    navigator.clipboard.writeText(JSON.stringify(savedScenarioDraft, null, 2)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   const handleClose = () => {
     setStep("select");
     setIncidentType("");
+    setSeverity("medium");
     setManagerNote("");
     setResult(null);
+    setSavedIncidentId(null);
+    setSavedScenarioDraft(null);
+    setCopied(false);
     setError(null);
     onClose();
   };
@@ -196,69 +295,106 @@ export function IncidentReportModal({
     <Dialog open={open} onOpenChange={(v) => (!v ? handleClose() : undefined)}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Reportar problema</DialogTitle>
+          <DialogTitle>Reportar problema da IA</DialogTitle>
           <DialogDescription>
-            {step === "select" &&
-              "Selecione o tipo de incidente e opcionalmente descreva o que aconteceu. O assistente irá sugerir uma correção."}
+            {step === "select" && "Classifique e descreva o problema. A IA irá sugerir uma correção."}
             {step === "loading" && "Analisando incidente…"}
-            {step === "result" && result && "Sugestão de correção"}
+            {step === "result" && "Sugestão de correção"}
+            {step === "saving" && "Salvando incidente no benchmark…"}
+            {step === "saved" && "Incidente registrado com sucesso"}
           </DialogDescription>
         </DialogHeader>
 
+        {/* ── Step: select ── */}
         {step === "select" && (
           <div className="space-y-4 pt-2">
             <div className="space-y-2">
-              <Label>Tipo de incidente</Label>
+              <Label>Tipo de problema</Label>
               <Select value={incidentType} onValueChange={setIncidentType}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Selecione o tipo" />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(INCIDENT_TYPE_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
+                  {INCIDENT_GROUPS.map((group) => (
+                    <SelectGroup key={group.label}>
+                      <SelectLabel className="text-xs text-muted-foreground">{group.label}</SelectLabel>
+                      {group.types.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {INCIDENT_TYPE_LABELS[type]}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+
+            <div className="space-y-2">
+              <Label>Severidade</Label>
+              <Select value={severity} onValueChange={(v) => setSeverity(v as "critical" | "medium" | "light")}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="critical">Crítica — bloqueia o agendamento ou expõe dado sensível</SelectItem>
+                  <SelectItem value="medium">Média — prejudica a experiência mas não bloqueia</SelectItem>
+                  <SelectItem value="light">Leve — problema estético ou de tom</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-2">
               <Label className="text-muted-foreground">Observação (opcional)</Label>
               <Textarea
-                placeholder="Ex.: Cliente reclamou que a IA confirmou horário já ocupado."
+                placeholder="Descreva o que aconteceu e qual era o comportamento esperado."
                 value={managerNote}
                 onChange={(e) => setManagerNote(e.target.value)}
-                rows={2}
+                rows={3}
                 className="resize-none"
               />
             </div>
+
             {error && (
               <Alert variant="destructive">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={handleClose}>
                 Cancelar
               </Button>
               <Button onClick={handleAnalyze} disabled={!incidentType}>
-                Analisar
+                Analisar com IA
               </Button>
             </div>
           </div>
         )}
 
-        {step === "loading" && (
-          <div className="flex items-center justify-center py-8">
+        {/* ── Step: loading / saving ── */}
+        {(step === "loading" || step === "saving") && (
+          <div className="flex flex-col items-center justify-center gap-3 py-10">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              {step === "saving" ? "Salvando…" : "Analisando…"}
+            </p>
           </div>
         )}
 
+        {/* ── Step: result ── */}
         {step === "result" && result && (
           <div className="space-y-4 pt-2">
+            <div className="flex items-center gap-2">
+              <Badge variant={SEVERITY_LABELS[severity]?.color as "destructive" | "secondary" | "outline" ?? "secondary"}>
+                {SEVERITY_LABELS[severity]?.label ?? severity}
+              </Badge>
+              <span className="text-xs text-muted-foreground">{INCIDENT_TYPE_LABELS[incidentType] ?? incidentType}</span>
+            </div>
+
             <p className="text-sm text-foreground">{result.summary}</p>
             <p className="text-sm font-medium text-foreground">{result.question_to_confirm}</p>
+
             {result.risk_notes.length > 0 && (
               <Alert>
                 <AlertTriangle className="h-4 w-4" />
@@ -271,6 +407,7 @@ export function IncidentReportModal({
                 </AlertDescription>
               </Alert>
             )}
+
             {formatDiffLines(result, currentProfileForDiff).length > 0 && (
               <div className="rounded-lg border bg-muted/30 p-3 text-sm">
                 <p className="font-medium text-muted-foreground mb-2">Alterações sugeridas:</p>
@@ -281,16 +418,86 @@ export function IncidentReportModal({
                 </ul>
               </div>
             )}
-            <div className="flex flex-wrap justify-end gap-2">
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
               <Button variant="outline" onClick={handleClose}>
                 Cancelar
               </Button>
-              <Button variant="secondary" onClick={handleApplyDraft}>
+              <Button
+                variant="secondary"
+                onClick={handleSaveToBenchmark}
+                className="gap-1.5"
+              >
+                <BookOpen className="h-4 w-4" />
+                Salvar no benchmark
+              </Button>
+              <Button variant="outline" onClick={handleApplyDraft}>
                 Aplicar no rascunho
               </Button>
               <Button onClick={handleApplyAndPublish}>
                 Aplicar e publicar
               </Button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step: saved ── */}
+        {step === "saved" && savedIncidentId && (
+          <div className="space-y-4 pt-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-green-700 dark:text-green-400">
+              <CheckCircle2 className="h-5 w-5 shrink-0" />
+              Incidente salvo com sucesso
+            </div>
+
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-1 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">ID do incidente</span>
+                <code className="text-xs font-mono">{savedIncidentId.slice(0, 8)}…</code>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Tipo</span>
+                <span>{INCIDENT_TYPE_LABELS[incidentType] ?? incidentType}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Severidade</span>
+                <Badge variant={SEVERITY_LABELS[severity]?.color as "destructive" | "secondary" | "outline" ?? "secondary"}>
+                  {SEVERITY_LABELS[severity]?.label ?? severity}
+                </Badge>
+              </div>
+            </div>
+
+            {savedScenarioDraft && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Rascunho de cenário benchmark
+                  </p>
+                  <Button variant="ghost" size="sm" onClick={handleCopyDraft} className="h-6 px-2 text-xs gap-1">
+                    <Copy className="h-3 w-3" />
+                    {copied ? "Copiado!" : "Copiar JSON"}
+                  </Button>
+                </div>
+                <pre className="rounded-md bg-muted p-3 text-xs overflow-x-auto max-h-48 leading-relaxed">
+                  {JSON.stringify(savedScenarioDraft, null, 2)}
+                </pre>
+                <p className="text-xs text-muted-foreground">
+                  Cole este rascunho em{" "}
+                  <code className="font-mono">backend/benchmark/scenarios/barbershop/</code>,
+                  ajuste os <code className="font-mono">turns</code> e <code className="font-mono">expected</code>,
+                  e rode <code className="font-mono">npx tsx benchmark/cli.ts run</code>.
+                </p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button onClick={handleClose}>Fechar</Button>
             </div>
           </div>
         )}

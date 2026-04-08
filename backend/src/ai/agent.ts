@@ -4,8 +4,174 @@ import * as aiTools from "./tools.js";
 import { buildSystemPrompt, normalizeProfile } from "./prompt-builder.js";
 import { retrieveKnowledge, buildKnowledgeBlock } from "./rag.js";
 import { setConversationPaused } from "./runtime-pause.js";
+import {
+  getClientMemory,
+  buildClientMemoryPromptBlock,
+  updateClientMemoryFromAppointmentEvent,
+  updateClientMemoryFromConversation,
+  clientMemoryTableExists,
+} from "./memory/client-memory.js";
+import type { ClientMemoryRow } from "./memory/client-memory.js";
+import { sendBarbershopLocationToClient } from "../lib/send-barbershop-location.js";
+import { sendStickerToClient } from "../lib/send-sticker-to-client.js";
+import { isValidUuid } from "../lib/uuid.js";
 
-const OPENING_MESSAGE = "Salve! 😄 Bora deixar na régua? Quer ver os serviços ou já quer agendar? ✂️";
+type ClientFavoritesResult = Awaited<ReturnType<typeof aiTools.getClientFavoriteServices>>;
+
+function buildOpeningMessage(barbershopName: string): string {
+  const n = (barbershopName ?? "").trim() || "barbearia";
+  return `Olá! Bem-vindo à ${n}![[MSG]]Quer ver os serviços disponíveis ou já prefere agendar um horário?`;
+}
+
+type UpcomingApptRow = {
+  id: string;
+  date: string;
+  time: string;
+  service_names: string;
+  barber_name: string;
+};
+
+function filterUpcomingFromNow(rows: UpcomingApptRow[], dateOnlyStr: string, currentTimeHHmm: string): UpcomingApptRow[] {
+  return rows.filter((a) => {
+    const d = String(a.date).slice(0, 10);
+    if (d > dateOnlyStr) return true;
+    if (d < dateOnlyStr) return false;
+    const t = String(a.time).slice(0, 5);
+    return t >= currentTimeHHmm;
+  });
+}
+
+function firstNameFromClientName(fullName: string): string {
+  const w = fullName.trim().split(/\s+/)[0] ?? "";
+  return w || fullName.trim();
+}
+
+function parseLocalHourFromSvDateTime(dateTimeStr: string): number {
+  const tail = dateTimeStr.includes(" ") ? dateTimeStr.split(" ")[1] ?? "" : dateTimeStr;
+  const h = parseInt(tail.slice(0, 2), 10);
+  return Number.isFinite(h) ? h : 12;
+}
+
+/** Período do dia no fuso da barbearia (para alinhar linguagem ao momento real). */
+function describeDayPeriodPt(hour: number): string {
+  if (hour >= 5 && hour < 12) return "manhã";
+  if (hour >= 12 && hour < 18) return "tarde";
+  if (hour >= 18 && hour < 22) return "noite";
+  return "madrugada/noite";
+}
+
+function formatBusinessHoursSummary(bhRaw: unknown): string {
+  const keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+  const labels: Record<(typeof keys)[number], string> = {
+    monday: "Segunda",
+    tuesday: "Terça",
+    wednesday: "Quarta",
+    thursday: "Quinta",
+    friday: "Sexta",
+    saturday: "Sábado",
+    sunday: "Domingo",
+  };
+  const bh = (bhRaw ?? {}) as Record<string, { start?: string; end?: string } | null | undefined>;
+  const lines: string[] = [];
+  for (const k of keys) {
+    const day = bh[k];
+    const label = labels[k];
+    if (!day || typeof day !== "object") {
+      lines.push(`- ${label}: (não configurado no sistema)`);
+      continue;
+    }
+    const s = String(day.start ?? "").slice(0, 5);
+    const e = String(day.end ?? "").slice(0, 5);
+    if (!s && !e) lines.push(`- ${label}: fechado ou sem expediente`);
+    else lines.push(`- ${label}: ${s || "?"}–${e || "?"}`);
+  }
+  return lines.join("\n");
+}
+
+function buildConsumptionSummaryLines(clientMemory: ClientMemoryRow | null, favorites: ClientFavoritesResult | null): string {
+  const lines: string[] = [];
+  if (favorites?.last?.service_names?.trim()) {
+    lines.push(`Último serviço/combo em agendamento passado: *${favorites.last.service_names.trim()}*.`);
+  }
+  if (favorites?.frequent?.length) {
+    const fr = favorites.frequent
+      .slice(0, 2)
+      .map((f) => `${f.service_names} (${f.count}×)`)
+      .join("; ");
+    lines.push(`Combinações frequentes (histórico): ${fr}.`);
+  }
+  if (
+    clientMemory &&
+    clientMemory.preferred_services?.length &&
+    clientMemory.preferred_services_conf >= 0.35
+  ) {
+    lines.push(`Memória: costuma *${clientMemory.preferred_services.join(" + ")}*.`);
+  }
+  if (
+    clientMemory &&
+    clientMemory.preferred_barber_name &&
+    clientMemory.preferred_barber_conf >= 0.35
+  ) {
+    lines.push(`Memória: barbeiro de preferência (inferido): *${clientMemory.preferred_barber_name}*.`);
+  }
+  if (
+    clientMemory?.last_completed_services?.length &&
+    clientMemory.last_completed_at
+  ) {
+    const days = Math.floor(
+      (Date.now() - new Date(clientMemory.last_completed_at).getTime()) / (1000 * 60 * 60 * 24)
+    );
+    if (days <= 180) {
+      lines.push(`Último atendimento concluído: *${clientMemory.last_completed_services.join(" + ")}* (há ~${days} dias).`);
+    }
+  }
+  if (lines.length === 0) {
+    return "- Sem histórico suficiente ainda; descubra o serviço com naturalidade se o cliente não disser.";
+  }
+  return lines.map((l) => `- ${l}`).join("\n");
+}
+
+function buildOperationalContextBlock(params: {
+  barbershopName: string;
+  timeZone: string;
+  dateTimeStr: string;
+  dateOnlyStr: string;
+  clientName: string;
+  businessHoursRaw: unknown;
+  clientMemory: ClientMemoryRow | null;
+  favorites: ClientFavoritesResult | null;
+  address?: string | null;
+  hasGeoLocation?: boolean;
+}): string {
+  const hour = parseLocalHourFromSvDateTime(params.dateTimeStr);
+  const period = describeDayPeriodPt(hour);
+  const hoursBlock = formatBusinessHoursSummary(params.businessHoursRaw);
+  const consumption = buildConsumptionSummaryLines(params.clientMemory, params.favorites);
+  const nameLine = params.clientName.trim()
+    ? `Nome no cadastro: *${params.clientName.trim()}* (use o primeiro nome no tratamento).`
+    : `Nome no cadastro: ainda não informado — peça só quando for salvar o agendamento.`;
+  const addrLine =
+    params.address != null && String(params.address).trim()
+      ? `Endereço cadastrado: ${String(params.address).trim()}`
+      : `Endereço cadastrado: (não informado — cadastre em Configurações)`;
+  const geoLine = params.hasGeoLocation
+    ? `Pin de mapa (WhatsApp): disponível — use send_barbershop_location quando o cliente pedir localização ou após confirmar agendamento.`
+    : `Pin de mapa (WhatsApp): cadastre latitude e longitude em Configurações para enviar o pin.`;
+
+  return (
+    `\n\n--- Contexto operacional (base obrigatória; evite contradições e alucinações) ---\n` +
+    `Unidade: *${params.barbershopName}* | Fuso: ${params.timeZone}\n` +
+    `Momento da conversa (local): ${params.dateTimeStr} | Data (exibição ao cliente): ${formatDateShortPt(params.dateOnlyStr)} | Período do dia: *${period}*\n` +
+    `Cliente: ${nameLine} Contato identificado pelo WhatsApp desta conversa (não peça telefone).\n` +
+    `${addrLine}\n` +
+    `${geoLine}\n\n` +
+    `Expediente de referência (configuração da unidade — feriados, folgas e exceções vêm das *tools*; não invente):\n` +
+    `${hoursBlock}\n\n` +
+    `Histórico / preferências (pistas; se o cliente pedir outra coisa, siga o cliente):\n` +
+    `${consumption}\n` +
+    `--- fim contexto operacional ---`
+  );
+}
 
 function stripIdsAndUuids(text: string): string {
   const uuidRegex = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
@@ -16,11 +182,36 @@ function stripIdsAndUuids(text: string): string {
     .trim();
 }
 
+/** Remove placeholders internos e vazamentos meta-técnicos antes de exibir ao cliente (WhatsApp). */
+export function sanitizeClientFacingReply(text: string): string {
+  let t = stripIdsAndUuids(text);
+  // Remove qualquer [texto com ferramenta/tool/placeholder]
+  t = t.replace(/\[[^\]]*(?:ferramenta|tool|placeholder|informar\s+na\s+ferramenta)[^\]]*\]/gi, "");
+  // Remove linha "*Total:* R$ ..." quando contém placeholder ou colchete
+  t = t.replace(/\*Total:\*\s*R\$\s*[^\n]*(?:ferramenta|placeholder|\[)/gi, "");
+  // Remove R$ [qualquer coisa entre colchetes]
+  t = t.replace(/R\$\s*\[[^\]]*\]/gi, "");
+  // Remove (valor a ser informado ...) em qualquer forma
+  t = t.replace(/\(valor\s+a\s+ser\s+informado[^\)]*\)/gi, "");
+  // Remove linha *Total:* vazia (sem valor após sanitização)
+  t = t.replace(/^\*Total:\*\s*$/gm, "");
+  // Remove linha *Total:* R$ imediatamente seguida de quebra sem valor
+  t = t.replace(/\*Total:\*\s*R\$\s*\n/gi, "");
+  // Remove URLs de mapas coladas no texto (devem ser enviadas via send_barbershop_location)
+  t = t.replace(/https?:\/\/(?:maps\.google\.com|maps\.app\.goo\.gl|goo\.gl\/maps)[^\s]*/gi, "");
+  t = t.replace(/\n{3,}/g, "\n\n").trim();
+  return t;
+}
+
 function normalizeLoose(s: string): string {
   return (s ?? "")
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    // Normalize connectives and special chars: "e", "+", "&" → all become single space
+    // This lets "Corte e Barba", "Corte + Barba", "Corte & Barba" all match each other
+    .replace(/\s*[+&]\s*/g, " ")
+    .replace(/\s+e\s+/g, " ")
     .replace(/[^\p{L}\p{N}\s]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -35,6 +226,39 @@ const UUID_REGEX = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const EMOJI_REGEX = /\p{Extended_Pictographic}/gu;
 const MAX_EMOJIS_FOR_VIOLATION = 4;
 
+const AI_EXPOSURE_PATTERNS = [
+  /pelo que vi[,\s]/i,
+  /não\s+consegui\s+(checar|verificar|encontrar|acessar|obter)/i,
+  /como\s+(ia|robô|bot|inteligência\s+artificial)\b/i,
+  /\bmeu\s+sistema\b/i,
+  /\bfui\s+programad[oa]\b/i,
+  /\bsou\s+um?\s+(bot|robô|assistente\s+virtual|ia)\b/i,
+  /\bnão\s+tenho\s+acesso\s+(a|ao|aos|às)\b/i,
+  /\bminhas\s+informações\s+(estão|são)\s+limitadas\b/i,
+  // Phrases seen in real-world failure (April 3rd test): error-exposing recovery language
+  /houve\s+um\s+problema\s+ao/i,
+  /vou\s+verificar\s+novamente/i,
+  // Maps URL pasted in text instead of using send_barbershop_location
+  /https?:\/\/(?:maps\.google\.com|maps\.app\.goo\.gl|goo\.gl\/maps)/i,
+  /vou\s+tentar\s+mais\s+uma\s+abordagem/i,
+  /parece\s+que\s+tá\s+rolando\s+um\s+bug/i,
+  /tô\s+com\s+os\s+horários\s+disponíveis\s+de\s+novo/i,
+  // Technical difficulty / failure exposure patterns
+  /estou\s+enfrentando\s+dificuldades/i,
+  /dificuldades\s+t[eé]cnicas/i,
+  /problema\s+t[eé]cnico/i,
+  /instabilidade\s+t[eé]cnica/i,
+  /n[aã]o\s+consigo\s+finalizar/i,
+  /n[aã]o\s+estou\s+conseguindo\s+(finalizar|completar|concluir|agendar)/i,
+  /n[aã]o\s+foi\s+poss[ií]vel\s+(completar|finalizar|concluir|agendar)/i,
+];
+
+/** Returns true if the reply contains phrases that expose the automated nature of the system. */
+export function containsAiExposure(reply: string): boolean {
+  const t = (reply ?? "").trim();
+  return AI_EXPOSURE_PATTERNS.some((re) => re.test(t));
+}
+
 /** Returns list of violation codes for simulation/quality checks. */
 export function detectViolations(reply: string): string[] {
   const out: string[] = [];
@@ -43,6 +267,7 @@ export function detectViolations(reply: string): string[] {
   if (UUID_REGEX.test(t)) out.push("uuid_leak");
   const emojis = t.match(EMOJI_REGEX);
   if (emojis != null && emojis.length > MAX_EMOJIS_FOR_VIOLATION) out.push("excessive_emojis");
+  if (containsAiExposure(t)) out.push("ai_exposure");
   return out;
 }
 
@@ -65,10 +290,95 @@ function extractAskedService(text: string): string | null {
 function inferServiceKeyword(text: string): "corte" | "barba" | "sobrancelha" | "combo" | null {
   const t = normalizeLoose(text);
   if (/\bcorte\s*\+\s*barba|combo\b/.test(t)) return "combo";
+  if (/\bcorte\s+e\s+barba\b/.test(t)) return "combo";
   if (/\bbarba\b/.test(t)) return "barba";
   if (/\bsobrancelha\b/.test(t)) return "sobrancelha";
   if (/\bcabelo|cortar|corte\b/.test(t)) return "corte";
   return null;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function extractTimeFromText(text: string): string | null {
+  const raw = (text ?? "").trim();
+  if (!raw) return null;
+
+  // 10:30, 9:30, 10h30, 9h30
+  const hm = raw.match(/\b(\d{1,2})\s*[:hH]\s*(\d{2})\b/);
+  if (hm) {
+    const h = parseInt(hm[1] ?? "", 10);
+    const m = parseInt(hm[2] ?? "", 10);
+    if (Number.isFinite(h) && Number.isFinite(m) && h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+      return `${pad2(h)}:${pad2(m)}`;
+    }
+  }
+
+  // "às 11", "as 9", "às 9h"
+  const hOnly = raw.match(/\b[aà]s?\s*(\d{1,2})\s*(h\b)?/i);
+  if (hOnly) {
+    const h = parseInt(hOnly[1] ?? "", 10);
+    if (Number.isFinite(h) && h >= 0 && h <= 23) return `${pad2(h)}:00`;
+  }
+
+  // "11h"
+  const hOnly2 = raw.match(/\b(\d{1,2})\s*h\b/i);
+  if (hOnly2) {
+    const h = parseInt(hOnly2[1] ?? "", 10);
+    if (Number.isFinite(h) && h >= 0 && h <= 23) return `${pad2(h)}:00`;
+  }
+
+  return null;
+}
+
+function formatTimePt(timeHHmm: string): string {
+  const [hh, mm] = (timeHHmm ?? "00:00").split(":");
+  const h = Number(hh);
+  const m = Number(mm);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return timeHHmm;
+  return m === 0 ? `${h}h` : `${h}h${pad2(m)}`;
+}
+
+function formatDateLongPt(dateStr: string, timeZone: string): string {
+  const [y, m, d] = dateStr.split("-").map((v) => parseInt(v, 10));
+  if (!y || !m || !d) return dateStr;
+  const safeUtc = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  const fmt = new Intl.DateTimeFormat("pt-BR", {
+    timeZone,
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+  const out = fmt.format(safeUtc);
+  return out ? out.charAt(0).toUpperCase() + out.slice(1) : dateStr;
+}
+
+/** Converte yyyy-MM-dd para dd/MM/yyyy (exibição ao cliente). */
+export function formatDateShortPt(dateStr: string): string {
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return dateStr;
+  const y = parseInt(parts[0] ?? "", 10);
+  const m = parseInt(parts[1] ?? "", 10);
+  const d = parseInt(parts[2] ?? "", 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return dateStr;
+  return `${pad2(d)}/${pad2(m)}/${y}`;
+}
+
+function extractNameFromText(text: string): string | null {
+  const raw = (text ?? "").replace(/\p{Extended_Pictographic}/gu, " ").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+  const m = raw.match(
+    /\b(meu\s+nome\s+(é|e)|sou\s+(o|a)?|aqui\s+é|me\s+chamo)\s+([A-Za-zÀ-ÖØ-öø-ÿ' ]{2,40})/i
+  );
+  const candidate = (m?.[4] ?? "").trim();
+  if (!candidate) return null;
+  const cleaned = candidate.replace(/\s{2,}/g, " ").trim();
+  if (cleaned.length < 2 || cleaned.length > 40) return null;
+  if (!/^[A-Za-zÀ-ÖØ-öø-ÿ' ]+$/.test(cleaned)) return null;
+  if (cleaned.split(" ").filter(Boolean).length > 4) return null;
+  return cleaned;
 }
 
 function formatTopServicesForWhatsapp(
@@ -81,74 +391,125 @@ function formatTopServicesForWhatsapp(
     .join("\n");
 }
 
+/** Detects if an assistant message asked the client for their name (deterministic + LLM). */
+export function assistantMessageAskedForName(assistantContent: string): boolean {
+  const t = (assistantContent ?? "").toLowerCase();
+  return /(qual\s+(o\s+)?seu\s+nome|para\s+confirmar,?\s+qual\s+o\s+seu\s+nome|me\s+diz(e)?\s+seu\s+nome|seu\s+nome\s+pra\s+salvar|pra\s+salvar.*nome|como\s+[eé]\s+seu\s+nome|informe?\s+seu\s+nome)/i.test(
+    t
+  );
+}
+
 export const DEFAULT_SYSTEM_PROMPT = `Timezone: {{TIMEZONE}} (America/Sao_Paulo, UTC-03:00)
-Agora (local): {{DATE_NOW}}
-Hoje: {{TODAY_DATE}}
-Amanhã: {{TOMORROW_DATE}}
+Agora: {{DATE_NOW}} | Hoje (cliente): {{TODAY_DATE_BR}} | Amanhã (cliente): {{TOMORROW_DATE_BR}} | (Internamente as tools usam yyyy-MM-dd; nunca mostre yyyy-MM-dd ao cliente.)
 Telefone do cliente: {{CLIENT_PHONE}}
-Nome do cliente (se existir): {{CLIENT_NAME}}
+Nome do cliente: {{CLIENT_NAME}}
 
-Você é o BarbeiroBot da barbearia "{{BARBERSHOP_NAME}}".
-Fale estilo WhatsApp: curto, simpático, descolado. Use gírias leves. Emojis só quando fizer sentido (não em toda mensagem).
+Você é o atendente da barbearia "{{BARBERSHOP_NAME}}".
+Detalhes de tom e emoji vêm do bloco "Estilo (perfil do agente)" quando existir; caso contrário, seja direto e humano no WhatsApp (mensagens curtas).
 
-🎯 Regra #1 (sempre)
-Direcione qualquer contato para AGENDAMENTO (ou mostrar serviços e puxar para marcar).
+Antes de responder, use o bloco "Contexto operacional" (expediente de referência, nome do cliente, histórico de consumo, momento do dia). Não contradiga esse bloco nem invente dias/horários de funcionamento: disponibilidade real e exceções vêm sempre de get_next_slots, check_availability, list_appointments e dados das tools.
 
-✅ Abertura obrigatória (nunca seja genérico)
-Se o cliente mandar “oi/salve/bom dia/opa/e aí” ou estiver vago, responda:
-“${OPENING_MESSAGE}”
-Proibido: “Como posso ajudar?” / “Estou aqui para ajudar”.
+Datas ao cliente (obrigatório)
+- Use apenas dd/MM/yyyy (ex.: 09/04/2026) ou formato por extenso (ex.: Segunda-feira, 06 de abril de 2026 às 09h30). Proibido exibir yyyy-MM-dd ao cliente.
 
-🧰 Ferramentas (não invente)
-- list_services (nome, valor, descrição) — nunca falar comissão
-- list_barbers — nunca falar “inativo”
-- list_appointments — nunca expor dados de outros clientes
-- get_next_slots — USE para “primeiro horário”, “hoje” ou “amanhã” sem hora específica. Para HOJE passe after_time com o horário atual ({{DATE_NOW}}).
-- check_availability — para um horário específico; para HOJE passe after_time com o horário atual. Nunca sugira horários no passado.
-- upsert_client — não peça telefone; peça no máximo o nome 1 vez se precisar
-- create_appointment — só após confirmação final única (use client_phone={{CLIENT_PHONE}})
-- list_client_upcoming_appointments — quando o cliente quiser cancelar ou reagendar; use o telefone do contexto
-- cancel_appointment — cancela pelo appointment_id (retornado por list_client_upcoming_appointments)
-- reschedule_appointment — reagenda (appointment_id + nova data/hora); use check_availability antes se precisar
+Objetivo: conduzir a conversa para um agendamento confirmado com o mínimo de voltas.
 
-🚫 Regras duras
-- Nunca mostrar IDs/UUIDs/códigos.
-- Nunca pedir o telefone.
-- Nada de confirmar duas vezes. Uma confirmação final curta.
-- Fora do escopo: não invente; responda curto e puxe de volta pro agendamento.
-- Se o cliente disser “qualquer um / tanto faz”, não pergunte preferência: escolha você um barbeiro disponível.
-- Não diga que “tá agendado” antes de realmente criar (create_appointment).
-- Formatação WhatsApp: para *negrito* use apenas 1 asterisco: *assim*. Não use **assim**.
-- Serviço inexistente: diga que não faz e chame list_services; responda com os principais serviços (ex.: 4) e CTA: “Gostaria de agendar um horário ou ver outras opções?”
-- Horários: nunca sugerir horário no passado. Para “hoje” sem hora ou “primeiro horário” use get_next_slots (com after_time quando for hoje). Para horário específico use check_availability (com after_time quando for hoje). Horários sempre em múltiplos de 5 minutos (15:00, 16:15, 17:30); nunca 16:07 ou 15:48.
-- Quando o horário pedido não encaixar, explique curto e ofereça 2–3 alternativas vindas das ferramentas (get_next_slots ou check_availability).
+Abertura (cumprimento curto: oi/olá/bom dia/boa tarde/boa noite/opa)
+Use exatamente esta mensagem padrão (nome da barbearia já vem preenchido): "{{OPENING_MESSAGE}}"
+Proibido: "Como posso ajudar?" / "Estou aqui para ajudar".
+Se o bloco "Próximos agendamentos deste contato" existir abaixo, priorize cumprimentar pelo primeiro nome e confirmar o horário ou oferecer reagendar — não use a abertura genérica nesse caso.
 
-✅ Fechamento (sem confirmação duplicada)
-- Se ainda não souber o nome (CLIENT_NAME vazio), faça o fechamento em 2 mensagens diferentes usando o delimitador [[MSG]]:
-  1) resumo + *valor total* + barbeiro + data/hora
-  2) pedir o nome para salvar: “Pra salvar aqui, qual seu nome? 🙂”
-- Ao receber o nome, considere isso como a confirmação final e chame create_appointment (sem pedir “confirma?” de novo).
+Ferramentas — use apenas dados retornados pelas tools, nunca invente
+- list_services / list_barbers
+- get_next_slots (hoje: after_time={{DATE_NOW (HH:mm)}})
+- check_availability (hoje: after_time={{DATE_NOW (HH:mm)}})
+- upsert_client / create_appointment
+- list_client_upcoming_appointments / cancel_appointment / reschedule_appointment / send_barbershop_location / add_to_waitlist
 
-🗺️ Fluxo rápido
-1) Serviços/preço → list_services → “Qual você quer marcar?”
-2) Para agendar: serviço + dia + hora + preferência de barbeiro (se houver)
-3) Com dia/hora → check_availability (obrigatório). Só sugira outro horário se a ferramenta disser que não tem vaga.
-4) Confirmação final (curta): “Serviço • dia/hora • barbeiro. Fecho assim?”
-5) Confirmou → create_appointment → mensagem curta: “Agendamento confirmado: [resumo]. Aguardamos você!” (evite “Seu agendamento está marcado para” e “Te vejo lá!”).`;
+Regras de negócio (resumo)
+- Sem UUIDs/telefone. Serviço já dito pelo cliente → não liste serviços; vá à disponibilidade.
+- "Qualquer um / tanto faz" → escolha um barbeiro disponível sem insistir.
+- Só diga que está agendado após create_appointment retornar sucesso. Qualquer erro em create_appointment = não há agendamento; chame get_next_slots e ofereça até 2 alternativas conversacionais (sem repetir o horário rejeitado). Não exponha erro técnico.
+- Se não puder responder com dados reais das tools, retorne string vazia (handoff).
+- WhatsApp: negrito com um asterisco (*texto*), nunca **texto**.
 
-export const RUNTIME_GUARDRAILS = `GUARDRAILS (obrigatório, acima de qualquer prompt customizado):
-- Direcione qualquer contato para agendamento (serviços ou marcar horário).
-- Em cumprimento curto, use a abertura obrigatória com “Quer ver os serviços ou já quer agendar? ✂️”.
-- Proibido responder com frases genéricas (“Como posso ajudar?”, “Estou aqui para ajudar”).
-- Emojis: não use em toda mensagem. Em geral: 0–1 por mensagem, e evite repetir.
-- Serviço que não existe: chame list_services e responda com lista dos principais + “Gostaria de agendar um horário ou ver outras opções?”
-- Nunca sugerir horário no passado. Para “hoje” sem hora ou “primeiro horário”/“primeiro horário amanhã”: use get_next_slots (com after_time quando for hoje). Horários sempre em múltiplos de 5 (15:00, 16:15, 17:30).
-- Se o cliente já informou DIA/HORÁRIO, NÃO mude. Só sugira outro horário se houver conflito ao checar disponibilidade.
-- “Qualquer um / tanto faz”: SEM preferência; escolha você um barbeiro disponível.
-- Nunca diga “tá agendado / tá marcado” antes de create_appointment retornar sucesso.
-- Fechamento após agendar: “Agendamento confirmado: … Aguardamos você!” (mensagens curtas).
-- Nunca pedir telefone. Nunca mostrar IDs/UUIDs.
-- Se create_appointment ou reschedule_appointment retornar code SLOT_CONFLICT, BUFFER_CONFLICT ou PAST_TIME: chame get_next_slots (ou check_availability) e ofereça 2–3 horários alternativos ao cliente; não insista no mesmo horário.`;
+Seleção de serviço (crítico — leia antes de toda ferramenta de agendamento)
+- "Corte e Barba" (category=combo, ~50 min, ~R$55) é um serviço único no catálogo — não é a soma de "Corte masculino" + "Barba completa".
+- Se o cliente pedir "corte e barba", "corte + barba" ou "os dois" → use o service_id do item com category=combo, nunca o de "Barba completa" (category=barba).
+- Na dúvida, chame list_services e confira o campo category: use "combo" para combos, "corte" para corte avulso, "barba" para barba avulsa.
+- Ao confirmar agendamento, exiba o nome exato do serviço retornado pela tool (não invente nem abrevie).
+- Se o cliente corrigir o serviço ("pedi corte e barba, não só barba"): cancele o agendamento errado com cancel_appointment e crie um novo com create_appointment usando o service_id correto.
+- appointment_id deve ser sempre UUID retornado por list_client_upcoming_appointments — nunca use números (1, 2, 3) nem nomes de barbeiros.
+
+Reagendamento (obrigatório)
+- Para mudar data/hora de um agendamento existente: chame list_client_upcoming_appointments, fixe o appointment_id correto e use reschedule_appointment com esse id. Não use create_appointment para reagendar.
+- reschedule_appointment não altera serviço nem preço; só data/hora/barbeiro. Não troque o serviço (ex.: de "Corte e Barba" para "Barba completa") a menos que o cliente peça explicitamente — aí seria outro fluxo (cancelar e novo agendamento ou atendimento humano).
+- Antes de reschedule_appointment: envie um resumo (serviço, barbeiro, data/hora nova) e peça confirmação explícita ("Posso confirmar?"). Só chame a tool após o cliente concordar (sim/ok/pode).
+- Cancelamento: quando o cliente deixar claro que quer cancelar/desmarcar, identifique o appointment_id (list_client_upcoming_appointments se precisar), chame cancel_appointment e responda só com frases afirmativas ("Seu horário das X foi cancelado!", "Se quiser reagendar em outro dia, me avisa!"). Não pergunte de novo "Posso confirmar?" para cancelar.
+- Se reschedule_appointment retornar erro (horário ocupado/indisponível): diga de forma humana que esse horário já foi preenchido, pergunte se prefere manhã ou tarde, chame get_next_slots e ofereça 2–3 horários — sem bullets.
+- Troca de serviço em agendamento existente: quando o cliente pedir para alterar o serviço de um agendamento já confirmado, siga esta ordem:
+  1. Chame list_client_upcoming_appointments para obter o appointment_id, data, hora e barbeiro.
+  2. Cancele o agendamento antigo com cancel_appointment.
+  3. Chame check_availability para o mesmo horário e barbeiro com o novo serviço. Se disponível, crie com create_appointment. Se indisponível, ofereça alternativas próximas com get_next_slots e crie no horário escolhido.
+  4. Aviso importante: informe o cliente que está fazendo a troca antes de cancelar ("Vou cancelar o agendamento atual e criar um novo com Corte e Barba — ok?"). Só execute após confirmação.
+
+Depois de agendamento ou reagendamento já concluído com sucesso
+- Se o cliente só perguntar preço, localização, endereço ou "tá certo o horário?": responda à dúvida e reforce que está marcado. Não peça "posso confirmar?" de novo nem ofereça novos horários sem o cliente pedir.
+- Feche com tom humano: "Aguardamos você!", "Te esperamos amanhã então", "Até daqui a pouco" — sem soar repetitivo numa mesma conversa.
+
+Horários
+- Múltiplos de 30 min. Nada no passado; para hoje, respeite ≥15 min de antecedência.
+- Sugestão de horários: no máximo 2 opções, sem bullets (-, 1., 2.). Prefira um horário de manhã e outro à tarde, com barbeiros diferentes quando houver.
+  Ex.: "Tenho hoje às *11h* com Eduardo ou às *15h* com Lucas. Qual prefere?"
+
+Planos de assinatura
+- Se o cliente perguntar sobre planos, mensalidades ou assinaturas: chame list_plans e apresente cada opção com nome, serviços incluídos, preço e ciclo.
+- Explique que o pagamento é feito via PIX todo mês na data escolhida — o código chegará automaticamente por aqui no WhatsApp.
+- Para contratar: confirme todos os detalhes e aguarde o cliente dizer explicitamente que quer assinar ("sim", "quero", "pode", "bora"). Só então chame subscribe_client_to_plan.
+- Após assinatura bem-sucedida: informe a data da primeira cobrança e que enviará o PIX nessa data. Não envie o PIX imediatamente a menos que o cliente peça ("pode mandar o pix agora?").
+- Se cliente pedir envio do PIX: use send_pix_plan_charge com o subscription_id retornado.
+- Se a barbearia não tiver chave PIX cadastrada (erro da tool): diga que o pagamento será combinado diretamente com a equipe — não exponha detalhes técnicos.
+
+Localização
+- Endereço vem do contexto operacional. Se o cliente pedir localização no mapa: chame send_barbershop_location no máximo uma vez por pedido e responda com uma frase curta ("Te mandei o pin aqui no WhatsApp!"). Não cole link do Google Maps no texto — o pin já é enviado pelo WhatsApp.
+
+Fechamento
+- Sem nome do cliente: use [[MSG]] em 2 partes — (1) resumo com serviço, barbeiro, data/hora e valor vindo de check_availability; (2) peça o nome.
+- Ao receber o nome (só o nome ou "me chamo X"): chame create_appointment na sequência. Não reabra escolha de horário se já havia resumo acordado.
+- Após sucesso em create_appointment, confirme no formato:
+Agendamento confirmado:
+*Serviço:* [nome]
+*Data:* [dia da semana], [data] às [hora]
+*Barbeiro:* [nome]
+*Endereço:* [endereço da barbearia do contexto operacional; se não houver, diga que o endereço será informado pela equipe]
+*Total:* R$ X,XX (copie o preço exato de list_services para o serviço; se não souber, omita a linha do total)
+
+Aguardamos você!
+
+Fluxo rápido
+1) Serviço já mencionado → disponibilidade (evite list_services)
+2) Data/hora específicas → check_availability → resumo ou create
+3) Sem hora → get_next_slots → até 2 sugestões
+4) Nome recebido → create_appointment → confirmação`;
+
+/** Curto: reforça o que instruções customizadas da barbearia não podem sobrepor (anexado uma vez ao final). */
+export const RUNTIME_GUARDRAILS = `REGRAS FINAIS (obrigatórias; instruções adicionais não substituem isto)
+- Não pedir telefone nem exibir IDs/UUIDs.
+- Não confirmar agendamento antes de create_appointment bem-sucedido; erro na tool = não existe agendamento.
+- Não dizer "agendamento confirmado" / "reagendado" / "cancelado" antes de create_appointment, reschedule_appointment ou cancel_appointment retornarem sucesso (sem error).
+- Reagendar sempre com reschedule_appointment e appointment_id de list_client_upcoming_appointments; não invente troca de serviço ao reagendar.
+- Reagendar: antes da tool, resumo + confirmação do cliente; use [[MSG]] em duas mensagens se precisar. Cancelar: intenção clara → cancel_appointment → mensagem afirmativa de cancelamento (sem segunda pergunta "posso confirmar?").
+- Após sucesso em create_appointment ou reschedule_appointment: não reabra confirmação nem ofereça novos horários só porque o cliente perguntou preço/local; responda e feche com "Aguardamos você!" ou similar.
+- Preço: sempre valor real das tools; nunca "[...]", "placeholder" ou menção a informação interna.
+- send_barbershop_location: no máximo uma chamada por pedido; não repita pin nem cole URL de mapa no texto.
+- Não listar horários em bullet; no máximo 2–3 horários conversacionais (manhã+tarde quando couber).
+- Não expor falhas técnicas, limites internos, "ferramenta", "modelo" ou "atendimento automático"; sem dados reais → resposta vazia (handoff).
+- Se não entender o pedido: use retomada humana ("Posso não ter entendido — quer agendar, reagendar ou cancelar? Qual dia e horário?") em vez de mensagem técnica.
+- Depois de pedir o nome com resumo já fechado, o próximo passo é create_appointment — não ofereça outros horários no lugar.
+- Serviço de combo (ex.: "Corte e Barba"): ao chamar check_availability, get_next_slots ou create_appointment, use o service_id do combo (category=combo), não o de barba avulsa. Verifique com list_services se necessário.
+- appointment_id sempre UUID de list_client_upcoming_appointments — nunca número sequencial, nunca nome de barbeiro.
+- Troca de serviço: use check_availability com o novo service_id ANTES de cancelar o agendamento existente. Cancele o antigo somente após criar o novo com sucesso.
+- Nunca cole URL de maps.google.com no texto — use send_barbershop_location para enviar o pin.`;
 
 const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -205,7 +566,7 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_next_slots",
       description:
-        "Retorna os próximos horários disponíveis em uma data (primeiros N slots). Use para 'primeiro horário', 'hoje' ou 'amanhã' sem hora específica. Para HOJE passe after_time com o horário atual.",
+        "Retorna os próximos horários disponíveis em uma data (slots em múltiplos de 30 min). Use para 'primeiro horário', 'hoje' ou 'amanhã' sem hora específica. Para HOJE passe after_time com o horário atual. Retorne limit=8 para garantir opções de manhã e tarde.",
       parameters: {
         type: "object",
         properties: {
@@ -290,7 +651,8 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "reschedule_appointment",
-      description: "Reagenda um agendamento para nova data/hora. Use check_availability antes se precisar validar horário. Use o telefone do cliente.",
+      description:
+        "Reagenda um agendamento existente (mesmo registro no sistema) para nova data/hora e opcionalmente outro barbeiro. O appointment_id deve vir de list_client_upcoming_appointments. Não altera serviços nem preço — só data/hora/barbeiro. Não use para criar agendamento novo. Use check_availability antes se precisar validar horário.",
       parameters: {
         type: "object",
         properties: {
@@ -301,6 +663,97 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           barber_id: { type: "string", description: "UUID do barbeiro (opcional)" },
         },
         required: ["appointment_id", "client_phone", "date", "time"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_barbershop_location",
+      description:
+        "Envia pelo WhatsApp o pin de localização da barbearia (requer latitude/longitude cadastradas). CHAME NO MÁXIMO UMA VEZ por pedido/conversa — se already_sent=true na resposta, NÃO chame de novo. Não repita nem inclua link de mapa na mensagem em texto — o cliente recebe o pin pelo app.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_phone: { type: "string", description: "Telefone do cliente (use o do contexto)" },
+        },
+        required: ["client_phone"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_sticker",
+      description:
+        "Envia uma figurinha (sticker) humanizada pelo WhatsApp. Chame APENAS se stickers estiverem habilitados e NO MÁXIMO UMA VEZ por conversa — idealmente após confirmação de agendamento ou saudação calorosa. Não chame em respostas informativas simples.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_plans",
+      description:
+        "Lista os planos de assinatura disponíveis na barbearia (nome, serviços incluídos, preço, ciclo de cobrança). Chame quando o cliente perguntar sobre planos, assinaturas ou mensalidades.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "subscribe_client_to_plan",
+      description:
+        "Assina o cliente a um plano de serviços recorrentes. SOMENTE após confirmação explícita do cliente. Registra a assinatura e agenda a primeira cobrança PIX.",
+      parameters: {
+        type: "object",
+        properties: {
+          plan_id: { type: "string", description: "UUID do plano escolhido (obtido via list_plans)" },
+          billing_day: { type: "number", description: "Dia do mês para cobrança recorrente (1-28, padrão: dia atual)" },
+        },
+        required: ["plan_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_pix_plan_charge",
+      description:
+        "Envia cobrança PIX de plano para o cliente via WhatsApp. Chame quando o cliente solicitar envio do PIX ou quando a assinatura precisar de cobrança imediata.",
+      parameters: {
+        type: "object",
+        properties: {
+          subscription_id: { type: "string", description: "UUID da assinatura (obtido via subscribe_client_to_plan)" },
+        },
+        required: ["subscription_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "add_to_waitlist",
+      description: "Adiciona cliente na lista de espera quando nao houver horario adequado.",
+      parameters: {
+        type: "object",
+        properties: {
+          client_phone: { type: "string", description: "Telefone do cliente (use o do contexto)" },
+          client_name: { type: "string", description: "Nome do cliente (opcional)" },
+          desired_date: { type: "string", description: "Data desejada yyyy-MM-dd" },
+          service_id: { type: "string", description: "UUID do servico (opcional)" },
+          barber_id: { type: "string", description: "UUID do barbeiro (opcional)" },
+          notes: { type: "string", description: "Observacoes extras (opcional)" },
+        },
+        required: ["client_phone", "desired_date"],
       },
     },
   },
@@ -320,12 +773,93 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-const MAX_MEMORY_MESSAGES = 30;
+const MAX_MEMORY_MESSAGES = 10;
+
+/** Prefer a second slot with different barber or different time when possible. */
+function pickPairPreferDistinctBarbers(
+  candidates: Array<{ time: string; barber_name?: string }>,
+  _allSlots: Array<{ time: string; barber_name?: string }>
+): Array<{ time: string; barber_name?: string }> {
+  if (candidates.length === 0) return [];
+  const first = candidates[0]!;
+  if (candidates.length === 1) return [first];
+  const distinctBarber = candidates.find(
+    (s) => s !== first && s.time !== first.time && (s.barber_name || "") !== (first.barber_name || "")
+  );
+  if (distinctBarber) return [first, distinctBarber];
+  const otherTime = candidates.find((s) => s !== first && s.time !== first.time);
+  if (otherTime) return [first, otherTime];
+  return [first, candidates[1]!];
+}
+
+/** Pick up to 2 slots for conversational presentation: prefer one morning (< 12h) and one afternoon (>= 13h).
+ *  Falls back to the first two available slots if no clear morning/afternoon split. */
+function pickMorningAfternoon(
+  slots: Array<{ time: string; barber_id?: string; barber_name?: string }>
+): Array<{ time: string; barber_name?: string }> {
+  const morning = slots.find((s) => {
+    const h = parseInt(String(s.time ?? "00:00").split(":")[0], 10);
+    return h < 12;
+  });
+  const afternoon = slots.find((s) => {
+    const h = parseInt(String(s.time ?? "00:00").split(":")[0], 10);
+    return h >= 13;
+  });
+  if (morning && afternoon) return [morning, afternoon];
+  if (morning) {
+    const rest = slots.filter((s) => s !== morning);
+    const second = rest.find(
+      (s) => (s.barber_name || "") !== (morning.barber_name || "") && s.time !== morning.time
+    ) ?? rest.find((s) => s.time !== morning.time) ?? rest[0];
+    return second ? [morning, second] : [morning];
+  }
+  if (afternoon) return [afternoon];
+  return pickPairPreferDistinctBarbers(slots, slots).slice(0, 2);
+}
+
+function pickAfternoon(slots: Array<{ time: string; barber_name?: string }>): Array<{ time: string; barber_name?: string }> {
+  const afternoon = slots.filter((s) => {
+    const h = parseInt(String(s.time ?? "00:00").split(":")[0], 10);
+    return h >= 12;
+  });
+  if (afternoon.length === 0) return slots.slice(0, 2);
+  return pickPairPreferDistinctBarbers(afternoon, slots).slice(0, 2);
+}
+
+function pickMorning(slots: Array<{ time: string; barber_name?: string }>): Array<{ time: string; barber_name?: string }> {
+  const morning = slots.filter((s) => {
+    const h = parseInt(String(s.time ?? "00:00").split(":")[0], 10);
+    return h < 12;
+  });
+  if (morning.length === 0) return slots.slice(0, 2);
+  return pickPairPreferDistinctBarbers(morning, slots).slice(0, 2);
+}
+
+/** Format a morning/afternoon slot pair into a conversational suggestion. */
+function formatSlotSuggestion(
+  slots: Array<{ time: string; barber_name?: string }>,
+  dayLabel: string
+): string {
+  if (slots.length === 0) return "";
+  if (slots.length === 1) {
+    const s = slots[0];
+    return `${dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1)} tenho às *${formatTimePt(s.time)}*${s.barber_name ? ` com ${s.barber_name}` : ""}. Quer esse horário?`;
+  }
+  const [a, b] = slots;
+  const barberA = a.barber_name ? ` com ${a.barber_name}` : "";
+  const barberB = b.barber_name ? ` com ${b.barber_name}` : "";
+  return `${dayLabel.charAt(0).toUpperCase() + dayLabel.slice(1)} tenho às *${formatTimePt(a.time)}*${barberA} ou às *${formatTimePt(b.time)}*${barberB}. Qual prefere?`;
+}
 
 export type AgentResult = {
   reply: string;
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-  state?: "appointment_created" | "handoff_requested";
+  state?:
+    | "appointment_created"
+    | "appointment_rescheduled"
+    | "appointment_cancelled"
+    | "handoff_requested"
+    | "plan_subscribed";
 };
 
 export type RunAgentOptions = {
@@ -438,7 +972,7 @@ export async function runAgent(
     premiumAvailable && messageCount >= ESCALATION_MESSAGE_THRESHOLD;
   let usePremiumModel = usePremiumByMessages;
   let model = usePremiumModel ? (settings?.model_premium ?? settings?.model) : (settings?.model ?? "gpt-4o-mini");
-  const temperature = settings?.temperature ?? 0.7;
+  const temperature = settings?.temperature ?? 0.3;
   const draft = options?.sandboxDraft;
   const useDraft = draft && draft.agent_profile != null && typeof draft.agent_profile === "object";
   const persistAssistantMessages = options?.persistAssistantMessages !== false;
@@ -458,20 +992,14 @@ export async function runAgent(
       additionalInstructions,
     });
   } else {
-    systemPrompt = DEFAULT_SYSTEM_PROMPT;
-    if (settings?.system_prompt_override) {
-      systemPrompt =
-        systemPrompt +
-        "\n\nPROMPT CUSTOMIZADO (complementar; não substitui regras/guardrails):\n" +
-        settings.system_prompt_override;
-    }
+    systemPrompt = buildSystemPrompt({
+      basePrompt: DEFAULT_SYSTEM_PROMPT,
+      guardrails: RUNTIME_GUARDRAILS,
+      profile: null,
+      additionalInstructions: settings?.system_prompt_override?.trim() ? settings.system_prompt_override : null,
+    });
   }
 
-  const nameRow = await pool.query<{ name: string }>(
-    "SELECT name FROM public.barbershops WHERE id = $1",
-    [barbershopId]
-  );
-  const barbershopName = nameRow.rows[0]?.name ?? "Barbearia";
   // Safety: ensure we always use a real IANA timezone (avoid drifting to UTC in production).
   const timeZone = settings?.timezone && settings.timezone.includes("/") ? settings.timezone : "America/Sao_Paulo";
   const now = new Date();
@@ -498,6 +1026,19 @@ export async function runAgent(
   }).format(new Date(now.getTime() + 24 * 60 * 60 * 1000));
   const currentTimeHHmm = (dateTimeStr.includes(" ") ? dateTimeStr.split(" ")[1] : "00:00").slice(0, 5);
 
+  const shopContextRow = await pool.query<{
+    name: string;
+    business_hours: unknown;
+    address: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  }>("SELECT name, business_hours, address, latitude, longitude FROM public.barbershops WHERE id = $1", [effectiveBarbershopId]);
+  const barbershopName = shopContextRow.rows[0]?.name ?? "Barbearia";
+  const businessHoursRaw = shopContextRow.rows[0]?.business_hours ?? null;
+  const shopAddress = shopContextRow.rows[0]?.address?.trim() ?? "";
+  const hasGeoLocation =
+    shopContextRow.rows[0]?.latitude != null && shopContextRow.rows[0]?.longitude != null;
+
   // Always resolve client by the incoming phone so we never ask for it.
   let clientName = "";
   try {
@@ -505,29 +1046,91 @@ export async function runAgent(
     if (c && typeof c === "object") {
       const maybeName = (c as Record<string, unknown>).name;
       if (typeof maybeName === "string" && maybeName.trim() && maybeName.trim().toLowerCase() !== "cliente") {
-        clientName = maybeName.trim();
+        clientName = aiTools.formatStoredClientName(maybeName.trim()) ?? maybeName.trim();
       }
     }
   } catch {
     // If client lookup fails, the agent can still proceed by asking name later (never phone).
   }
+
+  const memExists = await clientMemoryTableExists();
+  const [clientMemory, rawUp, clientFavorites] = await Promise.all([
+    memExists ? getClientMemory(effectiveBarbershopId, clientPhone) : Promise.resolve(null),
+    aiTools.listClientUpcomingAppointments(effectiveBarbershopId, clientPhone).catch(() => [] as unknown[]),
+    aiTools.getClientFavoriteServices(effectiveBarbershopId, clientPhone).catch(() => null),
+  ]);
+
+  let upcomingAppointments: UpcomingApptRow[] = [];
+  try {
+    const arr = Array.isArray(rawUp) ? rawUp : [];
+    upcomingAppointments = filterUpcomingFromNow(arr as UpcomingApptRow[], dateOnlyStr, currentTimeHHmm);
+  } catch {
+    upcomingAppointments = [];
+  }
+
+  const operationalContextBlock = buildOperationalContextBlock({
+    barbershopName,
+    timeZone,
+    dateTimeStr,
+    dateOnlyStr,
+    clientName,
+    businessHoursRaw,
+    clientMemory,
+    favorites: clientFavorites,
+    address: shopContextRow.rows[0]?.address ?? null,
+    hasGeoLocation,
+  });
+
+  let contactContextBlock = "";
+  if (upcomingAppointments.length > 0) {
+    const lines = upcomingAppointments
+      .slice(0, 6)
+      .map(
+        (a) =>
+          `- ${formatDateShortPt(String(a.date).slice(0, 10))} às ${formatTimePt(String(a.time).slice(0, 5))}: ${a.service_names} (com ${a.barber_name})`
+      )
+      .join("\n");
+    contactContextBlock =
+      `\n\n--- Próximos agendamentos deste contato ---\n${lines}\n` +
+      `Antes de tratar como novo agendamento: cumprimente pelo primeiro nome se souber. Pergunte de forma objetiva se está tudo certo com esse horário ou se prefere reagendar. ` +
+      `Para reagendar ou cancelar, use list_client_upcoming_appointments, reschedule_appointment e cancel_appointment conforme o caso.`;
+  } else if (
+    clientMemory &&
+    clientMemory.overall_confidence >= 0.5 &&
+    ((clientMemory.preferred_services?.length ?? 0) > 0 || !!clientMemory.preferred_barber_name)
+  ) {
+    contactContextBlock =
+      `\n\n--- Retorno sem horário futuro ---\n` +
+      `Este contato tem preferências na memória: encurte o fluxo — ofereça serviço e barbeiro habituais quando fizer sentido e peça principalmente data/horário, salvo se o cliente pedir outra combinação explicitamente.`;
+  }
+
   if (!hasProfile) {
     systemPrompt = systemPrompt + "\n\n" + RUNTIME_GUARDRAILS;
   }
+  const todayDateBr = formatDateShortPt(dateOnlyStr);
+  const tomorrowDateBr = formatDateShortPt(tomorrowOnlyStr);
   systemPrompt = systemPrompt
     .replace(/\{\{TIMEZONE\}\}/g, timeZone)
     .replace(/\{\{DATE_NOW\}\}/g, dateTimeStr)
     .replace(/\{\{TODAY_DATE\}\}/g, dateOnlyStr)
     .replace(/\{\{TOMORROW_DATE\}\}/g, tomorrowOnlyStr)
+    .replace(/\{\{TODAY_DATE_BR\}\}/g, todayDateBr)
+    .replace(/\{\{TOMORROW_DATE_BR\}\}/g, tomorrowDateBr)
     .replace(/\{\{CLIENT_PHONE\}\}/g, clientPhone)
     .replace(/\{\{CLIENT_NAME\}\}/g, clientName || "")
-    .replace(/\{\{BARBERSHOP_NAME\}\}/g, barbershopName);
+    .replace(/\{\{BARBERSHOP_NAME\}\}/g, barbershopName)
+    .replace(/\{\{OPENING_MESSAGE\}\}/g, buildOpeningMessage(barbershopName));
+
+  systemPrompt = systemPrompt + operationalContextBlock;
+  if (contactContextBlock) {
+    systemPrompt = systemPrompt + contactContextBlock;
+  }
 
   if (numberMode === "account_wide" && accountBranches.length > 1) {
-    const branchList = accountBranches.map((b) => `${b.name} (id: ${b.id})`).join("; ");
+    const branchList = accountBranches.map((b, idx) => `${idx + 1}) ${b.name}`).join("; ");
     systemPrompt =
       systemPrompt +
-      `\n\nFILIAIS: Esta conta tem várias filiais. Quando o cliente ainda não tiver escolhido a filial, pergunte: "Qual filial você prefere?" e liste: ${branchList}. Quando o cliente escolher, chame a ferramenta select_branch com o barbershop_id da filial escolhida. Depois use as outras ferramentas normalmente para a filial selecionada.`;
+      `\n\nFILIAIS: Esta conta tem várias filiais. Quando o cliente ainda não tiver escolhido a filial, pergunte: "Qual filial você prefere?" e liste: ${branchList}. Quando o cliente escolher, chame a ferramenta select_branch com o barbershop_id correto da filial escolhida. Depois use as outras ferramentas normalmente para a filial selecionada.`;
   }
 
   const messagesRow = await pool.query<{
@@ -542,8 +1145,9 @@ export async function runAgent(
   );
   const history = messagesRow.rows;
   const lastN = history.slice(-MAX_MEMORY_MESSAGES);
-  const lastUserText =
-    [...lastN].reverse().find((m) => m.role === "user")?.content?.toLowerCase().trim() ?? "";
+  const lastUserMsg = [...lastN].reverse().find((m) => m.role === "user");
+  const lastUserTextRaw = (lastUserMsg?.content ?? "").trim();
+  const lastUserText = lastUserTextRaw.toLowerCase().trim();
 
   // Handoff por keyword: se cliente pedir humano, pausar conversa e enviar handoff_message
   try {
@@ -591,6 +1195,15 @@ export async function runAgent(
     }
   } catch {
     // Table may not exist or handoff disabled
+  }
+
+  // Proactive name capture: if the user writes "meu nome é X" in the same message,
+  // persist it immediately to avoid asking again in the next turn.
+  const extractedRaw = extractNameFromText(lastUserTextRaw);
+  const extractedName = extractedRaw ? aiTools.formatStoredClientName(extractedRaw) ?? extractedRaw : null;
+  if (extractedName && (!clientName || normalizeLoose(clientName) !== normalizeLoose(extractedName))) {
+    aiTools.upsertClient(effectiveBarbershopId, clientPhone, extractedName).catch(() => {});
+    clientName = extractedName;
   }
 
   const desired = (() => {
@@ -650,7 +1263,7 @@ export async function runAgent(
         const [hh, mm] = currentTimeHHmm.split(":");
         return parseInt(hh, 10) * 60 + parseInt(mm, 10);
       })();
-      desiredDate = tm >= nowM + 10 ? dateOnlyStr : tomorrowOnlyStr;
+      desiredDate = tm >= nowM + 15 ? dateOnlyStr : tomorrowOnlyStr;
     }
 
     // Horários sempre múltiplos de 5 (ex.: 16:07 -> 16:10).
@@ -691,33 +1304,58 @@ export async function runAgent(
   })();
 
   // --- Deterministic guardrails (runtime), to avoid generic/robotic behavior ---
-  // 1) Strong opening for short greetings; if client has history, suggest "o de sempre" with next slots.
+  // 1) Cumprimento curto: priorizar horário futuro → retorno com “de sempre” + slots → abertura genérica.
   if (isGreetingOnly) {
-    const favorites = await aiTools.getClientFavoriteServices(effectiveBarbershopId, clientPhone).catch(() => null);
+    if (upcomingAppointments.length > 0) {
+      const next = upcomingAppointments[0];
+      const dateLong = formatDateLongPt(String(next.date).slice(0, 10), timeZone);
+      const timeLbl = formatTimePt(String(next.time).slice(0, 5));
+      const fn = clientName ? firstNameFromClientName(clientName) : "";
+      const reply =
+        upcomingAppointments.length === 1
+          ? fn
+            ? `Olá, ${fn}! Tudo certo com seu horário às *${timeLbl}* (${dateLong}) — *${next.service_names}* com *${next.barber_name}*? Se preferir reagendar, me diga o novo dia/horário.`
+            : `Olá! Seu horário às *${timeLbl}* (${dateLong}) — *${next.service_names}* com *${next.barber_name}*. Está tudo certo ou prefere reagendar?`
+          : fn
+            ? `Olá, ${fn}! Você tem *${upcomingAppointments.length}* horários marcados; o próximo é *${dateLong}* às *${timeLbl}* (*${next.service_names}*). Está tudo certo ou quer ajustar algum?`
+            : `Olá! Você tem *${upcomingAppointments.length}* horários marcados; o próximo é *${dateLong}* às *${timeLbl}*. Está tudo certo ou prefere reagendar?`;
+      if (persistAssistantMessages) {
+        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+          conversationId,
+          reply,
+        ]);
+      }
+      return { reply };
+    }
+
+    const favorites = clientFavorites;
     const preferred = favorites?.last ?? favorites?.frequent[0];
     if (preferred?.service_ids?.length) {
       const slotsToday = (await aiTools.getNextSlots(effectiveBarbershopId, {
         date: dateOnlyStr,
         service_ids: preferred.service_ids,
         after_time: currentTimeHHmm,
-        limit: 3,
-      })) as { slots?: Array<{ time: string }> };
-      let slotsTomorrow: { slots?: Array<{ time: string }> } | null = null;
+        limit: 8,
+      })) as { slots?: Array<{ time: string; barber_name?: string }> };
+      let slotsTomorrow: { slots?: Array<{ time: string; barber_name?: string }> } | null = null;
       if (!slotsToday?.slots?.length) {
         slotsTomorrow = (await aiTools.getNextSlots(effectiveBarbershopId, {
           date: tomorrowOnlyStr,
           service_ids: preferred.service_ids,
-          limit: 3,
-        })) as { slots?: Array<{ time: string }> };
+          limit: 8,
+        })) as { slots?: Array<{ time: string; barber_name?: string }> };
       }
       const slots = slotsToday?.slots?.length ? slotsToday.slots : slotsTomorrow?.slots;
       const isTomorrow = !!(slotsTomorrow?.slots?.length && !slotsToday?.slots?.length);
       const dayLabel = isTomorrow ? "amanhã" : "hoje";
       if (slots?.length) {
-        const times = slots.map((s: { time: string }) => s.time).filter(Boolean);
-        const reply =
-          `Salve! 😄 Quer o de sempre (${preferred.service_names})? ` +
-          `Tenho ${dayLabel} às *${times.join("* • *")}*. Qual prefere?`;
+        const picked = pickMorningAfternoon(slots);
+        const slotStr = formatSlotSuggestion(picked, dayLabel);
+        const fn = clientName ? firstNameFromClientName(clientName) : "";
+        const lead = fn
+          ? `Olá, ${fn}! Bem-vindo de volta à *${barbershopName}*.`
+          : `Olá! Bem-vindo à *${barbershopName}*.`;
+        const reply = `${lead} Quer de novo *${preferred.service_names}*? ${slotStr}`;
         if (persistAssistantMessages) {
           await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
             conversationId,
@@ -727,7 +1365,7 @@ export async function runAgent(
         return { reply };
       }
     }
-    const reply = OPENING_MESSAGE;
+    const reply = buildOpeningMessage(barbershopName);
     if (persistAssistantMessages) {
       await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
         conversationId,
@@ -754,7 +1392,7 @@ export async function runAgent(
     const asked = extractAskedService(lastUserText);
     if (asked) {
       const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
-      const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
+      const services = Array.isArray(servicesUnknown) ? (servicesUnknown as Array<Record<string, unknown>>) : [];
       const askedN = normalizeLoose(asked);
       const has = services.some((s) => normalizeLoose(String(s?.name ?? "")).includes(askedN) || askedN.includes(normalizeLoose(String(s?.name ?? ""))));
       if (!has) {
@@ -794,34 +1432,157 @@ export async function runAgent(
     return false;
   })();
 
+  const assistantAskedBarberPreference = (() => {
+    for (const m of [...lastN].reverse()) {
+      if (m.role !== "assistant") continue;
+      const t = (m.content ?? "").toLowerCase();
+      return /(prefer[eê]ncia\s+por\s+barbeiro|tem\s+prefer[eê]ncia\s+por\s+barbeiro|qual\s+barbeiro\s+você\s+prefere|qual\s+barbeiro\s+prefere)/i.test(
+        t
+      );
+    }
+    return false;
+  })();
+
+  const assistantAskedNameEarly = (() => {
+    for (const m of [...lastN].reverse()) {
+      if (m.role !== "assistant") continue;
+      return assistantMessageAskedForName(String(m.content ?? ""));
+    }
+    return false;
+  })();
+
+  // Minimal flow (example.txt): on availability ask for barber preference first.
+  if (
+    !assistantAskedBarberPreference &&
+    !assistantAskedNameEarly &&
+    !desired.desiredTime &&
+    !/\bamanh/i.test(lastUserText) &&
+    /(hor[aá]rio|tem hor[aá]rio|dispon[ií]vel|vaga)/i.test(lastUserText) &&
+    inferServiceKeyword(lastUserTextRaw) != null
+  ) {
+    const reply = "Claro! Tem preferência por barbeiro?";
+    if (persistAssistantMessages) {
+      await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+        conversationId,
+        reply,
+      ]);
+    }
+    return { reply };
+  }
+
+  // If user says "qualquer um" after we asked barber preference, propose 2 concrete slots (no bullets).
+  if (
+    (userSaidNoPreference || userIsAffirmativeOnly) &&
+    assistantAskedBarberPreference &&
+    !desired.desiredTime
+  ) {
+    const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
+    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as Array<Record<string, unknown>>) : [];
+    const inferred = inferServiceKeyword(
+      normalizeLoose(lastUserTextRaw + " " + lastN.map((m) => String(m.content ?? "")).join(" "))
+    );
+    const findBy = (needle: string) => { const n = normalizeLoose(needle); return services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(n)); };
+    const picked =
+      inferred === "combo"
+        ? findBy("corte + barba") ?? findBy("corte") ?? services[0]
+        : inferred === "barba"
+          ? findBy("barba") ?? services[0]
+          : inferred === "sobrancelha"
+            ? findBy("sobrancelha") ?? services[0]
+            : inferred === "corte"
+              ? findBy("corte") ?? services[0]
+              : services[0];
+    if (picked && typeof picked.id === "string") {
+      const nextArgs = {
+        date: dateOnlyStr,
+        service_id: String(picked.id),
+        after_time: currentTimeHHmm,
+        limit: 8,
+      };
+      const slots = (await aiTools.getNextSlots(effectiveBarbershopId, nextArgs)) as {
+        slots?: Array<{ time?: string; barber_name?: string }>;
+      };
+      if (persistAssistantMessages) {
+        await pool.query(
+          `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+           VALUES ($1, 'tool', 'get_next_slots', $2, $3)`,
+          [conversationId, nextArgs, JSON.stringify(slots).slice(0, 4096)]
+        );
+      }
+      const allSlots: Array<{ time: string; barber_name?: string }> = Array.isArray(slots?.slots)
+        ? slots.slots.filter(
+            (s): s is { time: string; barber_name?: string } => typeof s?.time === "string" && !!s.time
+          )
+        : [];
+      const wantsAfternoon = /\btarde\b|pela\s+tarde/i.test(lastUserText);
+      const wantsMorning = /\bmanh[aã]\b|pela\s+manh/i.test(lastUserText);
+      const picked2 = wantsAfternoon ? pickAfternoon(allSlots) : wantsMorning ? pickMorning(allSlots) : pickMorningAfternoon(allSlots);
+      const reply = picked2.length ? formatSlotSuggestion(picked2, "hoje") : "Hoje tá bem corrido 😅 Quer que eu veja o primeiro horário de amanhã?";
+      if (persistAssistantMessages) {
+        await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+          conversationId,
+          reply,
+        ]);
+      }
+      return { reply };
+    }
+  }
+
   if ((userSaidNoPreference || (userIsAffirmativeOnly && assistantAskedPreference)) && desired.desiredDate && desired.desiredTime) {
     const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
-    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
+    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as Array<Record<string, unknown>>) : [];
     const historyUserText = normalizeLoose(
       lastN
         .filter((m) => m.role === "user")
         .map((m) => String(m.content ?? ""))
         .join(" ")
     );
-    const pickedService = services.find((s) => {
-      const n = normalizeLoose(String(s?.name ?? ""));
-      return n && historyUserText.includes(n);
-    });
+    const inferred = inferServiceKeyword(historyUserText);
+    const findBy = (needle: string) => { const n = normalizeLoose(needle); return services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(n)); };
+    const pickedService =
+      services.find((s) => {
+        const n = normalizeLoose(String(s?.name ?? ""));
+        if (!n) return false;
+        // tolerant match: allow "corte e barba" to match "corte + barba"
+        if (historyUserText.includes(n)) return true;
+        if (n === "corte barba" && (historyUserText.includes("corte e barba") || historyUserText.includes("corte barba"))) return true;
+        return false;
+      }) ??
+      (inferred === "combo"
+        ? findBy("corte + barba") ?? findBy("corte") ?? services[0]
+        : inferred === "barba"
+          ? findBy("barba") ?? services[0]
+          : inferred === "sobrancelha"
+            ? findBy("sobrancelha") ?? services[0]
+            : inferred === "corte"
+              ? findBy("corte") ?? services[0]
+              : null);
 
     if (pickedService) {
-      const availability = (await aiTools.checkAvailability(effectiveBarbershopId, {
+      const checkArgs = {
         date: desired.desiredDate,
         time: desired.desiredTime,
         service_id: String(pickedService.id),
-        after_time: desired.desiredDate ? undefined : undefined,
-      })) as any;
+        after_time: desired.desiredDate === dateOnlyStr ? currentTimeHHmm : undefined,
+      };
+      const availability = (await aiTools.checkAvailability(effectiveBarbershopId, checkArgs)) as Record<string, unknown>;
+      if (persistAssistantMessages) {
+        await pool.query(
+          `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+           VALUES ($1, 'tool', 'check_availability', $2, $3)`,
+          [conversationId, checkArgs, JSON.stringify(availability).slice(0, 4096)]
+        );
+      }
 
-      const barbers = Array.isArray(availability?.requested?.barbers) ? availability.requested.barbers : [];
-      if (availability?.requested?.available && barbers.length) {
+      const requested = availability["requested"] as
+        | { available?: boolean; barbers?: Array<{ barber_id?: string; barber_name?: string }> }
+        | undefined;
+      const barbers = Array.isArray(requested?.barbers) ? requested?.barbers ?? [] : [];
+      if (requested?.available === true && barbers.length) {
         const chosen = barbers[0];
         const reply =
           `Show — vou te colocar com o *${chosen.barber_name}* então.\n\n` +
-          `*${String(pickedService.name)}* • ${desired.desiredDate} ${desired.desiredTime} • *R$ ${Number(availability.total_price ?? 0).toFixed(2).replace(".", ",")}*` +
+          `*${String(pickedService.name ?? "")}* • ${desired.desiredDate} ${desired.desiredTime} • *R$ ${Number(availability["total_price"] ?? 0).toFixed(2).replace(".", ",")}*` +
           `\n\n[[MSG]]Pra salvar aqui, qual seu nome?`;
         if (persistAssistantMessages) {
           await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
@@ -837,14 +1598,15 @@ export async function runAgent(
 
   // 4) When user asks for times “today” without a specific time, force get_next_slots with after_time.
   if (
-    /\bhoje\b/i.test(lastUserText) &&
+    !/\bamanh/i.test(lastUserText) &&
+    (/\bhoje\b/i.test(lastUserText) || /\bagora\b/i.test(lastUserText) || /\bmanh[aã]\b/i.test(lastUserText)) &&
     /(hor[aá]rio|tem hor[aá]rio|dispon[ií]vel|vaga)/i.test(lastUserText) &&
     !desired.desiredTime
   ) {
     const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
-    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
+    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as Array<Record<string, unknown>>) : [];
     const inferred = inferServiceKeyword(lastUserText);
-    const findBy = (needle: string) => services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(needle));
+    const findBy = (needle: string) => { const n = normalizeLoose(needle); return services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(n)); };
     const picked =
       inferred === "combo"
         ? findBy("corte + barba") ?? findBy("corte") ?? services[0]
@@ -874,19 +1636,34 @@ export async function runAgent(
       return { reply };
     }
 
-    const slots = (await aiTools.getNextSlots(effectiveBarbershopId, {
+    const nextArgs = {
       date: dateOnlyStr,
       service_id: String(picked.id),
       after_time: currentTimeHHmm,
-      limit: 3,
-    })) as any;
+      limit: 8,
+    };
+    const slots = (await aiTools.getNextSlots(effectiveBarbershopId, nextArgs)) as {
+      slots?: Array<{ time?: string; barber_name?: string }>;
+    };
+    if (persistAssistantMessages) {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+         VALUES ($1, 'tool', 'get_next_slots', $2, $3)`,
+        [conversationId, nextArgs, JSON.stringify(slots).slice(0, 4096)]
+      );
+    }
 
-    const times: string[] = Array.isArray(slots?.slots)
-      ? slots.slots.map((s: any) => String(s?.time ?? "")).filter(Boolean)
+    const allSlots: Array<{ time: string; barber_name?: string }> = Array.isArray(slots?.slots)
+      ? slots.slots.filter(
+          (s): s is { time: string; barber_name?: string } => typeof s?.time === "string" && !!s.time
+        )
       : [];
 
-    if (times.length) {
-      const reply = `Hoje eu consigo te encaixar nesses horários: *${times.join("* • *")}*.\nQual você prefere?`;
+    if (allSlots.length) {
+      const wantsAfternoon = /\btarde\b|pela\s+tarde/i.test(lastUserText);
+      const wantsMorning = /\bmanh[aã]\b|pela\s+manh/i.test(lastUserText);
+      const picked2 = wantsAfternoon ? pickAfternoon(allSlots) : wantsMorning ? pickMorning(allSlots) : pickMorningAfternoon(allSlots);
+      const reply = formatSlotSuggestion(picked2, "hoje");
       if (persistAssistantMessages) {
         await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
           conversationId,
@@ -913,9 +1690,9 @@ export async function runAgent(
     !desired.desiredTime
   ) {
     const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
-    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as any[]) : [];
+    const services = Array.isArray(servicesUnknown) ? (servicesUnknown as Array<Record<string, unknown>>) : [];
     const inferred = inferServiceKeyword(lastUserText);
-    const findBy = (needle: string) => services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(needle));
+    const findBy = (needle: string) => { const n = normalizeLoose(needle); return services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(n)); };
     const picked =
       inferred === "combo"
         ? findBy("corte + barba") ?? findBy("corte") ?? services[0]
@@ -944,14 +1721,29 @@ export async function runAgent(
       return { reply };
     }
 
-    const slots = (await aiTools.getNextSlots(effectiveBarbershopId, {
+    const nextArgs = {
       date: tomorrowOnlyStr,
       service_id: String(picked.id),
-      limit: 1,
-    })) as any;
-    const first = Array.isArray(slots?.slots) && slots.slots[0] ? slots.slots[0] : null;
-    const t = first?.time ? String(first.time) : null;
-    const reply = t ? `Amanhã o primeiro horário que eu tenho é *${t}*. Quer esse?` : "Amanhã tá bem cheio 😅 Quer tentar outro dia?";
+      limit: 4,
+    };
+    const slots = (await aiTools.getNextSlots(effectiveBarbershopId, nextArgs)) as {
+      slots?: Array<{ time?: string; barber_name?: string }>;
+    };
+    if (persistAssistantMessages) {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+         VALUES ($1, 'tool', 'get_next_slots', $2, $3)`,
+        [conversationId, nextArgs, JSON.stringify(slots).slice(0, 4096)]
+      );
+    }
+    const tomorrowSlots: Array<{ time: string; barber_name?: string }> = Array.isArray(slots?.slots)
+      ? slots.slots.filter(
+          (s): s is { time: string; barber_name?: string } => typeof s?.time === "string" && !!s.time
+        )
+      : [];
+    const reply = tomorrowSlots.length
+      ? formatSlotSuggestion(pickMorningAfternoon(tomorrowSlots), "amanhã")
+      : "Amanhã tá bem cheio 😅 Quer tentar outro dia?";
     if (persistAssistantMessages) {
       await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
         conversationId,
@@ -959,6 +1751,188 @@ export async function runAgent(
       ]);
     }
     return { reply };
+  }
+
+  // 6) Deterministic "slot pick" handler (real-world failure hardening)
+  // When the user selects a time after we suggested slots, do NOT fall back to the model:
+  // verify availability and proceed (ask name or create appointment if we already have it).
+  {
+    const lastAssistantTextRaw = ([...lastN].reverse().find((m) => m.role === "assistant")?.content ?? "").trim();
+    const pickedTime = extractTimeFromText(lastUserTextRaw);
+    const textNorm = normalizeLoose(lastUserTextRaw);
+    const historyNorm = normalizeLoose(
+      lastN
+        .map((m) => String(m.content ?? ""))
+        .join(" ")
+    );
+
+    const mentionsBookingContext =
+      /\b(tenho|opç(ão|oes)|hor[aá]rios?\s+dispon[ií]veis|qual\s+(hor[aá]rio|desses\s+hor[aá]rios?)\s+você\s+prefere)\b/i.test(
+        lastAssistantTextRaw
+      ) ||
+      /\bquer\s+esse\s+hor[aá]rio\b/i.test(lastAssistantTextRaw) ||
+      (!!pickedTime && !!extractedName && inferServiceKeyword(lastUserTextRaw) != null);
+
+    if (pickedTime && mentionsBookingContext) {
+      const servicesUnknown = await aiTools.listServices(effectiveBarbershopId);
+      const services = Array.isArray(servicesUnknown) ? (servicesUnknown as Array<Record<string, unknown>>) : [];
+
+      const inferred = inferServiceKeyword(lastUserTextRaw + " " + lastAssistantTextRaw + " " + historyNorm);
+      const findBy = (needle: string) => { const n = normalizeLoose(needle); return services.find((s) => normalizeLoose(String(s?.name ?? "")).includes(n)); };
+      const serviceByText = services.find((s) => {
+        const n = normalizeLoose(String(s?.name ?? ""));
+        return n && (textNorm.includes(n) || historyNorm.includes(n));
+      });
+      const pickedService =
+        serviceByText ??
+        (inferred === "combo"
+          ? findBy("corte + barba") ?? findBy("corte") ?? services[0]
+          : inferred === "barba"
+            ? findBy("barba") ?? services[0]
+            : inferred === "sobrancelha"
+              ? findBy("sobrancelha") ?? services[0]
+              : inferred === "corte"
+                ? findBy("corte") ?? services[0]
+                : null);
+
+      if (pickedService && typeof pickedService.id === "string") {
+        const barbersUnknown = await aiTools.listBarbers(effectiveBarbershopId);
+        const barbers = Array.isArray(barbersUnknown) ? (barbersUnknown as Array<Record<string, unknown>>) : [];
+        const barberByText = barbers.find((b) => {
+          const n = normalizeLoose(String(b?.name ?? ""));
+          return n && (textNorm.includes(n) || normalizeLoose(lastAssistantTextRaw).includes(n));
+        });
+
+        const date =
+          desired.desiredDate ||
+          (/\bamanh/i.test(lastUserText) || /\bamanh/i.test(lastAssistantTextRaw) ? tomorrowOnlyStr : dateOnlyStr);
+
+        const checkArgs = {
+          date,
+          time: pickedTime,
+          service_id: String(pickedService.id),
+          barber_id: barberByText && typeof barberByText.id === "string" ? String(barberByText.id) : undefined,
+          after_time: date === dateOnlyStr ? currentTimeHHmm : undefined,
+        };
+        const availability = (await aiTools.checkAvailability(effectiveBarbershopId, checkArgs)) as Record<string, unknown>;
+        if (persistAssistantMessages) {
+          await pool.query(
+            `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+             VALUES ($1, 'tool', 'check_availability', $2, $3)`,
+            [conversationId, checkArgs, JSON.stringify(availability).slice(0, 4096)]
+          );
+        }
+
+        const requested = (availability as { requested?: unknown }).requested as
+          | { available?: boolean; barbers?: Array<{ barber_id?: string; barber_name?: string }> }
+          | undefined;
+        const availBarbers = Array.isArray(requested?.barbers) ? requested?.barbers ?? [] : [];
+        const isAvailable = requested?.available === true && availBarbers.length > 0;
+
+        if (isAvailable) {
+          const chosen = availBarbers[0]!;
+          const serviceName = String(pickedService["name"] ?? "Serviço");
+          const totalPrice = Number((availability as Record<string, unknown>)["total_price"] ?? pickedService["price"] ?? 0);
+          const dateLong = formatDateLongPt(date, timeZone);
+          const timePt = formatTimePt(pickedTime);
+
+          // If we already have the client name, create immediately. Otherwise, ask once.
+          if (clientName) {
+            const createArgs = {
+              client_phone: clientPhone,
+              client_name: clientName,
+              barber_id: String(chosen.barber_id ?? ""),
+              service_id: String(pickedService.id),
+              date,
+              time: pickedTime,
+            };
+            const created = (await aiTools.createAppointment(effectiveBarbershopId, createArgs)) as Record<string, unknown>;
+            if (persistAssistantMessages) {
+              await pool.query(
+                `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+                 VALUES ($1, 'tool', 'create_appointment', $2, $3)`,
+                [conversationId, createArgs, JSON.stringify(created).slice(0, 4096)]
+              );
+            }
+
+            if (typeof created?.id === "string" && created.id) {
+              const addrLine = shopAddress
+                ? `*Endereço:* ${shopAddress}\n`
+                : `*Endereço:* cadastre o endereço em Configurações\n`;
+              const reply =
+                `Agendamento confirmado:\n` +
+                `*Serviço:* ${serviceName}\n` +
+                `*Data:* ${dateLong} às ${timePt}\n` +
+                `*Barbeiro:* ${String(chosen.barber_name ?? "").trim()}\n` +
+                addrLine +
+                `*Total:* R$ ${Number.isFinite(totalPrice) ? totalPrice.toFixed(2).replace(".", ",") : "0,00"}\n\n` +
+                `Aguardamos você!`;
+              if (persistAssistantMessages) {
+                await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+                  conversationId,
+                  reply,
+                ]);
+              }
+              return { reply, state: "appointment_created" };
+            }
+          }
+
+          const addrLine = shopAddress
+            ? `*Endereço:* ${shopAddress}\n`
+            : `*Endereço:* cadastre o endereço em Configurações\n`;
+          const reply =
+            `Resumo:\n` +
+            `*Serviço:* ${serviceName}\n` +
+            `*Barbeiro:* ${String(chosen.barber_name ?? "").trim()}\n` +
+            `*Data:* ${dateLong} às ${timePt}\n` +
+            addrLine +
+            `*Total:* R$ ${Number.isFinite(totalPrice) ? totalPrice.toFixed(2).replace(".", ",") : "0,00"}\n\n` +
+            `[[MSG]]Para confirmar, qual o seu nome?`;
+          if (persistAssistantMessages) {
+            await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+              conversationId,
+              reply,
+            ]);
+          }
+          return { reply };
+        }
+
+        // Unavailable → offer two fresh options (no bullets)
+        const nextArgs = {
+          date,
+          service_id: String(pickedService.id),
+          after_time: date === dateOnlyStr ? currentTimeHHmm : undefined,
+          limit: 8,
+        };
+        const slots = (await aiTools.getNextSlots(effectiveBarbershopId, nextArgs)) as {
+          slots?: Array<{ time?: string; barber_name?: string }>;
+        };
+        if (persistAssistantMessages) {
+          await pool.query(
+            `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content)
+             VALUES ($1, 'tool', 'get_next_slots', $2, $3)`,
+            [conversationId, nextArgs, JSON.stringify(slots).slice(0, 4096)]
+          );
+        }
+        const allSlots: Array<{ time: string; barber_name?: string }> = Array.isArray(slots?.slots)
+          ? slots.slots.filter(
+              (s): s is { time: string; barber_name?: string } => typeof s?.time === "string" && !!s.time
+            )
+          : [];
+        const picked2 = pickMorningAfternoon(allSlots.filter((s) => s.time !== pickedTime));
+        const dayLabel = date === dateOnlyStr ? "hoje" : "amanhã";
+        const reply = picked2.length
+          ? formatSlotSuggestion(picked2, dayLabel)
+          : "Nesse horário não tá rolando 😅 Quer que eu veja outros horários pra você?";
+        if (persistAssistantMessages) {
+          await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+            conversationId,
+            reply,
+          ]);
+        }
+        return { reply };
+      }
+    }
   }
 
   const isAffirmativeOnly = (() => {
@@ -980,8 +1954,7 @@ export async function runAgent(
   const assistantAskedName = (() => {
     for (const m of [...lastN].reverse()) {
       if (m.role !== "assistant") continue;
-      const t = (m.content ?? "").toLowerCase();
-      return /(qual seu nome|me diz seu nome|seu nome pra salvar|pra salvar.*nome)/i.test(t);
+      return assistantMessageAskedForName(String(m.content ?? ""));
     }
     return false;
   })();
@@ -997,6 +1970,88 @@ export async function runAgent(
     return /^[A-Za-zÀ-ÖØ-öø-ÿ' ]+$/.test(t) && t.split(" ").filter(Boolean).length <= 4;
   })();
 
+  /** Nome explícito ("me chamo X") ou apenas o nome após pedido (ex.: "Mateus"). */
+  const nameFromUserForBooking = (() => {
+    const raw = extractedName ?? (isLikelyNameOnly && lastUserText.trim() ? lastUserText.trim() : "");
+    if (!raw) return "";
+    return aiTools.formatStoredClientName(raw) ?? raw;
+  })();
+
+  // Happy-path: após pedir nome, finalizar com create_appointment usando último check_availability.
+  if (assistantAskedName && nameFromUserForBooking) {
+    const lastAvailTool = [...lastN]
+      .reverse()
+      .find((m) => m.role === "tool" && m.tool_name === "check_availability");
+    const lastAvailPayload = (lastAvailTool?.tool_payload ?? null) as
+      | { date?: string; time?: string; service_id?: string; barber_id?: string }
+      | null;
+    const lastAvailResult = (() => {
+      try {
+        const c = String(lastAvailTool?.content ?? "");
+        return c ? (JSON.parse(c) as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    })();
+
+    const date = (lastAvailPayload?.date ?? desired.desiredDate ?? dateOnlyStr) as string;
+    const time = (lastAvailPayload?.time ?? desired.desiredTime ?? "") as string;
+    const serviceId = (lastAvailPayload?.service_id ?? "") as string;
+    const requested = (lastAvailResult?.requested ?? null) as
+      | { available?: boolean; barbers?: Array<{ barber_id?: string; barber_name?: string }> }
+      | null;
+    const slotActuallyAvailable = requested?.available === true && Array.isArray(requested?.barbers) && requested.barbers.length > 0;
+    const chosenBarberId = slotActuallyAvailable
+      ? (requested?.barbers?.[0]?.barber_id ?? lastAvailPayload?.barber_id ?? "")
+      : (lastAvailPayload?.barber_id ?? "");
+    const chosenBarberName = slotActuallyAvailable
+      ? (requested?.barbers?.[0]?.barber_name ?? "")
+      : "";
+
+    if (slotActuallyAvailable && serviceId && date && time && chosenBarberId) {
+      const created = (await aiTools.createAppointment(effectiveBarbershopId, {
+        client_phone: clientPhone,
+        client_name: nameFromUserForBooking,
+        barber_id: String(chosenBarberId),
+        service_id: String(serviceId),
+        date,
+        time,
+      })) as Record<string, unknown>;
+
+      if (typeof created?.id === "string" && created.id) {
+        const services = Array.isArray(created.services) ? (created.services as Array<{ name?: string; service_name?: string }>) : [];
+        const serviceName =
+          services.map((s) => s?.name ?? s?.service_name ?? "").filter(Boolean).join(" + ") || "";
+        const totalPrice = Number(
+          (lastAvailResult as Record<string, unknown> | null)?.["total_price"] ??
+            created.total_price ??
+            created.price ??
+            0
+        );
+        const dateLong = formatDateLongPt(date, timeZone);
+        const timePt = formatTimePt(time);
+        const whenPhrase =
+          date === dateOnlyStr
+            ? `hoje às ${timePt}`
+            : date === tomorrowOnlyStr
+              ? `amanhã às ${timePt}`
+              : `${dateLong} às ${timePt}`;
+        const reply =
+          `Agendado, ${nameFromUserForBooking}! ${serviceName} fica R$ ${Number.isFinite(totalPrice) ? totalPrice.toFixed(0) : "0"}. ` +
+          `${chosenBarberName ? `${chosenBarberName} aguarda você` : "Te aguardamos"} ${whenPhrase}.`;
+
+        if (persistAssistantMessages) {
+          await pool.query(
+            `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+            [conversationId, reply]
+          );
+        }
+        return { reply, state: "appointment_created" };
+      }
+    }
+    // If we can't resolve the last availability context, fall through to model.
+  }
+
   // --- RAG: inject knowledge chunks when relevant ---
   try {
     const ragChunks = await retrieveKnowledge(barbershopId, lastUserText, openai);
@@ -1010,6 +2065,21 @@ export async function runAgent(
     console.warn("[runAgent] RAG retrieval failed:", e instanceof Error ? e.message : e);
   }
 
+  // --- Client memory: inject concise preference block ---
+  // Kept separate from RAG (institutional knowledge vs. per-client context).
+  // Only injected when overall_confidence >= 0.5 and there's actionable data.
+  const memoryBlock = buildClientMemoryPromptBlock(clientMemory);
+  if (memoryBlock) {
+    systemPrompt = systemPrompt + "\n\n" + memoryBlock;
+  }
+
+  // Proactively persist the client name as soon as we detect it was provided.
+  // This prevents re-triggering the "FECHAMENTO EM 2 MENSAGENS" block on the
+  // next turn (when clientName would otherwise still be empty).
+  if (isLikelyNameOnly && assistantAskedName && lastUserText.trim()) {
+    aiTools.upsertClient(effectiveBarbershopId, clientPhone, lastUserText.trim()).catch(() => {});
+  }
+
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...(isGreetingOnly
@@ -1017,9 +2087,8 @@ export async function runAgent(
           {
             role: "system",
             content:
-              "ABERTURA OBRIGATÓRIA: como primeira resposta a um cumprimento curto, responda exatamente neste estilo (pode variar 1–2 palavras, mas mantenha direção e emojis):\n" +
-              "“Salve! 😄 Bora deixar o visual na régua? Quer ver os serviços ou já quer agendar? ✂️”\n" +
-              "Não use mensagens genéricas tipo “Como posso te ajudar?” nem “Estou aqui para ajudar”.",
+              "ABERTURA: em cumprimento curto, use a mensagem padrão {{OPENING_MESSAGE}} (já substituída no prompt) ou siga o bloco de próximos agendamentos / retorno com memória, se existir no sistema. " +
+              "Não use “Como posso ajudar?” nem “Estou aqui para ajudar”.",
           },
         ] as OpenAI.Chat.Completions.ChatCompletionMessageParam[])
       : []),
@@ -1063,11 +2132,16 @@ export async function runAgent(
   let toolErrorCount = 0;
   let currentBarbershopId = effectiveBarbershopId;
 
+  /** Menos criatividade quando o próximo passo é fechar agendamento (nome ou confirmação explícita). */
+  const bookingCritical =
+    (assistantAskedName && isLikelyNameOnly) || (isAffirmativeOnly && assistantAskedConfirmation);
+  const effectiveTemperature = bookingCritical ? Math.min(temperature, 0.2) : temperature;
+
   async function persistAssistant(content: string | null): Promise<void> {
     if (!persistAssistantMessages) return;
     await pool.query(
       `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
-      [conversationId, stripIdsAndUuids(content ?? "")]
+      [conversationId, sanitizeClientFacingReply(content ?? "")]
     );
   }
   async function persistTool(toolName: string, payload: unknown, content: string): Promise<void> {
@@ -1081,7 +2155,7 @@ export async function runAgent(
     const maxTokens = settings?.max_output_tokens ?? 350;
     const completion = await openai.chat.completions.create({
       model,
-      temperature,
+      temperature: effectiveTemperature,
       max_tokens: maxTokens,
       messages: loopMessages,
       tools: OPENAI_TOOLS,
@@ -1107,6 +2181,8 @@ export async function runAgent(
       // IMPORTANT: push the assistant tool_calls message exactly once, then add one tool response per tool_call_id.
       // If we push the assistant message multiple times (once per tool), OpenAI rejects the sequence.
       loopMessages.push(msg as OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam);
+      let locationSentThisTurn = false;
+      let stickerSentThisTurn = false;
       for (const tc of msg.tool_calls) {
         const fn = "function" in tc ? (tc as { function?: { name?: string; arguments?: string } }).function : undefined;
         const name = fn?.name as string;
@@ -1136,19 +2212,34 @@ export async function runAgent(
           }
           if (name === "list_services") return aiTools.listServices(currentBarbershopId);
           if (name === "list_barbers") return aiTools.listBarbers(currentBarbershopId);
-          if (name === "list_appointments")
-            return aiTools.listAppointments(
-              currentBarbershopId,
-              (() => {
-                const raw = (args.date as string) ?? "";
-                const d = raw || desired.desiredDate || "";
-                if (desired.desiredDate && d !== desired.desiredDate) return desired.desiredDate;
-                if (lastUserText.includes("amanh") && d && d !== tomorrowOnlyStr) return tomorrowOnlyStr;
-                if (lastUserText.includes("hoje") && d && d !== dateOnlyStr) return dateOnlyStr;
-                return d;
-              })(),
-              args.barber_id as string | undefined
-            );
+          if (name === "list_appointments") {
+            const listDate = (() => {
+              const raw = (args.date as string) ?? "";
+              const d = raw || desired.desiredDate || "";
+              if (desired.desiredDate && d !== desired.desiredDate) return desired.desiredDate;
+              if (lastUserText.includes("amanh") && d && d !== tomorrowOnlyStr) return tomorrowOnlyStr;
+              if (lastUserText.includes("hoje") && d && d !== dateOnlyStr) return dateOnlyStr;
+              return d;
+            })();
+            if (listDate && !/^\d{4}-\d{2}-\d{2}$/.test(listDate)) {
+              return {
+                error:
+                  "date inválida para list_appointments: use yyyy-MM-dd (ex.: 2026-04-09). Não use barbershop_id, nome ou UUID de outra entidade como data.",
+              };
+            }
+            const barberIdList = args.barber_id as string | undefined;
+            if (
+              barberIdList != null &&
+              String(barberIdList).trim() !== "" &&
+              !isValidUuid(String(barberIdList).trim())
+            ) {
+              return {
+                error:
+                  "barber_id deve ser o UUID retornado por list_barbers, não o nome do barbeiro.",
+              };
+            }
+            return aiTools.listAppointments(currentBarbershopId, listDate, barberIdList);
+          }
           if (name === "check_availability") {
             const dRaw = (args.date as string) ?? "";
             const tRaw = (args.time as string) ?? "";
@@ -1209,7 +2300,29 @@ export async function runAgent(
             };
             if (typeof args.client_id === "string" && args.client_id) payload.client_id = args.client_id;
             const r = await aiTools.createAppointment(currentBarbershopId, payload);
-            state = "appointment_created";
+            // Fire-and-forget: update client memory from the newly created appointment
+            if ((r as Record<string, unknown>)?.id) {
+              state = "appointment_created";
+              const appointmentResult = r as Record<string, unknown>;
+              const serviceNames = (
+                Array.isArray(appointmentResult.services)
+                  ? (appointmentResult.services as Array<{ name?: string; service_name?: string }>)
+                      .map((s) => s?.name ?? s?.service_name ?? "")
+                      .filter(Boolean)
+                  : []
+              );
+              updateClientMemoryFromAppointmentEvent({
+                eventType: "appointment_created",
+                barbershopId: currentBarbershopId,
+                clientPhone,
+                barberId: payload.barber_id,
+                serviceNames,
+              }).catch(() => {});
+            } else if (payload.client_name?.trim()) {
+              // Appointment failed but we have the name — persist it so the next
+              // runAgent turn doesn't re-trigger the FECHAMENTO EM 2 MENSAGENS block.
+              aiTools.upsertClient(effectiveBarbershopId, clientPhone, payload.client_name.trim()).catch(() => {});
+            }
             return r;
           }
           if (name === "list_client_upcoming_appointments")
@@ -1217,14 +2330,24 @@ export async function runAgent(
               currentBarbershopId,
               ((args.client_phone as string) ?? clientPhone) || ""
             );
-          if (name === "cancel_appointment")
-            return aiTools.cancelAppointmentByAgent(
+          if (name === "cancel_appointment") {
+            const r = await aiTools.cancelAppointmentByAgent(
               currentBarbershopId,
               (args.appointment_id as string) ?? "",
               ((args.client_phone as string) ?? clientPhone) || ""
             );
-          if (name === "reschedule_appointment")
-            return aiTools.rescheduleAppointmentByAgent(
+            if (r && typeof r === "object" && (r as { ok?: boolean }).ok === true) {
+              state = "appointment_cancelled";
+              updateClientMemoryFromAppointmentEvent({
+                eventType: "appointment_cancelled",
+                barbershopId: currentBarbershopId,
+                clientPhone,
+              }).catch(() => {});
+            }
+            return r;
+          }
+          if (name === "reschedule_appointment") {
+            const r = await aiTools.rescheduleAppointmentByAgent(
               currentBarbershopId,
               (args.appointment_id as string) ?? "",
               ((args.client_phone as string) ?? clientPhone) || "",
@@ -1234,6 +2357,62 @@ export async function runAgent(
                 barber_id: args.barber_id as string | undefined,
               }
             );
+            if (r && typeof r === "object" && (r as { ok?: boolean }).ok === true) {
+              state = "appointment_rescheduled";
+              const barberIdOpt = (args.barber_id as string | undefined)?.trim();
+              updateClientMemoryFromAppointmentEvent({
+                eventType: "appointment_rescheduled",
+                barbershopId: currentBarbershopId,
+                clientPhone,
+                ...(barberIdOpt ? { barberId: barberIdOpt } : {}),
+              }).catch(() => {});
+            }
+            return r;
+          }
+          if (name === "send_barbershop_location") {
+            if (locationSentThisTurn) {
+              return { ok: true, already_sent: true, message: "Localização já enviada neste pedido." };
+            }
+            locationSentThisTurn = true;
+            return sendBarbershopLocationToClient(
+              currentBarbershopId,
+              ((args.client_phone as string) ?? clientPhone) || "",
+            );
+          }
+          if (name === "send_sticker") {
+            if (stickerSentThisTurn) {
+              return { ok: true, already_sent: true, message: "Figurinha já enviada nesta conversa." };
+            }
+            stickerSentThisTurn = true;
+            return sendStickerToClient(currentBarbershopId, clientPhone);
+          }
+          if (name === "list_plans")
+            return aiTools.listPlans(currentBarbershopId);
+          if (name === "subscribe_client_to_plan") {
+            const subResult = await aiTools.subscribeClientToPlan(currentBarbershopId, {
+              client_phone: clientPhone,
+              plan_id: (args.plan_id as string) ?? "",
+              billing_day: typeof args.billing_day === "number" ? args.billing_day : undefined,
+            });
+            if (subResult && typeof subResult === "object" && !("error" in subResult)) {
+              state = "plan_subscribed";
+            }
+            return subResult;
+          }
+          if (name === "send_pix_plan_charge")
+            return aiTools.sendPixPlanCharge(currentBarbershopId, {
+              subscription_id: (args.subscription_id as string) ?? "",
+              client_phone: clientPhone,
+            });
+          if (name === "add_to_waitlist")
+            return aiTools.addToWaitlist(currentBarbershopId, {
+              client_phone: ((args.client_phone as string) ?? clientPhone) || "",
+              client_name: args.client_name as string | undefined,
+              desired_date: (args.desired_date as string) ?? "",
+              service_id: args.service_id as string | undefined,
+              barber_id: args.barber_id as string | undefined,
+              notes: args.notes as string | undefined,
+            });
           return { error: "Unknown tool" };
         };
 
@@ -1263,6 +2442,46 @@ export async function runAgent(
           tool_call_id: tc.id,
           content,
         });
+
+        // After create_appointment fails, inject a mandatory system guardrail to
+        // prevent the model from hallucinating a booking confirmation.
+        if (
+          name === "create_appointment" &&
+          result != null &&
+          typeof result === "object" &&
+          "error" in result &&
+          (result as { error?: unknown }).error
+        ) {
+          const errCode = String((result as Record<string, unknown>).code ?? "ERRO");
+          loopMessages.push({
+            role: "system" as const,
+            content:
+              `⛔ AGENDAMENTO NÃO CRIADO (${errCode}): o horário solicitado NÃO foi reservado.\n` +
+              `ABSOLUTAMENTE PROIBIDO: dizer "Agendamento confirmado", "está marcado", "Aguardamos você", ` +
+              `"confirmei o agendamento" ou qualquer variação.\n` +
+              `AÇÃO IMEDIATA OBRIGATÓRIA: chame get_next_slots (limit=8) para obter novos horários ` +
+              `e ofereça 2 opções conversacionais (manhã + tarde) ao cliente.` +
+              (errCode === "SLOT_CONFLICT" ? " Não repita o horário rejeitado." : ""),
+          } as OpenAI.Chat.Completions.ChatCompletionMessageParam);
+        }
+        if (
+          name === "reschedule_appointment" &&
+          result != null &&
+          typeof result === "object" &&
+          "error" in result &&
+          (result as { error?: unknown }).error
+        ) {
+          const errCode = String((result as Record<string, unknown>).code ?? "ERRO");
+          loopMessages.push({
+            role: "system" as const,
+            content:
+              `⛔ REAGENDAMENTO NÃO EFETUADO (${errCode}): a agenda NÃO foi alterada.\n` +
+              `ABSOLUTAMENTE PROIBIDO: dizer "reagendado", "confirmado" ou "agendamento ajustado" até um reschedule_appointment bem-sucedido.\n` +
+              `Ao cliente: diga de forma humana que esse horário não está disponível (ou já foi preenchido) e pergunte se prefere manhã ou tarde. ` +
+              `Chame get_next_slots (limit=8) e ofereça 2–3 horários conversacionais sem lista numerada.` +
+              (errCode === "SLOT_CONFLICT" ? " Não repita o horário rejeitado." : ""),
+          } as OpenAI.Chat.Completions.ChatCompletionMessageParam);
+        }
       }
       if (
         premiumAvailable &&
@@ -1275,16 +2494,29 @@ export async function runAgent(
       continue;
     }
     const replyRaw = (msg.content ?? "").trim() || "Desculpe, não consegui responder. Pode repetir?";
-    let reply = stripIdsAndUuids(replyRaw);
+    let reply = sanitizeClientFacingReply(replyRaw);
     if (looksLikePhoneRequest(reply)) {
-      reply = "Fechou! Me diz qual serviço você quer e pra qual dia/horário — que eu já te encaixo.";
+      reply = "Me diz qual serviço você quer e pra qual dia/horário — que já te encaixo.";
+    }
+    // If the reply exposes AI/technical limitations, suppress it for human handoff
+    if (containsAiExposure(reply)) {
+      console.warn("[ai-agent] suppressed AI-exposure reply for handoff, conversationId=%s", conversationId);
+      reply = "";
     }
     await persistAssistant(reply);
+
+    // Fire-and-forget: extract conversation signals and update client memory
+    updateClientMemoryFromConversation(effectiveBarbershopId, clientPhone, {
+      messages: lastN.map((m) => ({ role: m.role, content: String(m.content ?? "") })),
+      finalState: state,
+    }).catch(() => {});
+
     return { reply, usage: totalUsage, state };
   }
 
   return {
-    reply: "Limite de etapas atingido. Resuma o que precisa e eu te ajudo.",
+    reply:
+      "Posso não ter entendido bem — me diz de forma direta: quer agendar, reagendar ou cancelar? Qual dia e horário?",
     usage: totalUsage,
     state,
   };

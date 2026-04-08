@@ -30,6 +30,7 @@ const Relatorios = lazy(() => import("./pages/Relatorios"));
 const Docs = lazy(() => import("./pages/Docs"));
 const AjudaWhatsApp = lazy(() => import("./pages/AjudaWhatsApp"));
 const WhatsAppInterno = lazy(() => import("./pages/WhatsAppInterno"));
+const Planos = lazy(() => import("./pages/Planos"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -73,6 +74,7 @@ const router = createBrowserRouter(
         { path: "whatsapp-interno", element: <Suspense fallback={<LoadingState fullPage />}><WhatsAppInterno /></Suspense> },
         { path: "configuracoes", element: <Suspense fallback={<LoadingState fullPage />}><Configuracoes /></Suspense> },
         { path: "relatorios", element: <Suspense fallback={<LoadingState fullPage />}><Relatorios /></Suspense> },
+        { path: "planos", element: <Suspense fallback={<LoadingState fullPage />}><Planos /></Suspense> },
         { path: "ajuda/whatsapp", element: <Suspense fallback={<LoadingState fullPage />}><AjudaWhatsApp /></Suspense> },
       ],
     },

@@ -8,6 +8,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -47,6 +48,7 @@ import {
   Upload,
   BookOpen,
   Copy,
+  Lock,
 } from "lucide-react";
 import {
   Accordion,
@@ -181,7 +183,8 @@ function NotificationsTabContent({
   const queryClient = useQueryClient();
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
-  const [eligibleDays, setEligibleDays] = useState(30);
+  /** number = inactivity days; "all" = any client in base (search optional) */
+  const [eligibleDays, setEligibleDays] = useState<number | "all">(30);
   const [searchEligible, setSearchEligible] = useState("");
   const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
   const [confirmedExistingClients, setConfirmedExistingClients] = useState(false);
@@ -229,7 +232,7 @@ function NotificationsTabContent({
     queryKey: ["integrations", "followup", "eligible", eligibleDays, searchEligible],
     queryFn: () =>
       integrationsApi.followup.getEligible({
-        days: eligibleDays,
+        ...(eligibleDays === "all" ? { all: true } : { days: eligibleDays }),
         limit: 100,
         search: searchEligible.trim() || undefined,
       }),
@@ -238,7 +241,10 @@ function NotificationsTabContent({
 
   const dispatchMutation = useMutation({
     mutationFn: (client_ids: string[]) =>
-      integrationsApi.followup.dispatch({ client_ids, days: eligibleDays }),
+      integrationsApi.followup.dispatch({
+        client_ids,
+        ...(eligibleDays !== "all" ? { days: eligibleDays } : {}),
+      }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["integrations", "followup", "credits"] });
       queryClient.invalidateQueries({ queryKey: ["integrations", "followup", "eligible", eligibleDays, searchEligible] });
@@ -312,9 +318,17 @@ function NotificationsTabContent({
 
   return (
     <div className="space-y-6 py-1">
-      <p className="text-sm text-muted-foreground leading-relaxed">
-        Lembretes e follow-ups automáticos por WhatsApp. Requer número conectado e worker em execução.
-      </p>
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+          <Bell className="h-5 w-5 text-primary" aria-hidden />
+        </div>
+        <div>
+          <h3 className="text-base font-semibold text-foreground md:text-lg">Notificações</h3>
+          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+            Lembretes e follow-ups automáticos por WhatsApp. Requer número conectado e worker em execução.
+          </p>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
@@ -500,13 +514,16 @@ function NotificationsTabContent({
           </div>
           <div className="flex flex-wrap gap-2">
             <Select
-              value={String(eligibleDays)}
-              onValueChange={(v) => setEligibleDays(parseInt(v, 10))}
+              value={eligibleDays === "all" ? "all" : String(eligibleDays)}
+              onValueChange={(v) =>
+                setEligibleDays(v === "all" ? "all" : parseInt(v, 10))
+              }
             >
-              <SelectTrigger className="w-[120px] h-9">
+              <SelectTrigger className="w-[200px] h-9">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="all">Todos os clientes (base)</SelectItem>
                 <SelectItem value="30">Inativos 30+ dias</SelectItem>
                 <SelectItem value="45">45+ dias</SelectItem>
                 <SelectItem value="60">60+ dias</SelectItem>
@@ -525,7 +542,20 @@ function NotificationsTabContent({
               <LoadingState />
             </div>
           ) : eligibleList.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum cliente elegível para o período.</p>
+            <div
+              className={cn(
+                "rounded-xl border border-dashed border-border/60",
+                "flex flex-col items-center justify-center min-h-[200px] gap-3 py-8 px-4",
+                "bg-muted/20"
+              )}
+            >
+              <div className="rounded-full bg-muted/50 p-3">
+                <Inbox className="h-8 w-8 text-muted-foreground" aria-hidden />
+              </div>
+              <p className="text-sm text-muted-foreground text-center max-w-[240px]">
+                Nenhum cliente elegível para o período.
+              </p>
+            </div>
           ) : (
             <>
               <div className="max-h-[220px] overflow-auto rounded-lg border border-border/60">
@@ -1000,13 +1030,13 @@ export function WhatsAppSetupStepper({
   const showDraftPublishFooter =
     activeTab === "brain" || activeTab === "preview";
 
-  const tabInner = "px-4 sm:px-6 py-6";
+  const tabInner = "px-4 sm:px-6 pt-3 pb-6";
 
   return (
     <Tabs
       value={activeTab}
       onValueChange={handleTabChange}
-      className="flex flex-col min-h-[calc(100vh-8rem)]"
+      className="flex flex-col w-full min-h-0"
     >
           <div className="flex items-center gap-2 border-b border-border/70 min-h-[2.75rem]">
           <TabsList
@@ -1054,7 +1084,7 @@ export function WhatsAppSetupStepper({
           className={cn("mt-0 focus-visible:outline-none data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-200", tabInner)}
         >
           {loadingSettings && activeTab !== "connect" ? null : (
-            <div className="min-h-[280px] flex flex-col justify-center">
+            <div className="min-h-[280px] flex flex-col justify-start">
               {connectStepContent}
             </div>
           )}
@@ -1070,13 +1100,18 @@ export function WhatsAppSetupStepper({
             </div>
           ) : (
             <div className="space-y-6">
-              <div>
-                <h3 className="font-semibold text-foreground">
-                  Horário de funcionamento
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-                  Configure dias, horários e exceções (feriados, fechamentos). O assistente usa essas informações para não sugerir horários fora do expediente.
-                </p>
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                  <Calendar className="h-5 w-5 text-primary" aria-hidden />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-foreground md:text-lg">
+                    Horários de funcionamento
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                    Configure dias, horários e exceções (feriados, fechamentos). O assistente usa essas informações para não sugerir horários fora do expediente.
+                  </p>
+                </div>
               </div>
 
               {barbershop && (
@@ -1653,6 +1688,36 @@ export function WhatsAppSetupStepper({
                         onChange={(u) => setDraftProfile((p) => ({ ...p, ...u }))}
                       />
                     </div>
+                    {/* Instruções extras — campo direto de additional_instructions */}
+                    <Card className="border-border/60 bg-card/50 mt-4">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <Label className="text-sm font-semibold">Instruções extras para o agente</Label>
+                            <p className="text-xs text-muted-foreground font-normal mt-0.5">
+                              Texto adicional que complementa o comportamento do agente. Use com cautela — afeta todas as respostas.
+                            </p>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        <Textarea
+                          className="min-h-[100px] text-sm font-mono resize-y"
+                          placeholder="Ex: Sempre mencione que temos estacionamento gratuito. Nunca discuta preços por menos de 15 dias de antecedência."
+                          value={draftAdditionalInstructions ?? ""}
+                          onChange={(e) =>
+                            setDraftAdditionalInstructions(e.target.value || null)
+                          }
+                          maxLength={2000}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1.5 text-right">
+                          {(draftAdditionalInstructions ?? "").length}/2000
+                        </p>
+                      </CardContent>
+                    </Card>
                     {isPremium && aiSettings && (
                     <Card className="border-border/60 bg-card/50 mt-4">
                       <CardHeader className="pb-2">
@@ -1955,11 +2020,17 @@ export function WhatsAppSetupStepper({
                             </AccordionContent>
                           </AccordionItem>
                         )}
-                        <AccordionItem value="guardrails" className="rounded-lg border border-border/60 px-3">
+                        <AccordionItem value="guardrails" className="rounded-lg border border-amber-200/60 dark:border-amber-800/40 bg-amber-50/30 dark:bg-amber-950/10 px-3">
                           <AccordionTrigger className="hover:no-underline py-3 text-sm">
-                            Guardrails ({compiledPromptData.section_lengths?.guardrails ?? 0} caracteres)
+                            <span className="flex items-center gap-2">
+                              <Lock className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+                              <span>Regras internas de segurança — somente leitura ({compiledPromptData.section_lengths?.guardrails ?? 0} car.)</span>
+                            </span>
                           </AccordionTrigger>
                           <AccordionContent>
+                            <p className="text-xs text-amber-700 dark:text-amber-400 mb-2">
+                              Estas regras não podem ser editadas. Elas garantem a segurança e o comportamento correto do agente.
+                            </p>
                             <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono bg-muted/30 p-3 rounded-md max-h-48 overflow-y-auto">
                               {compiledPromptData.sections.guardrails}
                             </pre>
@@ -2066,7 +2137,10 @@ export function WhatsAppSetupStepper({
         {apiKeysContent && (
           <TabsContent
             value="api-keys"
-            className={cn("mt-0 flex flex-col flex-1 min-h-0 overflow-hidden focus-visible:outline-none data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-200", tabInner)}
+            className={cn(
+              "mt-0 block focus-visible:outline-none data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-200",
+              "px-4 sm:px-6 pt-3 pb-6"
+            )}
           >
             {apiKeysContent}
           </TabsContent>

@@ -16,6 +16,7 @@ import {
   instanceDisconnect,
   pingUazapi,
   findMessages,
+  sendSticker,
 } from "../integrations/uazapi/client.js";
 import type { InstanceStatusResult } from "../integrations/uazapi/client.js";
 import { getAiPauseState, setAiPaused, clearAiPause, setConversationPaused, clearConversationPause } from "../ai/runtime-pause.js";
@@ -503,9 +504,9 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
       }
     }
     const dedupedRows = [...canonicalToBest.values()].sort((a, b) => {
-      const at = a.last_message_at ?? a.updated_at ?? "";
-      const bt = b.last_message_at ?? b.updated_at ?? "";
-      return bt.localeCompare(at);
+      const toMs = (v: unknown): number =>
+        v instanceof Date ? v.getTime() : typeof v === "string" && v ? new Date(v).getTime() : 0;
+      return toMs(b.last_message_at ?? b.updated_at) - toMs(a.last_message_at ?? a.updated_at);
     });
 
     let clientByThreadId: Map<string, { name: string | null; phone: string | null }> | null = null;
@@ -1305,7 +1306,7 @@ whatsappRouter.get("/ai-settings", async (req: Request, res: Response): Promise<
         timezone: "America/Sao_Paulo",
         model: "gpt-4o-mini",
         model_premium: null,
-        temperature: 0.7,
+        temperature: 0.3,
         system_prompt_override: null,
         agent_profile: {},
         additional_instructions: null,
@@ -1431,7 +1432,7 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
       timezone: "America/Sao_Paulo",
       model: "gpt-4o-mini",
       model_premium: null as string | null,
-      temperature: 0.7,
+      temperature: 0.3,
       system_prompt_override: null as string | null,
       agent_profile: {} as unknown,
       additional_instructions: null as string | null,
@@ -1525,7 +1526,7 @@ whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response):
       settingsSnapshot = {
         model: row?.model ?? "gpt-4o-mini",
         model_premium: row?.model_premium ?? null,
-        temperature: row?.temperature ?? 0.7,
+        temperature: row?.temperature ?? 0.3,
         max_output_tokens: row?.max_output_tokens ?? null,
         typing_simulation: row?.typing_simulation ?? null,
       };
@@ -1576,7 +1577,7 @@ whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response):
     const defaultEnabled = row?.enabled ?? true;
     const defaultTimezone = row?.timezone ?? "America/Sao_Paulo";
     const defaultModel = row?.model ?? "gpt-4o-mini";
-    const defaultTemperature = row?.temperature ?? 0.7;
+    const defaultTemperature = row?.temperature ?? 0.3;
     const defaultSystemPromptOverride = row?.system_prompt_override ?? null;
     const defaultMaxOutputTokens = row?.max_output_tokens ?? null;
     const defaultTypingSimulation = row?.typing_simulation != null ? JSON.stringify(row.typing_simulation) : null;
@@ -1980,6 +1981,7 @@ type DiagnosticResult = {
 };
 
 const INCIDENT_TYPES = [
+  // original types
   "double_booking",
   "ignored_availability",
   "asked_phone",
@@ -1987,7 +1989,88 @@ const INCIDENT_TYPES = [
   "tone_issue",
   "wrong_policy",
   "hallucination",
+  // extended types
+  "abertura_robotizada",
+  "loop_conversacional",
+  "falha_fechamento",
+  "pergunta_duplicada",
+  "memoria_incorreta",
+  "exposicao_erro_tecnico",
+  "reagendamento_incorreto",
+  "follow_up_ruim",
+  "lembrete_inadequado",
+  "cobranca_ruim",
+  "concorrencia_ruido",
+  "erro_retomada_tool",
 ] as const;
+
+const INCIDENT_TYPE_LABELS: Record<string, string> = {
+  double_booking: "Agendamento em horário já ocupado",
+  ignored_availability: "Ignorou disponibilidade",
+  asked_phone: "Pediu telefone do cliente",
+  uuid_leak: "Mostrou ID/UUID",
+  tone_issue: "Problema de tom",
+  wrong_policy: "Política errada",
+  hallucination: "Resposta incoerente / inventou",
+  abertura_robotizada: "Abertura robotizada / sem naturalidade",
+  loop_conversacional: "Loop conversacional",
+  falha_fechamento: "Falha no fechamento do agendamento",
+  pergunta_duplicada: "Pergunta duplicada / repetida",
+  memoria_incorreta: "Memória do cliente usada incorretamente",
+  exposicao_erro_tecnico: "Exposição de erro técnico",
+  reagendamento_incorreto: "Reagendamento incorreto",
+  follow_up_ruim: "Follow-up inadequado",
+  lembrete_inadequado: "Lembrete inadequado",
+  cobranca_ruim: "Cobrança problemática",
+  concorrencia_ruido: "Concorrência / ruído operacional",
+  erro_retomada_tool: "Erro na retomada após tool failure",
+};
+
+/** Maps incident_type → expected ViolationType[] for benchmark scenario draft. */
+const INCIDENT_TYPE_TO_VIOLATIONS: Record<string, string[]> = {
+  double_booking: ["pre_booking_claim"],
+  ignored_availability: ["past_time_suggestion"],
+  asked_phone: ["phone_ask"],
+  uuid_leak: ["uuid_leak"],
+  tone_issue: [],
+  wrong_policy: [],
+  hallucination: [],
+  abertura_robotizada: [],
+  loop_conversacional: ["loop_detected", "redundant_info_request"],
+  falha_fechamento: ["false_closure"],
+  pergunta_duplicada: ["redundant_info_request"],
+  memoria_incorreta: ["ignored_context"],
+  exposicao_erro_tecnico: ["ai_exposure", "technical_apology"],
+  reagendamento_incorreto: ["pre_booking_claim"],
+  follow_up_ruim: [],
+  lembrete_inadequado: [],
+  cobranca_ruim: [],
+  concorrencia_ruido: [],
+  erro_retomada_tool: ["technical_apology"],
+};
+
+/** Maps incident_type → severity suggestion. */
+const INCIDENT_TYPE_DEFAULT_SEVERITY: Record<string, string> = {
+  double_booking: "critical",
+  ignored_availability: "critical",
+  asked_phone: "critical",
+  uuid_leak: "critical",
+  hallucination: "critical",
+  exposicao_erro_tecnico: "critical",
+  loop_conversacional: "medium",
+  falha_fechamento: "medium",
+  memoria_incorreta: "medium",
+  reagendamento_incorreto: "medium",
+  erro_retomada_tool: "medium",
+  tone_issue: "light",
+  wrong_policy: "medium",
+  abertura_robotizada: "light",
+  pergunta_duplicada: "light",
+  follow_up_ruim: "light",
+  lembrete_inadequado: "light",
+  cobranca_ruim: "medium",
+  concorrencia_ruido: "light",
+};
 
 const incidentDiagnoseBody = z.object({
   incident_type: z.enum(INCIDENT_TYPES),
@@ -2537,5 +2620,241 @@ whatsappRouter.post("/ai-incidents/diagnose", async (req: Request, res: Response
   } catch (e) {
     console.error("whatsapp ai-incidents diagnose:", e);
     res.status(500).json({ error: "Failed to diagnose incident" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /ai-incidents/save — persist a reported incident + generate benchmark draft
+// ---------------------------------------------------------------------------
+
+const incidentSaveBody = z.object({
+  incident_type: z.string().min(1),
+  severity: z.enum(["critical", "medium", "light"]).optional(),
+  manager_note: z.string().max(1000).optional(),
+  conversation_id: z.string().uuid().optional(),
+  transcript: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string() })).max(120),
+  settings_snapshot: z
+    .object({
+      agent_profile: z.record(z.unknown()).optional(),
+      additional_instructions: z.string().nullable().optional(),
+    })
+    .optional(),
+  diagnosis_result: z.record(z.unknown()).optional(),
+});
+
+function generateBenchmarkScenarioDraft(
+  incidentType: string,
+  transcript: Array<{ role: "user" | "assistant"; content: string }>,
+  managerNote: string | undefined
+): Record<string, unknown> {
+  const label = INCIDENT_TYPE_LABELS[incidentType] ?? incidentType;
+  const noViolations = INCIDENT_TYPE_TO_VIOLATIONS[incidentType] ?? [];
+
+  const userTurns = transcript
+    .filter((m) => m.role === "user")
+    .slice(0, 10)
+    .map((m) => ({
+      role: "user",
+      content: m.content.slice(0, 300),
+    }));
+
+  const tagMap: Record<string, string[]> = {
+    double_booking: ["booking", "edge"],
+    ignored_availability: ["booking", "edge"],
+    asked_phone: ["booking", "edge"],
+    uuid_leak: ["edge"],
+    tone_issue: ["greeting"],
+    abertura_robotizada: ["greeting"],
+    loop_conversacional: ["booking", "edge"],
+    falha_fechamento: ["booking", "edge"],
+    pergunta_duplicada: ["booking"],
+    memoria_incorreta: ["booking", "edge"],
+    exposicao_erro_tecnico: ["edge"],
+    reagendamento_incorreto: ["booking", "edge"],
+    erro_retomada_tool: ["booking", "edge"],
+  };
+
+  return {
+    id: `incident-${incidentType.replace(/_/g, "-")}-draft`,
+    name: `[Incidente] ${label}`,
+    description: managerNote || `Gerado automaticamente de conversa real. Revise e renomeie antes de promover ao suite.`,
+    tags: tagMap[incidentType] ?? ["edge"],
+    vertical: "barbershop",
+    turns: userTurns,
+    expected: {
+      noViolations: noViolations.length > 0 ? noViolations : undefined,
+      asserts: [],
+    },
+    _meta: {
+      source: "incident",
+      incident_type: incidentType,
+      auto_generated: true,
+      instructions: "Revise os turns, ajuste os asserts e renomeie o id antes de adicionar ao arquivo scenarios/barbershop/.",
+    },
+  };
+}
+
+/** POST /api/integrations/whatsapp/ai-incidents/save — persiste incidente + gera rascunho de cenário benchmark */
+whatsappRouter.post("/ai-incidents/save", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = incidentSaveBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    const data = parsed.data;
+    const severity = data.severity ?? (INCIDENT_TYPE_DEFAULT_SEVERITY[data.incident_type] as "critical" | "medium" | "light" | undefined) ?? "medium";
+    const scenarioDraft = generateBenchmarkScenarioDraft(data.incident_type, data.transcript, data.manager_note);
+
+    const insertResult = await pool.query<{ id: string }>(
+      `INSERT INTO public.ai_incidents
+         (barbershop_id, conversation_id, incident_type, severity, manager_note,
+          transcript_json, settings_snapshot_json, diagnosis_result_json, benchmark_scenario_draft_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        barbershopId,
+        data.conversation_id ?? null,
+        data.incident_type,
+        severity,
+        data.manager_note ?? null,
+        JSON.stringify(data.transcript),
+        data.settings_snapshot ? JSON.stringify(data.settings_snapshot) : null,
+        data.diagnosis_result ? JSON.stringify(data.diagnosis_result) : null,
+        JSON.stringify(scenarioDraft),
+      ]
+    );
+
+    const incidentId = insertResult.rows[0]?.id;
+    if (!incidentId) {
+      res.status(500).json({ error: "Failed to save incident" });
+      return;
+    }
+
+    console.log(`[ai-incidents] saved incident ${incidentId} type=${data.incident_type} severity=${severity} barbershop=${barbershopId}`);
+
+    res.status(201).json({
+      id: incidentId,
+      severity,
+      benchmark_scenario_draft: scenarioDraft,
+    });
+  } catch (e) {
+    console.error("whatsapp ai-incidents save:", e);
+    res.status(500).json({ error: "Failed to save incident" });
+  }
+});
+
+// ─── Stickers ────────────────────────────────────────────────────────────────
+
+whatsappRouter.get("/stickers", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const r = await pool.query<{ id: string; name: string; media_url: string; is_active: boolean; created_at: string }>(
+      `SELECT id, name, media_url, is_active, created_at
+       FROM public.barbershop_stickers
+       WHERE barbershop_id = $1
+       ORDER BY created_at DESC`,
+      [barbershopId]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error("[whatsapp stickers] list error:", e);
+    res.status(500).json({ error: "Failed to list stickers" });
+  }
+});
+
+const stickerCreateSchema = z.object({
+  name: z.string().max(100).optional().default(""),
+  media_url: z.string().url(),
+});
+
+whatsappRouter.post("/stickers", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = stickerCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      return;
+    }
+    const { name, media_url } = parsed.data;
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO public.barbershop_stickers (barbershop_id, name, media_url)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [barbershopId, name, media_url]
+    );
+    res.status(201).json({ id: r.rows[0]!.id });
+  } catch (e) {
+    console.error("[whatsapp stickers] create error:", e);
+    res.status(500).json({ error: "Failed to create sticker" });
+  }
+});
+
+whatsappRouter.delete("/stickers/:id", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const { id } = req.params;
+    await pool.query(
+      `DELETE FROM public.barbershop_stickers WHERE id = $1 AND barbershop_id = $2`,
+      [id, barbershopId]
+    );
+    res.status(204).end();
+  } catch (e) {
+    console.error("[whatsapp stickers] delete error:", e);
+    res.status(500).json({ error: "Failed to delete sticker" });
+  }
+});
+
+whatsappRouter.patch("/stickers/:id/toggle", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const { id } = req.params;
+    const r = await pool.query<{ is_active: boolean }>(
+      `UPDATE public.barbershop_stickers
+       SET is_active = NOT is_active
+       WHERE id = $1 AND barbershop_id = $2
+       RETURNING is_active`,
+      [id, barbershopId]
+    );
+    if (!r.rows[0]) { res.status(404).json({ error: "Sticker not found" }); return; }
+    res.json({ is_active: r.rows[0].is_active });
+  } catch (e) {
+    console.error("[whatsapp stickers] toggle error:", e);
+    res.status(500).json({ error: "Failed to toggle sticker" });
+  }
+});
+
+// Test endpoint: send a sticker to a phone number
+whatsappRouter.post("/stickers/test-send", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = z.object({ to_phone: z.string(), sticker_id: z.string().uuid().optional() }).safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "Invalid body" }); return; }
+    const { to_phone, sticker_id } = parsed.data;
+
+    const connRow = await pool.query<{ uazapi_instance_token_encrypted: string }>(
+      `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
+       WHERE barbershop_id = $1 AND provider = 'uazapi' AND uazapi_instance_token_encrypted IS NOT NULL LIMIT 1`,
+      [barbershopId]
+    );
+    const encrypted = connRow.rows[0]?.uazapi_instance_token_encrypted;
+    if (!encrypted) { res.status(400).json({ error: "WhatsApp não conectado" }); return; }
+    const { decrypt } = await import("../integrations/encryption.js");
+    const encKey = config.appEncryptionKey;
+    if (!encKey) { res.status(500).json({ error: "Encryption key missing" }); return; }
+    const token = decrypt(encrypted, encKey);
+
+    const stickerQuery = sticker_id
+      ? `SELECT media_url FROM public.barbershop_stickers WHERE id = $1 AND barbershop_id = $2 AND is_active = true`
+      : `SELECT media_url FROM public.barbershop_stickers WHERE barbershop_id = $1 AND is_active = true ORDER BY RANDOM() LIMIT 1`;
+    const stickerParams = sticker_id ? [sticker_id, barbershopId] : [barbershopId];
+    const stickerRow = await pool.query<{ media_url: string }>(stickerQuery, stickerParams as string[]);
+    if (!stickerRow.rows[0]) { res.status(404).json({ error: "Nenhuma figurinha ativa encontrada" }); return; }
+
+    await sendSticker({ token, number: to_phone, url: stickerRow.rows[0].media_url });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[whatsapp stickers] test-send error:", e);
+    res.status(500).json({ error: "Failed to send sticker" });
   }
 });

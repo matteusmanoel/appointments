@@ -211,6 +211,8 @@ export const barbershopsApi = {
       phone?: string;
       email?: string;
       address?: string;
+      latitude?: number | null;
+      longitude?: number | null;
       business_hours?: BusinessHours;
       slug?: string;
     }>("/api/barbershops"),
@@ -224,6 +226,8 @@ export const barbershopsApi = {
     phone?: string;
     email?: string;
     address?: string;
+    latitude?: number | null;
+    longitude?: number | null;
     business_hours?: BusinessHours;
     slug?: string;
   }) => api("/api/barbershops", { method: "PATCH", body: JSON.stringify(body) }),
@@ -359,22 +363,92 @@ export const loyaltyApi = {
   },
 };
 
+export type ClientMemory = {
+  id: string;
+  client_id: string;
+  barbershop_id: string;
+  preferred_services: string[] | null;
+  preferred_services_conf: number;
+  preferred_barber_id: string | null;
+  preferred_barber_name?: string | null;
+  preferred_barber_conf: number;
+  preferred_days: number[] | null;
+  preferred_days_conf: number;
+  preferred_time_start: string | null;
+  preferred_time_end: string | null;
+  preferred_time_conf: number;
+  last_completed_services: string[] | null;
+  last_completed_at: string | null;
+  communication_style: "formal" | "informal" | "direct" | "chatty" | "unknown";
+  communication_style_conf: number;
+  reactivation_status: "active" | "at_risk" | "churned" | "returning" | "unknown";
+  payment_pending: boolean;
+  payment_pending_amount: number | null;
+  last_no_show_at: string | null;
+  no_show_count: number;
+  notes_safe: string | null;
+  overall_confidence: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Client = {
+  id: string;
+  barbershop_id?: string;
+  barbershop_name?: string;
+  name: string;
+  phone: string;
+  email?: string;
+  notes?: string;
+  total_visits: number;
+  total_spent: number;
+  loyalty_points: number;
+  created_at?: string;
+  updated_at?: string;
+  // Enriched fields (from JOIN in GET /api/clients)
+  last_appointment_at?: string | null;
+  last_appointment_status?: string | null;
+  no_show_count?: number;
+  reactivation_status?: "active" | "at_risk" | "churned" | "returning" | "unknown";
+  preferred_services?: string[] | null;
+  memory_confidence?: number | null;
+};
+
+export type ClientAppointment = {
+  id: string;
+  barbershop_id: string;
+  barber_id: string | null;
+  barber_name: string | null;
+  scheduled_date: string;
+  scheduled_time: string;
+  status: string;
+  price: number;
+  duration_minutes: number | null;
+  notes: string | null;
+  created_at: string;
+  service_names: string[];
+};
+
 export const clientsApi = {
-  list: (search?: string) => {
+  list: (params?: { search?: string; reactivation_status?: string }) => {
     const q = new URLSearchParams();
-    if (search) q.set("search", search);
+    if (params?.search) q.set("search", params.search);
+    if (params?.reactivation_status) q.set("reactivation_status", params.reactivation_status);
     if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
     const qs = q.toString();
-    return api<Array<{ id: string; barbershop_id?: string; barbershop_name?: string; name: string; phone: string; email?: string; notes?: string; total_visits: number; total_spent: number; loyalty_points: number; updated_at?: string }>>(
-      qs ? `/api/clients?${qs}` : "/api/clients"
-    );
+    return api<Client[]>(qs ? `/api/clients?${qs}` : "/api/clients");
   },
-  get: (id: string) => api(`/api/clients/${id}`),
+  get: (id: string) => api<Client>(`/api/clients/${id}`),
   create: (body: { name: string; phone: string; email?: string; notes?: string; barbershop_id?: string }) =>
-    api("/api/clients", { method: "POST", body: JSON.stringify(body) }),
+    api<Client>("/api/clients", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Record<string, unknown>) =>
-    api(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    api<Client>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   delete: (id: string) => api(`/api/clients/${id}`, { method: "DELETE" }),
+  getAppointments: (id: string) => api<ClientAppointment[]>(`/api/clients/${id}/appointments`),
+  getMemory: (id: string) => api<ClientMemory | null>(`/api/clients/${id}/memory`),
+  updateMemory: (id: string, body: { notes_safe: string | null }) =>
+    api<ClientMemory>(`/api/clients/${id}/memory`, { method: "PATCH", body: JSON.stringify(body) }),
+  getMemoryByPhone: (phone: string) => api<ClientMemory | null>(`/api/clients/by-phone/${encodeURIComponent(phone)}/memory`),
 };
 
 export type ApiKeyItem = { id: string; name: string; last_used_at: string | null; created_at: string; revoked: boolean };
@@ -407,9 +481,10 @@ export const integrationsApi = {
     }>>(`/api/integrations/automations/scheduled-messages${qs ? `?${qs}` : ""}`);
   },
   followup: {
-    getEligible: (params?: { days?: number; limit?: number; search?: string }) => {
+    getEligible: (params?: { days?: number; limit?: number; search?: string; all?: boolean }) => {
       const q = new URLSearchParams();
-      if (params?.days != null) q.set("days", String(params.days));
+      if (params?.all) q.set("all", "1");
+      else if (params?.days != null) q.set("days", String(params.days));
       if (params?.limit != null) q.set("limit", String(params.limit));
       if (params?.search) q.set("search", params.search);
       const qs = q.toString();
@@ -717,6 +792,23 @@ export const whatsappApi = {
       method: "POST",
       body: JSON.stringify(params),
     }),
+  saveIncident: (params: {
+    incident_type: string;
+    severity?: "critical" | "medium" | "light";
+    manager_note?: string;
+    conversation_id?: string;
+    transcript: Array<{ role: "user" | "assistant"; content: string }>;
+    settings_snapshot?: { agent_profile?: Record<string, unknown>; additional_instructions?: string | null };
+    diagnosis_result?: Record<string, unknown>;
+  }) =>
+    api<{
+      id: string;
+      severity: "critical" | "medium" | "light";
+      benchmark_scenario_draft: Record<string, unknown>;
+    }>("/api/integrations/whatsapp/ai-incidents/save", {
+      method: "POST",
+      body: JSON.stringify(params),
+    }),
   listConversations: (params?: { limit?: number; search?: string; status?: "ai" | "manual"; updated_since?: string; offset?: number }) => {
     const q = new URLSearchParams();
     if (params?.limit != null) q.set("limit", String(params.limit));
@@ -994,6 +1086,67 @@ export const appointmentsApi = {
     completed_time?: string;
   }) => api<AppointmentListItem>(`/api/appointments/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   cancel: (id: string) => api(`/api/appointments/${id}`, { method: "DELETE" }),
+};
+
+// ─── Plans API ────────────────────────────────────────────────────────────────
+
+export type BarbershopPlan = {
+  id: string;
+  name: string;
+  description?: string;
+  service_ids: string[];
+  services_detail: Array<{ id: string; name: string }>;
+  price: number;
+  billing_cycle: "monthly" | "quarterly" | "yearly";
+  max_visits: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PlanSubscription = {
+  id: string;
+  status: "active" | "suspended" | "cancelled";
+  billing_day: number;
+  next_billing_date: string;
+  started_at: string;
+  cancelled_at: string | null;
+  client_id: string;
+  client_name: string;
+  client_phone: string;
+  plan_id: string;
+  plan_name: string;
+  price: number;
+  billing_cycle: "monthly" | "quarterly" | "yearly";
+};
+
+export type PlanCharge = {
+  id: string;
+  amount: number;
+  status: "pending" | "sent" | "paid" | "failed" | "skipped";
+  due_date: string;
+  sent_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
+export const plansApi = {
+  list: () => api<BarbershopPlan[]>("/api/plans"),
+  create: (body: { name: string; description?: string; service_ids?: string[]; price: number; billing_cycle?: string; max_visits?: number | null }) =>
+    api<{ id: string }>("/api/plans", { method: "POST", body: JSON.stringify(body) }),
+  update: (id: string, body: Partial<{ name: string; description: string; service_ids: string[]; price: number; billing_cycle: string; max_visits: number | null; is_active: boolean }>) =>
+    api<{ ok: boolean }>(`/api/plans/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deactivate: (id: string) =>
+    api(`/api/plans/${id}`, { method: "DELETE" }),
+  subscriptions: {
+    list: () => api<PlanSubscription[]>("/api/plans/subscriptions"),
+    create: (body: { client_id: string; plan_id: string; billing_day?: number }) =>
+      api<{ id: string; next_billing_date: string }>("/api/plans/subscriptions", { method: "POST", body: JSON.stringify(body) }),
+    cancel: (id: string) =>
+      api<{ ok: boolean }>(`/api/plans/subscriptions/${id}/cancel`, { method: "PUT" }),
+    charges: (id: string) =>
+      api<PlanCharge[]>(`/api/plans/subscriptions/${id}/charges`),
+  },
 };
 
 /** Format appointment services for display (e.g. "Corte" or "Corte + Barba") */
