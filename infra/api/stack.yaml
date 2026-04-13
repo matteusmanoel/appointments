@@ -106,6 +106,11 @@ Parameters:
     NoEcho: true
     Default: ""
     Description: Secret for n8n outbound events (optional)
+  NativeAiDisabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: When true, disables native AI worker replies and ai-simulate endpoints (NATIVE_AI_DISABLED)
   KnowledgeS3Bucket:
     Type: String
     Default: ""
@@ -189,6 +194,8 @@ Resources:
           UAZAPI_WEBHOOK_PUBLIC_URL: !Ref UazapiWebhookPublicUrl
           APP_ENCRYPTION_KEY: !Ref AppEncryptionKey
           N8N_CHAT_TRIGGER_URL: !Ref N8nChatTriggerUrl
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          NATIVE_AI_DISABLED: !Ref NativeAiDisabled
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -400,6 +407,7 @@ Resources:
           AI_WORKER_CONCURRENCY: "1"
           AI_JOB_MAX_ATTEMPTS: "5"
           AI_JOB_BACKOFF_BASE_SECONDS: "2"
+          NATIVE_AI_DISABLED: !Ref NativeAiDisabled
 
   WorkerScheduledFunction:
     Type: AWS::Lambda::Function
@@ -446,7 +454,6 @@ Resources:
           DATABASE_POOL_MAX: "2"
           OPENAI_API_KEY: !Ref OpenAiApiKey
           KNOWLEDGE_S3_BUCKET: !Ref KnowledgeS3Bucket
-          AWS_REGION: !Ref AWS::Region
 
   WorkerAiScheduleRule:
     Type: AWS::Events::Rule
