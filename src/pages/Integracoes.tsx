@@ -24,6 +24,7 @@ import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { UpgradeGate } from "@/components/UpgradeGate";
 import { WhatsAppSetupStepper, TAB_CONFIG } from "@/components/whatsapp/WhatsAppSetupStepper";
 import { ConnectTab } from "@/components/whatsapp/ConnectTab";
+import { nativeAiUiEnabled, NATIVE_AI_ONLY_STEPS } from "@/lib/native-ai-ui";
 
 function ApiKeysTab() {
   const queryClient = useQueryClient();
@@ -245,8 +246,15 @@ export default function Integracoes() {
   const queryClient = useQueryClient();
   const { profile } = useAuth();
 
-  const stepParam = searchParams.get("step") ?? (searchParams.get("openDiagnostic") === "1" ? "preview" : "connect");
-  const validStep = TAB_CONFIG.some((t) => t.id === stepParam) ? stepParam : "connect";
+  const openDiagnostic = searchParams.get("openDiagnostic") === "1";
+  const stepParam =
+    searchParams.get("step") ??
+    (openDiagnostic && nativeAiUiEnabled ? "preview" : "connect");
+  const stepFromConfig = TAB_CONFIG.some((t) => t.id === stepParam) ? stepParam : "connect";
+  const validStep =
+    !nativeAiUiEnabled && (NATIVE_AI_ONLY_STEPS as readonly string[]).includes(stepFromConfig)
+      ? "connect"
+      : stepFromConfig;
 
   const [webhookWarning, setWebhookWarning] = useState("");
   const [testTo, setTestTo] = useState("");
@@ -256,6 +264,25 @@ export default function Integracoes() {
   const [portalLoading, setPortalLoading] = useState(false);
 
   const canUseWhatsAppAndNotifications = hasPro(profile);
+
+  useEffect(() => {
+    if (!canUseWhatsAppAndNotifications && validStep === "hours") {
+      navigate("/app/configuracoes?open=hours", { replace: true });
+    }
+  }, [canUseWhatsAppAndNotifications, validStep, navigate]);
+
+  useEffect(() => {
+    if (nativeAiUiEnabled) return;
+    const raw = searchParams.get("step");
+    const diag = searchParams.get("openDiagnostic") === "1";
+    const mustRedirect =
+      (raw != null && (NATIVE_AI_ONLY_STEPS as readonly string[]).includes(raw)) || diag;
+    if (!mustRedirect) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("step", "connect");
+    next.delete("openDiagnostic");
+    navigate({ pathname: "/app/integracoes", search: next.toString() }, { replace: true });
+  }, [searchParams, navigate]);
 
   const { data: whatsappConnection, isLoading: whatsappLoading } = useQuery({
     queryKey: ["integrations", "whatsapp"],
@@ -395,6 +422,14 @@ export default function Integracoes() {
     whatsappStatusQuery.data?.connected
   );
 
+  if (!canUseWhatsAppAndNotifications) {
+    return (
+      <UpgradeGate featureName="Integrações" requiredPlan="pro" variant="page">
+        <span className="sr-only">Requer upgrade</span>
+      </UpgradeGate>
+    );
+  }
+
   const connectStepContent = (
     <ConnectTab
       loading={whatsappLoading}
@@ -451,22 +486,22 @@ export default function Integracoes() {
 
   return (
     <div className="space-y-6">
-      {!canUseWhatsAppAndNotifications && (
-        <UpgradeGate
-          featureName="Integrações (WhatsApp, notificações)"
-          requiredPlan="pro"
-          variant="inline"
-        >
-          {null}
-        </UpgradeGate>
-      )}
       <div>
         <h1 className="text-2xl font-semibold text-foreground">
           Integrações
         </h1>
         <p className="text-muted-foreground mt-1">
-          Conecte WhatsApp (IA), configure horários, chaves de API e notificações. Use o header{" "}
-          <code className="text-xs bg-muted px-1 rounded">X-API-Key</code> nas requisições.
+          {nativeAiUiEnabled ? (
+            <>
+              Conecte WhatsApp (IA), configure horários, chaves de API e notificações. Use o header{" "}
+              <code className="text-xs bg-muted px-1 rounded">X-API-Key</code> nas requisições.
+            </>
+          ) : (
+            <>
+              Conecte WhatsApp, configure horários e chaves de API para integrações (ex.: n8n). Use o header{" "}
+              <code className="text-xs bg-muted px-1 rounded">X-API-Key</code> nas requisições.
+            </>
+          )}
         </p>
       </div>
 
@@ -478,7 +513,8 @@ export default function Integracoes() {
           canUseWhatsApp={canUseWhatsAppAndNotifications}
           value={validStep}
           onValueChange={handleStepChange}
-          openDiagnosticFromInbox={searchParams.get("openDiagnostic") === "1"}
+          openDiagnosticFromInbox={nativeAiUiEnabled && searchParams.get("openDiagnostic") === "1"}
+          hiddenStepIds={nativeAiUiEnabled ? [] : NATIVE_AI_ONLY_STEPS}
           enabled
         />
       </div>

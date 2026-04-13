@@ -29,6 +29,7 @@ import { CheckoutModal } from "@/components/CheckoutModal";
 import { isEssential } from "@/lib/plan";
 import { ThemeToggle, ConfirmDialog } from "@/components/shared";
 import { toastError } from "@/lib/toast-helpers";
+import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 import {
   Select,
   SelectContent,
@@ -37,7 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const navigation = [
+const navigationAll = [
   { name: "Dashboard", href: "/app", icon: LayoutDashboard },
   { name: "Agendamentos", href: "/app/agendamentos", icon: Calendar },
   { name: "Barbeiros", href: "/app/barbeiros", icon: Scissors },
@@ -48,6 +49,10 @@ const navigation = [
   { name: "Planos", href: "/app/planos", icon: CreditCard },
   { name: "Relatórios", href: "/app/relatorios", icon: BarChart3 },
 ];
+
+const navigation = nativeAiUiEnabled
+  ? navigationAll
+  : navigationAll.filter((item) => item.href !== "/app/whatsapp-interno");
 
 const bottomNavigation = [
   { name: "Integrações", href: "/app/integracoes", icon: Key },
@@ -114,10 +119,13 @@ export function SidebarContent({
     }
   };
 
-  const barbershopSelectValue = selectedScope === "__all__" ? "__all__" : (profile?.barbershop_id ?? "");
-  const barbershopSelectLabel = selectedScope === "__all__"
-    ? "Todas as filiais"
-    : (barbershops.find((b) => b.id === profile?.barbershop_id)?.name || "Unidade");
+  const barbershopSelectValue =
+    selectedScope === "__all__" ? "__all__" : (profile?.barbershop_id ?? "");
+  const barbershopSelectLabel =
+    selectedScope === "__all__"
+      ? "Todas as filiais"
+      : barbershops.find((b) => b.id === profile?.barbershop_id)?.name ||
+        "Unidade";
 
   const handleLogout = () => {
     logout();
@@ -216,9 +224,7 @@ export function SidebarContent({
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__all__">
-                  Todas as filiais
-                </SelectItem>
+                <SelectItem value="__all__">Todas as filiais</SelectItem>
                 {barbershops.map((b) => (
                   <SelectItem key={b.id} value={b.id}>
                     {b.name || "Unidade"}

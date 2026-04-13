@@ -642,7 +642,7 @@ whatsappRouter.post("/conversations/:id/sync", async (req: Request, res: Respons
     const token = decrypt(enc, getEncryptionKey());
     const threadId = conv.rows[0].external_thread_id.replace(/\D/g, "") || conv.rows[0].external_thread_id;
     const chatid = `${threadId}@s.whatsapp.net`;
-    const result = await findMessages({ token, chatid, limit: 100, offset: 0 });
+    const result = await findMessages({ token, chatid, limit: 250, offset: 0 });
     const raw = (result.messages ?? []) as Array<{ id?: string; body?: string; fromMe?: boolean; timestamp?: number }>;
     const existing = await pool.query<{ provider_message_id: string }>(
       `SELECT provider_message_id FROM public.ai_messages WHERE conversation_id = $1 AND provider_message_id IS NOT NULL`,
@@ -1725,6 +1725,16 @@ whatsappRouter.get("/ai-settings/versions", async (req: Request, res: Response):
 
 const COMPILED_PROMPT_PREVIEW_MAX = 2000;
 
+/**
+ * GET /api/integrations/whatsapp/openai-status
+ * Indica se esta instância da API (Lambda) carregou OPENAI_API_KEY — usado pela UI e para checagem operacional.
+ * Não expõe segredos.
+ */
+whatsappRouter.get("/openai-status", async (_req: Request, res: Response): Promise<void> => {
+  const key = config.openaiApiKey;
+  res.json({ configured: typeof key === "string" && key.trim().length > 0 });
+});
+
 /** GET /api/integrations/whatsapp/ai-prompt/compiled — prompt compilado em execução (read-only, sem segredos) */
 whatsappRouter.get("/ai-prompt/compiled", async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1778,6 +1788,10 @@ const simulateBody = z.object({
 /** POST /api/integrations/whatsapp/ai-simulate — simula chat com perfil rascunho (sandbox) */
 whatsappRouter.post("/ai-simulate", async (req: Request, res: Response): Promise<void> => {
   try {
+    if (config.nativeAiDisabled) {
+      res.status(403).json({ error: "Agente nativo desativado neste ambiente." });
+      return;
+    }
     const barbershopId = getBarbershopId(req);
     const parsed = simulateBody.safeParse(req.body);
     if (!parsed.success) {
@@ -1856,6 +1870,10 @@ const simulateSuiteBody = z.object({
 /** POST /api/integrations/whatsapp/ai-simulate-suite — roda cenários e retorna pass/fail por cenário */
 whatsappRouter.post("/ai-simulate-suite", async (req: Request, res: Response): Promise<void> => {
   try {
+    if (config.nativeAiDisabled) {
+      res.status(403).json({ error: "Agente nativo desativado neste ambiente." });
+      return;
+    }
     const barbershopId = getBarbershopId(req);
     const parsed = simulateSuiteBody.safeParse(req.body);
     if (!parsed.success) {

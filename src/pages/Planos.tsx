@@ -36,6 +36,15 @@ export default function Planos() {
     onError: (e) => toastError("Erro ao desativar", undefined, e instanceof Error ? e.message : String(e)),
   });
 
+  const reactivateMutation = useMutation({
+    mutationFn: (id: string) => plansApi.update(id, { is_active: true }),
+    onSuccess: () => {
+      toastSuccess("Plano reativado.");
+      void queryClient.invalidateQueries({ queryKey: ["plans"] });
+    },
+    onError: (e) => toastError("Erro ao reativar", undefined, e instanceof Error ? e.message : String(e)),
+  });
+
   const activePlans = plans.filter((p) => p.is_active);
   const inactivePlans = plans.filter((p) => !p.is_active);
   const activeSubscriptions = subscriptions.filter((s) => s.status === "active");
@@ -122,6 +131,8 @@ export default function Planos() {
                         plan={plan}
                         onEdit={handleEdit}
                         onDeactivate={setDeactivateTarget}
+                        onReactivate={(p) => reactivateMutation.mutate(p.id)}
+                        reactivatePending={reactivateMutation.isPending}
                       />
                     ))}
                   </div>

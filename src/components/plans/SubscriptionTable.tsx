@@ -15,11 +15,20 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Ban, History, Loader2 } from "lucide-react";
-import { plansApi, type PlanSubscription, type PlanCharge } from "@/lib/api";
+import { Ban, History, Link2, Loader2 } from "lucide-react";
+import { plansApi, clientsApi, type PlanSubscription, type PlanCharge } from "@/lib/api";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { ConfirmDialog } from "@/components/shared";
 
@@ -112,6 +121,40 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
   const [cancelTarget, setCancelTarget] = useState<PlanSubscription | null>(null);
   const [chargesTarget, setChargesTarget] = useState<string | null>(null);
   const [chargesOpen, setChargesOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkClientId, setLinkClientId] = useState("");
+  const [linkPlanId, setLinkPlanId] = useState("");
+
+  const { data: clientsList = [] } = useQuery({
+    queryKey: ["clients", "subscription-link"],
+    queryFn: () => clientsApi.list(),
+    enabled: linkOpen,
+  });
+
+  const { data: plansList = [] } = useQuery({
+    queryKey: ["plans", "subscription-link"],
+    queryFn: () => plansApi.list(),
+    enabled: linkOpen,
+  });
+
+  const activePlans = plansList.filter((p) => p.is_active);
+
+  const createSubscriptionMutation = useMutation({
+    mutationFn: () =>
+      plansApi.subscriptions.create({
+        client_id: linkClientId,
+        plan_id: linkPlanId,
+      }),
+    onSuccess: () => {
+      toastSuccess("Assinatura vinculada ao cliente.");
+      setLinkOpen(false);
+      setLinkClientId("");
+      setLinkPlanId("");
+      void queryClient.invalidateQueries({ queryKey: ["plan-subscriptions"] });
+    },
+    onError: (e) =>
+      toastError("Não foi possível vincular", e instanceof Error ? e : undefined),
+  });
 
   const cancelMutation = useMutation({
     mutationFn: (id: string) => plansApi.subscriptions.cancel(id),
@@ -130,16 +173,81 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
     );
   }
 
-  if (subscriptions.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground py-6 text-center">
-        Nenhuma assinatura registrada ainda.
-      </p>
-    );
-  }
-
   return (
     <>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <p className="text-sm text-muted-foreground">
+          Vincule um plano ativo a um cliente para gerar cobranças recorrentes (base para automações e WhatsApp).
+        </p>
+        <Button type="button" variant="outline" size="sm" className="shrink-0 gap-2" onClick={() => setLinkOpen(true)}>
+          <Link2 className="h-4 w-4" />
+          Vincular assinatura
+        </Button>
+      </div>
+
+      <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Vincular plano ao cliente</DialogTitle>
+            <DialogDescription>
+              Escolha um cliente e um plano ativo. A primeira cobrança PIX será agendada conforme a regra do backend.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="sub-client">Cliente</Label>
+              <Select value={linkClientId || undefined} onValueChange={setLinkClientId}>
+                <SelectTrigger id="sub-client">
+                  <SelectValue placeholder="Selecione o cliente" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientsList.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name} · {c.phone}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sub-plan">Plano ativo</Label>
+              <Select value={linkPlanId || undefined} onValueChange={setLinkPlanId}>
+                <SelectTrigger id="sub-plan">
+                  <SelectValue placeholder="Selecione o plano" />
+                </SelectTrigger>
+                <SelectContent>
+                  {activePlans.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name} — R$ {Number(p.price).toFixed(2)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              type="button"
+              className="w-full"
+              disabled={!linkClientId || !linkPlanId || createSubscriptionMutation.isPending}
+              onClick={() => createSubscriptionMutation.mutate()}
+            >
+              {createSubscriptionMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Salvando…
+                </>
+              ) : (
+                "Confirmar vínculo"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {subscriptions.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-6 text-center border rounded-md border-dashed">
+          Nenhuma assinatura registrada ainda. Use &quot;Vincular assinatura&quot; acima.
+        </p>
+      ) : (
       <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
@@ -204,6 +312,7 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
           </TableBody>
         </Table>
       </div>
+      )}
 
       <ConfirmDialog
         open={Boolean(cancelTarget)}

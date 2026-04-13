@@ -78,7 +78,7 @@ import { AgentCustomRulesStep } from "./AgentCustomRulesStep";
 import { AgentPreviewChatStep } from "./AgentPreviewChatStep";
 import { LoadingState } from "@/components/LoadingState";
 import { toastSuccess, toastError } from "@/lib/toast-helpers";
-import { EntityFormDialog } from "@/components/shared";
+import { EntityFormDialog, ConfirmDialog } from "@/components/shared";
 import {
   Form,
   FormControl,
@@ -657,6 +657,8 @@ export type WhatsAppSetupStepperProps = {
   openDiagnosticFromInbox?: boolean;
   /** When false, internal queries are disabled. Default true for page use. */
   enabled?: boolean;
+  /** Step ids to hide (e.g. brain, preview, notifications when VITE_NATIVE_AI_UI=false). */
+  hiddenStepIds?: readonly string[];
 };
 
 export function WhatsAppSetupStepper({
@@ -671,11 +673,14 @@ export function WhatsAppSetupStepper({
   onValueChange,
   openDiagnosticFromInbox = false,
   enabled = true,
+  hiddenStepIds = [],
 }: WhatsAppSetupStepperProps) {
   const queryClient = useQueryClient();
   const [internalTab, setInternalTab] = useState<string>("connect");
   const activeTab = controlledValue ?? internalTab;
   const setActiveTab = onValueChange ?? setInternalTab;
+  const hiddenSet = new Set(hiddenStepIds);
+  const visibleTabs = TAB_CONFIG.filter((t) => !hiddenSet.has(t.id));
 
   const [draftProfile, setDraftProfile] = useState<
     AgentProfile | Record<string, unknown>
@@ -686,14 +691,22 @@ export function WhatsAppSetupStepper({
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [closureDeleteConfirmId, setClosureDeleteConfirmId] = useState<string | null>(null);
+  const [knowledgeDeleteConfirmId, setKnowledgeDeleteConfirmId] = useState<string | null>(null);
   const diagnosticApplyRef = useRef(false);
   const { profile } = useAuth();
   const isPremium = profile?.billing_plan === "premium";
 
-  const { data: aiSettings, isLoading: loadingSettings } = useQuery({
+  const {
+    data: aiSettings,
+    isLoading: loadingSettings,
+    isError: aiSettingsError,
+    error: aiSettingsErrorObj,
+  } = useQuery({
     queryKey: ["integrations", "whatsapp", "ai-settings"],
     queryFn: () => whatsappApi.getAiSettings(),
     enabled,
+    retry: 1,
   });
 
   const { data: versionsData } = useQuery({
@@ -1048,7 +1061,7 @@ export function WhatsAppSetupStepper({
             aria-label="Abas de configuração WhatsApp"
           >
             <div className="flex overflow-x-auto scrollbar-thin scroll-smooth pb-px -mb-px">
-              {TAB_CONFIG.map((tab) => {
+              {visibleTabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
                 return (
@@ -1327,10 +1340,7 @@ export function WhatsAppSetupStepper({
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 text-destructive hover:text-destructive"
-                                onClick={() => {
-                                  if (window.confirm("Remover esta exceção?"))
-                                    deleteClosureMutation.mutate(c.id);
-                                }}
+                                onClick={() => setClosureDeleteConfirmId(c.id)}
                                 aria-label="Excluir"
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -1533,6 +1543,29 @@ export function WhatsAppSetupStepper({
           {loadingSettings ? (
             <div className="min-h-[280px] flex items-center justify-center">
               <LoadingState />
+            </div>
+          ) : aiSettingsError ? (
+            <div className="min-h-[240px] flex flex-col items-center justify-center gap-4 px-4 py-8 text-center">
+              <Alert variant="destructive" className="max-w-md text-left">
+                <AlertTitle>Não foi possível carregar o Cérebro</AlertTitle>
+                <AlertDescription>
+                  {aiSettingsErrorObj instanceof Error
+                    ? aiSettingsErrorObj.message
+                    : "Erro ao buscar configurações da IA. Verifique sua conexão e tente novamente."}
+                </AlertDescription>
+              </Alert>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  queryClient.invalidateQueries({
+                    queryKey: ["integrations", "whatsapp", "ai-settings"],
+                  })
+                }
+              >
+                Tentar novamente
+              </Button>
             </div>
           ) : (
             <div className="space-y-8">
@@ -1920,11 +1953,7 @@ export function WhatsAppSetupStepper({
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-                                onClick={() => {
-                                  if (window.confirm("Remover este documento da base de conhecimento?")) {
-                                    deleteKnowledgeDocumentMutation.mutate(doc.id);
-                                  }
-                                }}
+                                onClick={() => setKnowledgeDeleteConfirmId(doc.id)}
                                 disabled={deleteKnowledgeDocumentMutation.isPending}
                                 aria-label="Excluir documento"
                               >
@@ -2255,6 +2284,30 @@ export function WhatsAppSetupStepper({
           </div>
         </footer>
       )}
+      <ConfirmDialog
+        open={Boolean(closureDeleteConfirmId)}
+        onOpenChange={(o) => !o && setClosureDeleteConfirmId(null)}
+        title="Remover exceção"
+        description="Remover esta exceção de funcionamento?"
+        onConfirm={() => {
+          if (closureDeleteConfirmId) deleteClosureMutation.mutate(closureDeleteConfirmId);
+          setClosureDeleteConfirmId(null);
+        }}
+        variant="destructive"
+      />
+      <ConfirmDialog
+        open={Boolean(knowledgeDeleteConfirmId)}
+        onOpenChange={(o) => !o && setKnowledgeDeleteConfirmId(null)}
+        title="Remover documento"
+        description="Remover este documento da base de conhecimento?"
+        onConfirm={() => {
+          if (knowledgeDeleteConfirmId) {
+            deleteKnowledgeDocumentMutation.mutate(knowledgeDeleteConfirmId);
+          }
+          setKnowledgeDeleteConfirmId(null);
+        }}
+        variant="destructive"
+      />
     </Tabs>
   );
 }

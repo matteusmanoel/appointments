@@ -30,14 +30,14 @@ const initialState: AuthState = { profile: null, loading: true, error: null, swi
 
 const AuthContext = createContext<AuthState & {
   login: (email: string, password: string) => Promise<void>;
-  loginWithToken: (token: string) => Promise<void>;
+  loginWithToken: (token: string, opts?: { skipRefetch?: boolean }) => Promise<void>;
   logout: () => void;
   refetchProfile: () => void;
   switchBarbershop: (barbershopId: string) => Promise<void>;
   setSelectedScope: (scope: "__all__" | null) => void;
   switchingBarbershop: boolean;
   clearSwitchError: () => void;
-}>(null as unknown as AuthState & { login: () => Promise<void>; loginWithToken: () => Promise<void>; logout: () => void; refetchProfile: () => void; switchBarbershop: (id: string) => Promise<void>; setSelectedScope: (s: "__all__" | null) => void; switchingBarbershop: boolean; clearSwitchError: () => void });
+}>(null as unknown as AuthState & { login: () => Promise<void>; loginWithToken: (t: string, o?: { skipRefetch?: boolean }) => Promise<void>; logout: () => void; refetchProfile: () => void; switchBarbershop: (id: string) => Promise<void>; setSelectedScope: (s: "__all__" | null) => void; switchingBarbershop: boolean; clearSwitchError: () => void });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>(initialState);
@@ -125,7 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const loginWithToken = useCallback(async (token: string) => {
+  const loginWithToken = useCallback(async (token: string, opts?: { skipRefetch?: boolean }) => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
       setToken(token);
@@ -133,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem("profile", JSON.stringify(profile));
       setState((s) => ({ ...s, profile, loading: false, error: null }));
       restoredBarbershopRef.current = false;
-      await refetchProfile(true);
+      if (!opts?.skipRefetch) await refetchProfile(true);
     } catch (e) {
       clearToken();
       localStorage.removeItem("profile");

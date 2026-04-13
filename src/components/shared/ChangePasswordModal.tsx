@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { authApi } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -25,7 +26,6 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,11 +53,8 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      // Mark tour trigger BEFORE refetch so the MainLayout useEffect sees it when profile updates
       markSetupTourTrigger();
-      // Close modal immediately without waiting for profile cache to propagate
-      setDone(true);
-      refetchProfile();
+      await refetchProfile();
     } catch (e) {
       toastError(e instanceof Error ? e.message : "Erro ao alterar senha");
     } finally {
@@ -66,7 +63,7 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
   };
 
   return (
-    <Dialog open={open && !done}>
+    <Dialog open={open}>
       <DialogContent
         className="sm:max-w-md"
         onPointerDownOutside={(e) => e.preventDefault()}
@@ -82,9 +79,8 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
           {!profile?.must_change_password && (
             <div className="space-y-2">
               <Label htmlFor="current-password">Senha atual</Label>
-              <Input
+              <PasswordInput
                 id="current-password"
-                type="password"
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
@@ -94,9 +90,8 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
           )}
           <div className="space-y-2">
             <Label htmlFor="new-password">Nova senha</Label>
-            <Input
+            <PasswordInput
               id="new-password"
-              type="password"
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
@@ -106,9 +101,8 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirm-password">Confirmar nova senha</Label>
-            <Input
+            <PasswordInput
               id="confirm-password"
-              type="password"
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}

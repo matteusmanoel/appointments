@@ -101,10 +101,10 @@ export function UpgradeGate({
   const cardGrid = (
     <div
       className={cn(
-        "grid gap-3 sm:gap-4 w-full",
+        "grid gap-4 sm:gap-5 w-full",
         isCompact
           ? "grid-cols-1 sm:grid-cols-3"
-          : "grid-cols-1 md:grid-cols-3 max-w-4xl mx-auto"
+          : "grid-cols-1 md:grid-cols-3 max-w-5xl mx-auto"
       )}
     >
       {BILLING_PLANS.map((plan) => {
@@ -119,7 +119,7 @@ export function UpgradeGate({
               "flex flex-col transition-colors",
               isHighlight &&
                 "ring-2 ring-primary bg-primary/5 dark:bg-primary/10 border-primary/50",
-              isCompact ? "p-3 sm:p-4" : "p-4 sm:p-5"
+              isCompact ? "p-3 sm:p-4" : "p-5 sm:p-6 min-h-[320px]"
             )}
           >
             <CardHeader className="p-0 pb-2 sm:pb-3">
@@ -153,13 +153,13 @@ export function UpgradeGate({
               </p>
             </CardHeader>
             <CardContent className="p-0 flex-1 space-y-2">
-              <ul className="space-y-1.5">
+              <ul className="space-y-2 text-left">
                 {features.slice(0, isCompact ? 3 : 6).map((f, i) => {
                   const Icon = f.icon;
                   return (
                     <li
                       key={i}
-                      className="flex items-center gap-2 text-sm text-muted-foreground"
+                      className="flex items-start gap-2.5 text-sm text-muted-foreground text-left"
                     >
                       <Icon className="h-4 w-4 shrink-0 text-primary/70" />
                       <span>{f.text}</span>

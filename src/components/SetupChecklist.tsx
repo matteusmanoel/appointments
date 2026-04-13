@@ -69,7 +69,8 @@ export function SetupChecklist({
   const servicesDone = servicesCount >= 1;
   const barbersDone = barbersCount >= 1;
   const isPro = hasPro(profile);
-  const whatsappDone = !isPro || whatsappConnected;
+  /** Essential: WhatsApp IA é upgrade — nunca conta como "concluído" no checklist. */
+  const whatsappDone = isPro && whatsappConnected;
   const allDone = configDone && servicesDone && barbersDone && whatsappDone;
 
   if (allDone) return null;

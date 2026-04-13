@@ -30,6 +30,15 @@ for key in ARTIFACT_BUCKET DATABASE_URL JWT_SECRET; do
   fi
 done
 
+if [ "$STAGE" = "prod" ] && [ -z "${OPENAI_API_KEY:-}" ] && [ "${ALLOW_DEPLOY_WITHOUT_OPENAI:-}" != "1" ]; then
+  echo "ERROR: OPENAI_API_KEY is required for production (WhatsApp AI + aba Testar/Publicar + worker)."
+  echo "  Export OPENAI_API_KEY before deploy, or set ALLOW_DEPLOY_WITHOUT_OPENAI=1 to override (not recommended)."
+  exit 1
+fi
+if [ "$STAGE" = "prod" ] && [ -z "${UAZAPI_WEBHOOK_PUBLIC_URL:-}" ]; then
+  echo "WARN: UAZAPI_WEBHOOK_PUBLIC_URL is empty — inbound POST /api/webhooks/uazapi may not be set on Uazapi."
+fi
+
 CORS_ORIGIN="${CORS_ORIGIN:-*}"
 JWT_EXPIRES_IN="${JWT_EXPIRES_IN:-7d}"
 
@@ -83,6 +92,7 @@ EXTRA_PARAMS=""
 [ -n "${OPENAI_API_KEY:-}" ] && EXTRA_PARAMS="$EXTRA_PARAMS OpenAiApiKey=$OPENAI_API_KEY"
 [ -n "${N8N_EVENTS_WEBHOOK_URL:-}" ] && EXTRA_PARAMS="$EXTRA_PARAMS N8nEventsWebhookUrl=$N8N_EVENTS_WEBHOOK_URL"
 [ -n "${N8N_EVENTS_SECRET:-}" ] && EXTRA_PARAMS="$EXTRA_PARAMS N8nEventsSecret=$N8N_EVENTS_SECRET"
+[ -n "${NATIVE_AI_DISABLED:-}" ] && EXTRA_PARAMS="$EXTRA_PARAMS NativeAiDisabled=$NATIVE_AI_DISABLED"
 
 echo "Deploying CloudFormation stack: $STACK_NAME..."
 aws cloudformation deploy \

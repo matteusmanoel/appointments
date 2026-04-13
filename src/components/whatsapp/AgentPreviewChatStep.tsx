@@ -193,6 +193,12 @@ export function AgentPreviewChatStep({
     queryFn: () => whatsappApi.getAiHealth(),
   });
 
+  const { data: openaiStatus } = useQuery({
+    queryKey: ["integrations", "whatsapp", "openai-status"],
+    queryFn: () => whatsappApi.getOpenaiStatus(),
+    staleTime: 60_000,
+  });
+
   const runSimulate = async (extraMessages: ChatMessage[] = []) => {
     const all = extraMessages.length ? extraMessages : messages;
     if (all.length === 0) return;
@@ -371,6 +377,18 @@ export function AgentPreviewChatStep({
 
   return (
     <div className="flex flex-col h-full min-h-0 space-y-4">
+      {openaiStatus && !openaiStatus.configured && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>OpenAI não configurada neste servidor</AlertTitle>
+          <AlertDescription>
+            A API em produção precisa da variável <code className="text-xs bg-muted px-1 rounded">OPENAI_API_KEY</code> na
+            Lambda (parâmetro <code className="text-xs bg-muted px-1 rounded">OpenAiApiKey</code> no deploy). Sem isso,
+            simulação, diagnóstico e respostas da IA não funcionam. O worker de IA usa a mesma chave na função{" "}
+            <code className="text-xs bg-muted px-1 rounded">navalhia-worker-ai-*</code>.
+          </AlertDescription>
+        </Alert>
+      )}
       {health?.regression_detected && (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />

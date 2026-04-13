@@ -43,6 +43,7 @@ import {
   LayoutGrid,
   Pencil,
   Search,
+  Users,
 } from "lucide-react";
 import {
   appointmentsApi,
@@ -549,8 +550,8 @@ export default function Agendamentos() {
           ? { barbershop_id: body.barbershop_id }
           : {}),
       }),
-    onSuccess: (data: { id: string }) => {
-      queryClient.invalidateQueries({ queryKey: ["clients"] });
+    onSuccess: async (data: { id: string }) => {
+      await queryClient.refetchQueries({ queryKey: ["clients"] });
       setCreateClientOpen(false);
       createClientForm.reset();
       form.setValue("client_id", data.id, { shouldDirty: true });
@@ -571,8 +572,8 @@ export default function Agendamentos() {
           ? { barbershop_id: body.barbershop_id }
           : {}),
       }),
-    onSuccess: (data: { id: string }) => {
-      queryClient.invalidateQueries({ queryKey: ["barbers"] });
+    onSuccess: async (data: { id: string }) => {
+      await queryClient.refetchQueries({ queryKey: ["barbers"] });
       setCreateBarberOpen(false);
       createBarberForm.reset();
       form.setValue("barber_id", data.id, { shouldDirty: true });
@@ -860,6 +861,7 @@ export default function Agendamentos() {
     const t = normalizeTime(time);
     return list.find(
       (apt) =>
+        apt.status !== "cancelled" &&
         normalizeTime(apt.scheduled_time) === t && apt.barber_id === barberId,
     ) as Appointment | undefined;
   };
@@ -874,6 +876,7 @@ export default function Agendamentos() {
       return (h ?? 0) * 60 + (m ?? 0);
     })();
     return list.some((apt) => {
+      if (apt.status === "cancelled" || apt.status === "no_show") return false;
       if (apt.barber_id !== barberId) return false;
       const [h, m] = String(apt.scheduled_time).slice(0, 5).split(":").map(Number);
       const startMins = (h ?? 0) * 60 + (m ?? 0);
@@ -1358,7 +1361,25 @@ export default function Agendamentos() {
                       />
                     </div>
                   )}
-                  {!isLoading && timeSlots.length > 0 && (
+                  {!isLoading && timeSlots.length > 0 && barbers.length === 0 && (
+                    <div className="stat-card flex flex-1 min-h-0 items-center justify-center p-8">
+                      <EmptyState
+                        icon={<Users className="h-12 w-12" strokeWidth={1.5} />}
+                        title="Cadastre um barbeiro para ver a grade"
+                        description="Os horários são organizados por profissional. Adicione pelo menos um barbeiro em Barbeiros para visualizar os slots e criar agendamentos na grade."
+                        action={
+                          <Button
+                            type="button"
+                            className="mt-2"
+                            onClick={() => navigate("/app/barbeiros")}
+                          >
+                            Ir para Barbeiros
+                          </Button>
+                        }
+                      />
+                    </div>
+                  )}
+                  {!isLoading && timeSlots.length > 0 && barbers.length > 0 && (
                     <div className="stat-card overflow-hidden flex-1 min-h-0 flex flex-col">
                       <div className="overflow-x-auto scrollbar-thin flex-1 min-h-0 flex flex-col">
                         <div

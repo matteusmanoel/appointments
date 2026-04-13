@@ -8,7 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { publicApi } from "@/lib/api";
 import { getTimeSlotsForDay } from "@/lib/slots";
-import { formatPhoneBR, formatPhoneDisplay, parsePhoneBR } from "@/lib/input-masks";
+import {
+  formatPhoneBR,
+  formatPhoneDisplay,
+  parsePhoneBR,
+} from "@/lib/input-masks";
 import { DatePicker } from "@/components/ui/date-picker";
 import {
   Tooltip,
@@ -66,6 +70,8 @@ const STEPS = ["Serviço", "Barbeiro", "Data e horário", "Seus dados"];
 const BOOKING_CARD_MIN_HEIGHT = "min-h-[520px]";
 const GENERIC_WHATSAPP_TEXT =
   "Olá, gostaria de agendar um horario. Quais são os serviços disponíveis?";
+const GENERIC_WHATSAPP_TEXT_CONFIRMATION =
+  "Olá, gostaria de confirmar meu agendamento.";
 
 export default function PublicBooking() {
   const { slug } = useParams<{ slug: string }>();
@@ -210,7 +216,10 @@ export default function PublicBooking() {
   }
 
   if (success) {
-    const whatsappUrl = getWhatsAppUrl(barbershop.phone, GENERIC_WHATSAPP_TEXT);
+    const whatsappUrl = getWhatsAppUrl(
+      barbershop.phone,
+      GENERIC_WHATSAPP_TEXT_CONFIRMATION,
+    );
     return (
       <div className="min-h-screen bg-muted/30 flex items-center justify-center p-4">
         <div className="stat-card max-w-md w-full text-center">
@@ -236,11 +245,7 @@ export default function PublicBooking() {
                 className="w-full bg-green-600 hover:bg-green-700 text-white"
                 asChild
               >
-                <a
-                  href={whatsappUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <a href={whatsappUrl} target="_blank" rel="noopener noreferrer">
                   <MessageCircle className="w-4 h-4 mr-2" />
                   Retornar para o WhatsApp
                 </a>

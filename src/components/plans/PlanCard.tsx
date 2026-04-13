@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, RotateCcw } from "lucide-react";
 import type { BarbershopPlan } from "@/lib/api";
 
 const CYCLE_LABELS: Record<string, string> = {
@@ -14,9 +14,11 @@ interface PlanCardProps {
   plan: BarbershopPlan;
   onEdit: (plan: BarbershopPlan) => void;
   onDeactivate: (plan: BarbershopPlan) => void;
+  onReactivate?: (plan: BarbershopPlan) => void;
+  reactivatePending?: boolean;
 }
 
-export function PlanCard({ plan, onEdit, onDeactivate }: PlanCardProps) {
+export function PlanCard({ plan, onEdit, onDeactivate, onReactivate, reactivatePending }: PlanCardProps) {
   const price = Number(plan.price).toFixed(2).replace(".", ",");
   const cycle = CYCLE_LABELS[plan.billing_cycle] ?? plan.billing_cycle;
 
@@ -62,6 +64,18 @@ export function PlanCard({ plan, onEdit, onDeactivate }: PlanCardProps) {
           <Button size="sm" variant="ghost" onClick={() => onDeactivate(plan)} className="gap-1.5 text-destructive hover:text-destructive hover:bg-destructive/10">
             <Trash2 className="h-3.5 w-3.5" />
             Desativar
+          </Button>
+        )}
+        {!plan.is_active && onReactivate && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => onReactivate(plan)}
+            disabled={reactivatePending}
+            className="gap-1.5"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Reativar
           </Button>
         )}
       </CardFooter>

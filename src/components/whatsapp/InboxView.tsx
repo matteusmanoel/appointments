@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { IncidentReportModal, mergeIncidentPatch } from "./IncidentReportModal";
+import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 
 function normalizeDigits(v: string): string {
   return (v || "").replace(/\D/g, "");
@@ -591,8 +592,11 @@ export function InboxView({ isActive, whatsappConnected }: InboxViewProps) {
     mutationFn: (conversationId: string) =>
       whatsappApi.syncConversationMessages(conversationId),
     onSuccess: (data, conversationId) => {
-      if (data.inserted > 0)
+      if (data.inserted > 0) {
         toastSuccess(`${data.inserted} mensagem(ns) sincronizada(s).`);
+      } else {
+        toastSuccess("Sincronização concluída", "Nenhuma mensagem nova encontrada no histórico recente.");
+      }
       queryClient.invalidateQueries({
         queryKey: [
           "integrations",
@@ -1292,7 +1296,8 @@ export function InboxView({ isActive, whatsappConnected }: InboxViewProps) {
                   </Button>
                 )
               )}
-              {selectedConversationId &&
+              {nativeAiUiEnabled &&
+                selectedConversationId &&
                 (messagesQuery.data?.messages?.length ?? 0) > 0 && (
                   <Button
                     type="button"

@@ -684,6 +684,8 @@ export const whatsappApi = {
       };
       section_lengths: Record<string, number>;
     }>("/api/integrations/whatsapp/ai-prompt/compiled"),
+  /** Indica se a Lambda da API tem OPENAI_API_KEY (sandbox/diagnóstico usam esta instância). */
+  getOpenaiStatus: () => api<{ configured: boolean }>("/api/integrations/whatsapp/openai-status"),
   rollbackAiSettings: (versionId: string) =>
     api<{ version_id: string; status: string }>("/api/integrations/whatsapp/ai-settings/rollback", {
       method: "POST",

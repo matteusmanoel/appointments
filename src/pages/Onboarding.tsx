@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ export default function Onboarding() {
   const [error, setError] = useState<string | null>(null);
   const [recoveryEmail, setRecoveryEmail] = useState("");
   const [recoverySending, setRecoverySending] = useState(false);
+  const autoLoginStarted = useRef(false);
 
   const loadSession = useCallback(() => {
     if (!sessionId) {
@@ -92,14 +93,17 @@ export default function Onboarding() {
     if (entering) return;
     if (state !== "ready") return;
     if (!data?.token) return;
+    if (autoLoginStarted.current) return;
+    autoLoginStarted.current = true;
     let cancelled = false;
     setEntering(true);
     (async () => {
       try {
-        await loginWithToken(data.token!);
+        await loginWithToken(data.token!, { skipRefetch: true });
         if (!cancelled) navigate("/app", { replace: true });
       } catch {
         if (!cancelled) {
+          autoLoginStarted.current = false;
           toastError("Não foi possível entrar automaticamente. Abra o painel e use 'Esqueci minha senha'.");
           setEntering(false);
         }
@@ -120,9 +124,14 @@ export default function Onboarding() {
     setRecoverySending(true);
     try {
       await authApi.forgotPassword(trimmed);
-      toastSuccess("Se existir uma conta para este e-mail, enviamos uma senha temporária. Confira a caixa de entrada e o spam.");
-    } catch {
-      toastError("Não foi possível enviar. Tente novamente em alguns minutos.");
+      toastSuccess("Enviamos uma senha temporária. Confira a caixa de entrada e o spam.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Nenhuma conta encontrada")) {
+        toastError("E-mail não cadastrado", undefined, msg || "Não há conta cadastrada com este e-mail.");
+        return;
+      }
+      toastError("Não foi possível enviar. Tente novamente em alguns minutos.", err);
     } finally {
       setRecoverySending(false);
     }
@@ -282,7 +291,7 @@ export default function Onboarding() {
               onClick={async () => {
                 setEntering(true);
                 try {
-                  await loginWithToken(data.token!);
+                  await loginWithToken(data.token!, { skipRefetch: true });
                   navigate("/app", { replace: true });
                 } catch (e) {
                   toastError("Não foi possível entrar automaticamente. Abra o painel e use 'Esqueci minha senha'.");

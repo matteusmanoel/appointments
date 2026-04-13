@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Bot, CheckCircle2, AlertTriangle, XCircle } from "lucide-react";
 import { whatsappApi } from "@/lib/api";
+import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Link } from "react-router-dom";
@@ -120,7 +121,11 @@ export function AiHealthCard() {
             </Tooltip>
           )}
           <Link
-            to="/app/integracoes?step=preview"
+            to={
+              nativeAiUiEnabled
+                ? "/app/integracoes?step=preview"
+                : "/app/integracoes?step=connect"
+            }
             className="text-xs text-primary hover:underline mt-2 block"
           >
             Ver detalhes →

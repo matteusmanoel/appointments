@@ -43,7 +43,7 @@ export function TopServices({ range }: TopServicesProps) {
     return "Mês atual (concluídos)";
   }, [range]);
   const {
-    data: rows = [],
+    data: rawRows,
     isLoading,
     error,
   } = useQuery({
@@ -52,6 +52,7 @@ export function TopServices({ range }: TopServicesProps) {
       reportsApi.topServices({ from: fromStr, to: toStr, limit: 5 }),
   });
 
+  const rows = Array.isArray(rawRows) ? rawRows : [];
   const data = rows.map((r) => ({
     name: r.service_name,
     count: r.count,

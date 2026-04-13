@@ -167,7 +167,7 @@ authRouter.post("/forgot-password", forgotPasswordRateLimit, async (req: Request
     [email]
   );
   if (r.rows.length === 0) {
-    res.status(204).send();
+    res.status(404).json({ error: "Nenhuma conta encontrada para este e-mail." });
     return;
   }
   const row = r.rows[0];

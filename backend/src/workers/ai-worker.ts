@@ -194,6 +194,9 @@ async function markJobFailed(jobId: string, errorMessage: string, attempts: numb
 }
 
 async function isAiEnabled(barbershopId: string): Promise<boolean> {
+  if (config.nativeAiDisabled) {
+    return false;
+  }
   const r = await pool.query<{ enabled: boolean }>(
     `SELECT enabled FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
     [barbershopId]

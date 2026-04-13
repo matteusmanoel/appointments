@@ -35,6 +35,8 @@ export const config = {
   n8nChatTriggerUrl: optional("N8N_CHAT_TRIGGER_URL", ""),
   // AI agent (OpenAI)
   openaiApiKey: optionalNull("OPENAI_API_KEY"),
+  /** When true, ai-worker never calls runAgent (deploy sem agente nativo; n8n/tools seguem ativos). */
+  nativeAiDisabled: optional("NATIVE_AI_DISABLED", "").toLowerCase() === "true",
   aiWorkerConcurrency: parseInt(optional("AI_WORKER_CONCURRENCY", "5"), 10),
   aiJobMaxAttempts: parseInt(optional("AI_JOB_MAX_ATTEMPTS", "5"), 10),
   aiJobBackoffBaseSeconds: parseInt(optional("AI_JOB_BACKOFF_BASE_SECONDS", "2"), 10),

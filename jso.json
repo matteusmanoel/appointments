@@ -1,0 +1,517 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NavalhIA — API local via ngrok\n\n**Antes de rodar**\n1. Suba o backend (Docker) e aponte o ngrok para a porta da API (ex.: `ngrok http 3003`).\n2. **Localizar e substituir** em todo o workflow a string `https://api.navalhia.com.br` pela URL HTTPS do ngrok (origem **sem** barra final).\n3. O header `X-API-Key` deve ser igual ao `TOOLS_API_KEY` do `.env` do backend (o padrão do repo está em `.env.example`).\n4. Banco com seed; `BARBERSHOP_ID` pode ficar vazio — a API usa a primeira barbearia.\n5. Opcional no ngrok free: header `ngrok-skip-browser-warning` já está nos nós HTTP.\n\n**Smoke test:** execute *Smoke test — API local* e confira 200 em Health e nos GETs; 201 no agendamento se houver serviço/barbeiro.\n\n**MCP:** ative o workflow e use o endpoint MCP (path `mcp-barbeiro-local`) num agente com MCP Client.",
+        "height": 560,
+        "width": 524,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2064, 480],
+      "id": "b12aa27e-d567-417b-80d5-3c05c7366d26",
+      "name": "Instruções"
+    },
+    {
+      "parameters": {
+        "path": "439740fa-35ad-4989-9b8f-1d8b864099cb"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [2848, 688],
+      "id": "3965fd0d-7f66-4af1-ab71-99f9cb27833c",
+      "name": "MCP Server Trigger",
+      "webhookId": "439740fa-35ad-4989-9b8f-1d8b864099cb"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar serviços da NavalhIA (nome, valor, duração, descrição).",
+        "url": "https://api.navalhia.com.br/api/tools/list_services",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [2656, 912],
+      "id": "e2f669a6-4628-43c8-b829-0b5180ac3101",
+      "name": "listar serviços da NavalhIA"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar barbeiros disponíveis.",
+        "url": "https://api.navalhia.com.br/api/tools/list_barbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [2784, 912],
+      "id": "10260383-ecf2-40d4-bd82-a5af1bef20e6",
+      "name": "Buscar entidades Barber"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista agendamentos por data (horários ocupados).",
+        "url": "https://api.navalhia.com.br/api/tools/list_appointments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "={{ $fromAI('parameters0_Value', 'Data no formato yyyy-MM-dd', 'string') }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [2912, 912],
+      "id": "36daa464-f113-4ead-bd4a-14b6695c88ae",
+      "name": "Lista todos os agendamentos"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Buscar ou criar cliente por telefone. Retorna id, name, phone.",
+        "method": "POST",
+        "url": "https://api.navalhia.com.br/api/tools/upsert_client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phone",
+              "value": "={{ $fromAI('parameters0_Value', 'Telefone do cliente', 'string') }}"
+            },
+            {
+              "name": "name",
+              "value": "={{ $fromAI('parameters1_Value', 'Nome do cliente', 'string') }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ $fromAI('parameters2_Value', 'Observações', 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [3040, 912],
+      "id": "46d20934-4170-4a3c-8dc7-0c731068e17b",
+      "name": "Cria cadastro do cliente"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Cria um novo agendamento. Confirme dados antes de chamar.",
+        "method": "POST",
+        "url": "https://api.navalhia.com.br/api/tools/create_appointment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $fromAI('parameters0_Value', 'ID do cliente (UUID)', 'string') }}"
+            },
+            {
+              "name": "barber_id",
+              "value": "={{ $fromAI('parameters1_Value', 'ID do barbeiro (UUID)', 'string') }}"
+            },
+            {
+              "name": "service_id",
+              "value": "={{ $fromAI('parameters2_Value', 'ID do serviço (UUID)', 'string') }}"
+            },
+            {
+              "name": "date",
+              "value": "={{ $fromAI('parameters3_Value', 'Data yyyy-MM-dd', 'string') }}"
+            },
+            {
+              "name": "time",
+              "value": "={{ $fromAI('parameters4_Value', 'Horário HH:mm', 'string') }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ $fromAI('parameters5_Value', 'Observações', 'string') }}"
+            },
+            {
+              "name": "client_phone",
+              "value": "={{ $fromAI('parameters6_Value', 'Telefone do cliente', 'string') }}"
+            },
+            {
+              "name": "client_name",
+              "value": "={{ $fromAI('parameters7_Value', 'Nome do cliente', 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [3168, 912],
+      "id": "868a88d7-c593-4e25-ade3-62711672e283",
+      "name": "Cria um novo agendamento"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [2064, 1136],
+      "id": "96a3f0f6-0eb8-40b9-8529-8d5f7f8060c3",
+      "name": "Smoke test — API local"
+    },
+    {
+      "parameters": {
+        "url": "https://api.navalhia.com.br/health",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2288, 1136],
+      "id": "25a8f609-8bf3-4d06-a57a-6d7d2a18e3b2",
+      "name": "Smoke 01 Health"
+    },
+    {
+      "parameters": {
+        "url": "https://api.navalhia.com.br/api/tools/list_services",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2512, 1136],
+      "id": "34e5a533-37bc-46d6-a1c1-d3e308638d7a",
+      "name": "Smoke 02 List Services"
+    },
+    {
+      "parameters": {
+        "url": "https://api.navalhia.com.br/api/tools/list_barbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2736, 1136],
+      "id": "2bab5b68-87a9-4d2c-89e8-ac09c09ce3a0",
+      "name": "Smoke 03 List Barbers"
+    },
+    {
+      "parameters": {
+        "url": "https://api.navalhia.com.br/api/tools/list_appointments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "2026-04-20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2960, 1136],
+      "id": "5d0e4f48-f7fd-40c0-8d40-f416304c336a",
+      "name": "Smoke 04 List Appointments"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.navalhia.com.br/api/tools/upsert_client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"phone\": \"5511999999001\", \"name\": \"Cliente Smoke n8n\", \"notes\": \"teste import workflow\" } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3184, 1136],
+      "id": "e77bd26e-1ff6-4bfc-a0fb-7be0c934c8ac",
+      "name": "Smoke 05 Upsert Client"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.navalhia.com.br/api/tools/create_appointment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_2e3ecbd8-4261-48e2-9a52-5a72e0007151_0jr0vmn7"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  client_id: $('Smoke 05 Upsert Client').first().json.id,\n  barber_id: $('Smoke 03 List Barbers').first().json[0].id,\n  service_id: $('Smoke 02 List Services').first().json[0].id,\n  date: '2026-04-20',\n  time: '15:00',\n  notes: 'Smoke test n8n',\n  client_phone: '5511999999001',\n  client_name: 'Cliente Smoke n8n'\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3408, 1136],
+      "id": "62e967c5-288e-491f-a325-873bd125ae67",
+      "name": "Smoke 06 Create Appointment"
+    }
+  ],
+  "connections": {
+    "listar serviços da NavalhIA": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar entidades Barber": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lista todos os agendamentos": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cria cadastro do cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cria um novo agendamento": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke test — API local": {
+      "main": [
+        [
+          {
+            "node": "Smoke 01 Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 01 Health": {
+      "main": [
+        [
+          {
+            "node": "Smoke 02 List Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 02 List Services": {
+      "main": [
+        [
+          {
+            "node": "Smoke 03 List Barbers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 03 List Barbers": {
+      "main": [
+        [
+          {
+            "node": "Smoke 04 List Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 04 List Appointments": {
+      "main": [
+        [
+          {
+            "node": "Smoke 05 Upsert Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 05 Upsert Client": {
+      "main": [
+        [
+          {
+            "node": "Smoke 06 Create Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "b36bde97b912e3c6cc897410d5ff9a4c001765ff6130e3a20e5dcb1343f42126"
+  }
+}

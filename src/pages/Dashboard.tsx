@@ -38,6 +38,7 @@ import {
 import { getTimeSlotsForDay } from "@/lib/slots";
 import { useAuth } from "@/contexts/AuthContext";
 import { SetupChecklist } from "@/components/SetupChecklist";
+import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -273,7 +274,7 @@ export default function Dashboard() {
           icon={<TrendingUp className="w-6 h-6" />}
           variant="accent"
         />
-        {whatsapp?.connected && <AiHealthCard />}
+        {whatsapp?.connected && nativeAiUiEnabled && <AiHealthCard />}
         {mvpMetrics && (
           <>
             <StatCard

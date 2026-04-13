@@ -233,6 +233,7 @@ export default function Configuracoes() {
   const [closureFormOpen, setClosureFormOpen] = useState(false);
   const [editingClosure, setEditingClosure] =
     useState<BarbershopClosure | null>(null);
+  const [closureDeleteId, setClosureDeleteId] = useState<string | null>(null);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
   const [hoursState, setHoursState] = useState<BusinessHours>(
     getDefaultBusinessHours(),
@@ -270,6 +271,20 @@ export default function Configuracoes() {
   useEffect(() => {
     if (searchParams.get("open") === "booking") {
       setBookingOpen(true);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("open");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("open") === "hours") {
+      setHoursOpen(true);
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -782,7 +797,10 @@ export default function Configuracoes() {
                 section.id === "whatsapp" && !canUseWhatsAppAndNotifications;
               const handleClick =
                 section.id === "hours"
-                  ? () => navigate("/app/integracoes?step=hours")
+                  ? () =>
+                      canUseWhatsAppAndNotifications
+                        ? navigate("/app/integracoes?step=hours")
+                        : setHoursOpen(true)
                   : section.id === "booking"
                     ? openBooking
                     : section.id === "security"
@@ -1295,17 +1313,19 @@ export default function Configuracoes() {
         }
       >
         <div className="space-y-0 min-w-0">
-          <p className="text-sm text-muted-foreground mb-4">
-            Você também pode configurar horários e exceções na página{" "}
-            <Link
-              to="/app/integracoes?step=hours"
-              className="text-primary font-medium underline underline-offset-2 hover:no-underline"
-              onClick={() => setHoursOpen(false)}
-            >
-              Integrações
-            </Link>
-            .
-          </p>
+          {canUseWhatsAppAndNotifications && (
+            <p className="text-sm text-muted-foreground mb-4">
+              Você também pode configurar horários e exceções na página{" "}
+              <Link
+                to="/app/integracoes?step=hours"
+                className="text-primary font-medium underline underline-offset-2 hover:no-underline"
+                onClick={() => setHoursOpen(false)}
+              >
+                Integrações
+              </Link>
+              .
+            </p>
+          )}
           {DAY_LABELS.map(({ key, label }) => {
             const day = hoursState[key];
             const isOpen =
@@ -1424,10 +1444,7 @@ export default function Configuracoes() {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => {
-                        if (window.confirm("Remover esta exceção?"))
-                          deleteClosureMutation.mutate(c.id);
-                      }}
+                      onClick={() => setClosureDeleteId(c.id)}
                       aria-label="Excluir"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -1751,6 +1768,20 @@ export default function Configuracoes() {
           </form>
         </Form>
       </EntityFormDialog>
+
+      <ConfirmDialog
+        open={Boolean(closureDeleteId)}
+        onOpenChange={(o) => !o && setClosureDeleteId(null)}
+        title="Remover exceção"
+        description="Remover esta exceção de funcionamento?"
+        confirmLabel="Remover"
+        cancelLabel="Cancelar"
+        variant="destructive"
+        onConfirm={() => {
+          if (closureDeleteId) deleteClosureMutation.mutate(closureDeleteId);
+          setClosureDeleteId(null);
+        }}
+      />
 
       <ConfirmDialog
         open={deleteBarbershopConfirmOpen}

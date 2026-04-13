@@ -26,6 +26,15 @@ describe("WhatsApp AI routes", () => {
     }
   });
 
+  it("GET /api/integrations/whatsapp/openai-status returns configured boolean", async () => {
+    if (!barbershopId || !token) return;
+    const res = await request(app)
+      .get("/api/integrations/whatsapp/openai-status")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    expect(typeof res.body.configured).toBe("boolean");
+  });
+
   it("GET /api/integrations/whatsapp/ai-settings returns settings", async () => {
     if (!barbershopId || !token) return;
     const res = await request(app)

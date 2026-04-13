@@ -115,8 +115,8 @@ export default function Servicos() {
           ? { barbershop_id: body.barbershop_id }
           : {}),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["services"] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ["services"] });
       setFormOpen(false);
     },
   });
@@ -124,8 +124,8 @@ export default function Servicos() {
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
       servicesApi.update(id, body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["services"] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ["services"] });
       setFormOpen(false);
       setEditingService(null);
     },
@@ -133,8 +133,8 @@ export default function Servicos() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => servicesApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["services"] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ["services"] });
       setDeleteTarget(null);
     },
   });
@@ -329,112 +329,132 @@ export default function Servicos() {
             ))}
           </div>
         )}
-        {!isLoading && !error && (
-          <div className="stat-card overflow-hidden hidden md:block">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-4 px-4 text-sm font-medium text-muted-foreground">
-                      Serviço
-                    </th>
-                    <th className="text-left py-4 px-4 text-sm font-medium text-muted-foreground">
-                      Categoria
-                    </th>
-                    <th className="text-right py-4 px-4 text-sm font-medium text-muted-foreground">
-                      Preço
-                    </th>
-                    <th className="text-right py-4 px-4 text-sm font-medium text-muted-foreground">
-                      Duração
-                    </th>
-                    <th className="text-right py-4 px-4 text-sm font-medium text-muted-foreground">
-                      Comissão
-                    </th>
-                    <th className="w-10"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {services.map((service) => (
-                    <tr
-                      key={service.id}
-                      className="table-row cursor-pointer hover:bg-muted/50 transition-colors"
-                      onClick={() => openEdit(service as Service)}
-                    >
-                      <td className="py-4 px-4">
-                        <div>
-                          <p className="font-medium text-foreground">
-                            {service.name}
-                          </p>
-                          {service.description && (
-                            <p className="text-sm text-muted-foreground">
-                              {service.description}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-4 px-4">
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-xs font-medium border capitalize ${categoryColors[service.category] ?? "bg-muted text-muted-foreground"}`}
-                        >
-                          {service.category}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <DollarSign className="w-3.5 h-3.5 text-success" />
-                          <span className="font-medium text-foreground">
-                            R$ {Number(service.price).toFixed(2)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-4 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Clock className="w-3.5 h-3.5 text-muted-foreground" />
-                          <span className="text-foreground">
-                            {service.duration_minutes} min
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-4 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Percent className="w-3.5 h-3.5 text-accent" />
-                          <span className="text-foreground">
-                            {service.commission_percentage ?? 0}%
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-4 px-4">
-                        <span
-                          onClick={(e) => {
-                            e.stopPropagation();
-                          }}
-                        >
-                          <EntityActionsMenu
-                            onEdit={() => openEdit(service as Service)}
-                            onDelete={() => setDeleteTarget(service as Service)}
-                            aria-label="Menu do serviço"
-                          />
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {!isLoading && !error && services.length === 0 && (
+          <div className="stat-card md:hidden">
+            <div className="flex min-h-[220px] flex-col items-center justify-center p-8">
+              <EmptyState
+                icon={<Package className="h-12 w-12" strokeWidth={1.5} />}
+                title="Nenhum serviço cadastrado"
+                description="Cadastre seu primeiro serviço para começar a oferecer aos clientes."
+                action={
+                  <Button onClick={openCreate} className="mt-2">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Cadastrar serviço
+                  </Button>
+                }
+              />
             </div>
           </div>
         )}
-        {!isLoading && !error && services.length === 0 && (
-          <EmptyState
-            icon={<Package className="h-12 w-12" strokeWidth={1.5} />}
-            title="Nenhum serviço cadastrado"
-            description="Cadastre seu primeiro serviço para começar a oferecer aos clientes."
-            action={
-              <Button onClick={openCreate} className="mt-2">
-                <Plus className="h-4 w-4 mr-2" />
-                Cadastrar serviço
-              </Button>
-            }
-          />
+        {!isLoading && !error && (
+          <div className="stat-card overflow-hidden hidden md:block">
+            {services.length === 0 ? (
+              <div className="flex min-h-[240px] flex-col items-center justify-center p-8">
+                <EmptyState
+                  icon={<Package className="h-12 w-12" strokeWidth={1.5} />}
+                  title="Nenhum serviço cadastrado"
+                  description="Cadastre seu primeiro serviço para começar a oferecer aos clientes."
+                  action={
+                    <Button onClick={openCreate} className="mt-2">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Cadastrar serviço
+                    </Button>
+                  }
+                />
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-4 px-4 text-sm font-medium text-muted-foreground">
+                        Serviço
+                      </th>
+                      <th className="text-left py-4 px-4 text-sm font-medium text-muted-foreground">
+                        Categoria
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-medium text-muted-foreground">
+                        Preço
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-medium text-muted-foreground">
+                        Duração
+                      </th>
+                      <th className="text-right py-4 px-4 text-sm font-medium text-muted-foreground">
+                        Comissão
+                      </th>
+                      <th className="w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {services.map((service) => (
+                      <tr
+                        key={service.id}
+                        className="table-row cursor-pointer hover:bg-muted/50 transition-colors"
+                        onClick={() => openEdit(service as Service)}
+                      >
+                        <td className="py-4 px-4">
+                          <div>
+                            <p className="font-medium text-foreground">
+                              {service.name}
+                            </p>
+                            {service.description && (
+                              <p className="text-sm text-muted-foreground">
+                                {service.description}
+                              </p>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-4 px-4">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-xs font-medium border capitalize ${categoryColors[service.category] ?? "bg-muted text-muted-foreground"}`}
+                          >
+                            {service.category}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <DollarSign className="w-3.5 h-3.5 text-success" />
+                            <span className="font-medium text-foreground">
+                              R$ {Number(service.price).toFixed(2)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                            <span className="text-foreground">
+                              {service.duration_minutes} min
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-4 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Percent className="w-3.5 h-3.5 text-accent" />
+                            <span className="text-foreground">
+                              {service.commission_percentage ?? 0}%
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-4 px-4">
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                            }}
+                          >
+                            <EntityActionsMenu
+                              onEdit={() => openEdit(service as Service)}
+                              onDelete={() => setDeleteTarget(service as Service)}
+                              aria-label="Menu do serviço"
+                            />
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

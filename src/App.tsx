@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthError } from "@/lib/api";
+import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, RouterProvider, Outlet, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -50,6 +51,40 @@ const AppLayout = () => (
   </ProtectedRoute>
 );
 
+const appChildren = [
+  { index: true, element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
+  { path: "link", element: <Navigate to="/app/configuracoes?open=booking" replace /> },
+  { path: "agendamentos", element: <Suspense fallback={<LoadingState fullPage />}><Agendamentos /></Suspense> },
+  { path: "barbeiros", element: <Suspense fallback={<LoadingState fullPage />}><Barbeiros /></Suspense> },
+  { path: "servicos", element: <Suspense fallback={<LoadingState fullPage />}><Servicos /></Suspense> },
+  { path: "clientes", element: <Suspense fallback={<LoadingState fullPage />}><Clientes /></Suspense> },
+  { path: "fidelidade", element: <Suspense fallback={<LoadingState fullPage />}><UpgradeGate featureName="Fidelidade"><Fidelidade /></UpgradeGate></Suspense> },
+  { path: "integracoes", element: <Suspense fallback={<LoadingState fullPage />}><Integracoes /></Suspense> },
+  ...(nativeAiUiEnabled
+    ? [
+        {
+          path: "whatsapp-interno",
+          element: (
+            <Suspense fallback={<LoadingState fullPage />}>
+              <UpgradeGate featureName="Atendimento">
+                <WhatsAppInterno />
+              </UpgradeGate>
+            </Suspense>
+          ),
+        },
+      ]
+    : [
+        {
+          path: "whatsapp-interno",
+          element: <Navigate to="/app" replace />,
+        },
+      ]),
+  { path: "configuracoes", element: <Suspense fallback={<LoadingState fullPage />}><Configuracoes /></Suspense> },
+  { path: "relatorios", element: <Suspense fallback={<LoadingState fullPage />}><Relatorios /></Suspense> },
+  { path: "planos", element: <Suspense fallback={<LoadingState fullPage />}><Planos /></Suspense> },
+  { path: "ajuda/whatsapp", element: <Suspense fallback={<LoadingState fullPage />}><AjudaWhatsApp /></Suspense> },
+] as const;
+
 const router = createBrowserRouter(
   [
     { path: "/", element: <Landing /> },
@@ -62,21 +97,7 @@ const router = createBrowserRouter(
     {
       path: "/app",
       element: <AppLayout />,
-      children: [
-        { index: true, element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
-        { path: "link", element: <Navigate to="/app/configuracoes?open=booking" replace /> },
-        { path: "agendamentos", element: <Suspense fallback={<LoadingState fullPage />}><Agendamentos /></Suspense> },
-        { path: "barbeiros", element: <Suspense fallback={<LoadingState fullPage />}><Barbeiros /></Suspense> },
-        { path: "servicos", element: <Suspense fallback={<LoadingState fullPage />}><Servicos /></Suspense> },
-        { path: "clientes", element: <Suspense fallback={<LoadingState fullPage />}><Clientes /></Suspense> },
-        { path: "fidelidade", element: <Suspense fallback={<LoadingState fullPage />}><UpgradeGate featureName="Fidelidade"><Fidelidade /></UpgradeGate></Suspense> },
-        { path: "integracoes", element: <Suspense fallback={<LoadingState fullPage />}><Integracoes /></Suspense> },
-        { path: "whatsapp-interno", element: <Suspense fallback={<LoadingState fullPage />}><WhatsAppInterno /></Suspense> },
-        { path: "configuracoes", element: <Suspense fallback={<LoadingState fullPage />}><Configuracoes /></Suspense> },
-        { path: "relatorios", element: <Suspense fallback={<LoadingState fullPage />}><Relatorios /></Suspense> },
-        { path: "planos", element: <Suspense fallback={<LoadingState fullPage />}><Planos /></Suspense> },
-        { path: "ajuda/whatsapp", element: <Suspense fallback={<LoadingState fullPage />}><AjudaWhatsApp /></Suspense> },
-      ],
+      children: [...appChildren],
     },
     { path: "*", element: <NotFound /> },
   ],

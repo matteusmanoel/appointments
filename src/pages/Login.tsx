@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -22,15 +23,11 @@ export default function Login() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
-  const { login, error, loading } = useAuth();
+  const { login, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const isFirstAccess = searchParams.get("first_access") === "1";
-
-  useEffect(() => {
-    if (error) toastError("Falha no login", undefined, error);
-  }, [error]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,8 +36,12 @@ export default function Login() {
       toastSuccess("Bem-vindo!");
       const from = (location.state as { from?: { pathname: string } })?.from?.pathname;
       navigate(from && from.startsWith("/app") ? from : "/app", { replace: true });
-    } catch {
-      // error set in context → toast via useEffect
+    } catch (err) {
+      toastError(
+        "Não foi possível entrar",
+        err,
+        "E-mail ou senha incorretos. Verifique e tente novamente.",
+      );
     }
   };
 
@@ -51,11 +52,16 @@ export default function Login() {
     setForgotLoading(true);
     try {
       await authApi.forgotPassword(trimmed);
-      toastSuccess("Se existir uma conta para este e-mail, enviamos uma senha temporária.");
+      toastSuccess("Enviamos uma senha temporária para este e-mail. Confira a caixa de entrada e o spam.");
       setForgotOpen(false);
       setForgotEmail("");
-    } catch {
-      toastError("Não foi possível processar. Tente novamente em alguns minutos.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("Nenhuma conta encontrada")) {
+        toastError("E-mail não cadastrado", undefined, msg || "Não há conta cadastrada com este e-mail.");
+        return;
+      }
+      toastError("Não foi possível processar. Tente novamente em alguns minutos.", err);
     } finally {
       setForgotLoading(false);
     }
@@ -92,9 +98,8 @@ export default function Login() {
           </div>
           <div>
             <Label htmlFor="password">Senha <span className="text-destructive">*</span></Label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => {

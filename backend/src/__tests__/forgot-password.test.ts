@@ -60,12 +60,13 @@ describe("POST /api/auth/forgot-password", () => {
       .expect(204);
   });
 
-  it("returns 204 for non-existent email", async () => {
+  it("returns 404 when no account exists for email", async () => {
     if (!dbAvailable) return;
-    await request(app)
+    const res = await request(app)
       .post("/api/auth/forgot-password")
       .send({ email: "nonexistent@example.com" })
-      .expect(204);
+      .expect(404);
+    expect(res.body?.error).toMatch(/conta/i);
   });
 
   it("returns 204 for existing email and sets must_change_password", async () => {

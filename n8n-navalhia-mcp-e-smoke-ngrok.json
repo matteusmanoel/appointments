@@ -1,0 +1,519 @@
+{
+  "name": "NavalhIA — MCP Tools + smoke test (API local / ngrok)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## NavalhIA — API local via ngrok\n\n**Antes de rodar**\n1. Suba o backend (Docker) e aponte o ngrok para a porta da API (ex.: `ngrok http 3003`).\n2. **Localizar e substituir** em todo o workflow a string `https://unpatted-uninsidious-sophia.ngrok-free.dev` pela URL HTTPS do ngrok (origem **sem** barra final).\n3. O header `X-API-Key` deve ser igual ao `TOOLS_API_KEY` do `.env` do backend (o padrão do repo está em `.env.example`).\n4. Banco com seed; `BARBERSHOP_ID` pode ficar vazio — a API usa a primeira barbearia.\n5. Opcional no ngrok free: header `ngrok-skip-browser-warning` já está nos nós HTTP.\n\n**Smoke test:** execute *Smoke test — API local* e confira 200 em Health e nos GETs; 201 no agendamento se houver serviço/barbeiro.\n\n**MCP:** ative o workflow e use o endpoint MCP (path `mcp-barbeiro-local`) num agente com MCP Client.",
+        "height": 560,
+        "width": 460,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1180, -520],
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "Instruções"
+    },
+    {
+      "parameters": {
+        "path": "mcp-barbeiro-local"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [240, -320],
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "MCP Server Trigger",
+      "webhookId": "c3d4e5f6-a7b8-9012-cdef-123456789012"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar serviços da NavalhIA (nome, valor, duração, descrição).",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_services",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, -240],
+      "id": "d4e5f6a7-b8c9-0123-def0-234567890123",
+      "name": "listar serviços da NavalhIA"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Listar barbeiros disponíveis.",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_barbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, -80],
+      "id": "e5f6a7b8-c9d0-1234-ef01-345678901234",
+      "name": "Buscar entidades Barber"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista agendamentos por data (horários ocupados).",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_appointments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "={{ $fromAI('parameters0_Value', 'Data no formato yyyy-MM-dd', 'string') }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 80],
+      "id": "f6a7b8c9-d0e1-2345-f012-456789012345",
+      "name": "Lista todos os agendamentos"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Buscar ou criar cliente por telefone. Retorna id, name, phone.",
+        "method": "POST",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/upsert_client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "phone",
+              "value": "={{ $fromAI('parameters0_Value', 'Telefone do cliente', 'string') }}"
+            },
+            {
+              "name": "name",
+              "value": "={{ $fromAI('parameters1_Value', 'Nome do cliente', 'string') }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ $fromAI('parameters2_Value', 'Observações', 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 240],
+      "id": "a7b8c9d0-e1f2-3456-0123-567890123456",
+      "name": "Cria cadastro do cliente"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Cria um novo agendamento. Confirme dados antes de chamar.",
+        "method": "POST",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/create_appointment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $fromAI('parameters0_Value', 'ID do cliente (UUID)', 'string') }}"
+            },
+            {
+              "name": "barber_id",
+              "value": "={{ $fromAI('parameters1_Value', 'ID do barbeiro (UUID)', 'string') }}"
+            },
+            {
+              "name": "service_id",
+              "value": "={{ $fromAI('parameters2_Value', 'ID do serviço (UUID)', 'string') }}"
+            },
+            {
+              "name": "date",
+              "value": "={{ $fromAI('parameters3_Value', 'Data yyyy-MM-dd', 'string') }}"
+            },
+            {
+              "name": "time",
+              "value": "={{ $fromAI('parameters4_Value', 'Horário HH:mm', 'string') }}"
+            },
+            {
+              "name": "notes",
+              "value": "={{ $fromAI('parameters5_Value', 'Observações', 'string') }}"
+            },
+            {
+              "name": "client_phone",
+              "value": "={{ $fromAI('parameters6_Value', 'Telefone do cliente', 'string') }}"
+            },
+            {
+              "name": "client_name",
+              "value": "={{ $fromAI('parameters7_Value', 'Nome do cliente', 'string') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [640, 400],
+      "id": "b8c9d0e1-f2a3-4567-1234-678901234567",
+      "name": "Cria um novo agendamento"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [-600, 180],
+      "id": "c9d0e1f2-a3b4-5678-2345-789012345678",
+      "name": "Smoke test — API local"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/health"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-360, 180],
+      "id": "d0e1f2a3-b4c5-6789-3456-890123456789",
+      "name": "Smoke 01 Health"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_services",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-120, 180],
+      "id": "e1f2a3b4-c5d6-7890-4567-901234567890",
+      "name": "Smoke 02 List Services"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_barbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [120, 180],
+      "id": "f2a3b4c5-d6e7-8901-5678-012345678901",
+      "name": "Smoke 03 List Barbers"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/list_appointments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "2026-04-20"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [360, 180],
+      "id": "a3b4c5d6-e7f8-9012-6789-123456789012",
+      "name": "Smoke 04 List Appointments"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/upsert_client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"phone\": \"5511999999001\", \"name\": \"Cliente Smoke n8n\", \"notes\": \"teste import workflow\" } }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [600, 180],
+      "id": "b4c5d6e7-f8a9-0123-7890-234567890123",
+      "name": "Smoke 05 Upsert Client"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://unpatted-uninsidious-sophia.ngrok-free.dev/api/tools/create_appointment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "bfk_d8c2caca-62f9-41d8-8761-fb2b269f1539_rk0ehqmw"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  client_id: $('Smoke 05 Upsert Client').first().json.id,\n  barber_id: $('Smoke 03 List Barbers').first().json[0].id,\n  service_id: $('Smoke 02 List Services').first().json[0].id,\n  date: '2026-04-20',\n  time: '15:00',\n  notes: 'Smoke test n8n',\n  client_phone: '5511999999001',\n  client_name: 'Cliente Smoke n8n'\n} }}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 180],
+      "id": "c5d6e7f8-a9b0-1234-8901-345678901234",
+      "name": "Smoke 06 Create Appointment"
+    }
+  ],
+  "connections": {
+    "listar serviços da NavalhIA": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar entidades Barber": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lista todos os agendamentos": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cria cadastro do cliente": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cria um novo agendamento": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke test — API local": {
+      "main": [
+        [
+          {
+            "node": "Smoke 01 Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 01 Health": {
+      "main": [
+        [
+          {
+            "node": "Smoke 02 List Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 02 List Services": {
+      "main": [
+        [
+          {
+            "node": "Smoke 03 List Barbers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 03 List Barbers": {
+      "main": [
+        [
+          {
+            "node": "Smoke 04 List Appointments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 04 List Appointments": {
+      "main": [
+        [
+          {
+            "node": "Smoke 05 Upsert Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Smoke 05 Upsert Client": {
+      "main": [
+        [
+          {
+            "node": "Smoke 06 Create Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
