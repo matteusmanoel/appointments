@@ -62,8 +62,8 @@ import {
   EntitySelectWithCreate,
   EntityMultiSelectWithCreate,
 } from "@/components/shared";
-import { LoadingState } from "@/components/LoadingState";
 import { EmptyState } from "@/components/EmptyState";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import {
   Form,
@@ -188,6 +188,90 @@ function formatAppointmentDateTimeVerbose(
       ? String(scheduled_time).slice(0, 5)
       : "—";
   return `${dateStr} · ${timeStr}`;
+}
+
+function AgendamentosGradeDaySkeleton({ barberCount }: { barberCount: number }) {
+  const cols = Math.max(barberCount, 1);
+  return (
+    <div className="stat-card overflow-hidden flex-1 min-h-0 flex flex-col">
+      <div className="overflow-x-auto scrollbar-thin flex-1 min-h-0 flex flex-col p-1 sm:p-0">
+        <div
+          className="grid gap-2 mb-4 pb-4 border-b border-border min-w-[280px] shrink-0"
+          style={{
+            gridTemplateColumns: `80px repeat(${cols}, minmax(100px, 1fr))`,
+          }}
+        >
+          <Skeleton className="h-5 w-14" />
+          {Array.from({ length: cols }).map((_, i) => (
+            <Skeleton key={i} className="h-5 w-full min-w-[80px]" />
+          ))}
+        </div>
+        <div className="space-y-2 flex-1 min-h-0">
+          {Array.from({ length: 10 }).map((_, row) => (
+            <div
+              key={row}
+              className="grid gap-2"
+              style={{
+                gridTemplateColumns: `80px repeat(${cols}, 1fr)`,
+              }}
+            >
+              <Skeleton className="h-12 w-14 self-center" />
+              {Array.from({ length: cols }).map((_, c) => (
+                <Skeleton key={c} className="h-[52px] rounded-lg" />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgendamentosMonthSkeleton() {
+  return (
+    <div className="stat-card h-full flex flex-col min-h-0 p-3 sm:p-4">
+      <div className="grid grid-cols-7 gap-1 text-center mb-2 shrink-0">
+        {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((d) => (
+          <Skeleton key={d} className="h-4 w-10 mx-auto" />
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1 flex-1 min-h-0 content-start">
+        {Array.from({ length: 35 }).map((_, i) => (
+          <Skeleton key={i} className="min-h-[100px] sm:min-h-[120px] rounded-md" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgendamentosListSkeleton() {
+  return (
+    <div className="overflow-y-auto flex-1 min-h-0 -mx-1 px-1 pb-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div
+            key={i}
+            className="stat-card p-4 flex flex-col gap-3 min-h-[140px] border border-border/60"
+          >
+            <div className="flex justify-between gap-2">
+              <div className="space-y-2 flex-1 min-w-0">
+                <Skeleton className="h-5 w-[72%] max-w-[14rem]" />
+                <Skeleton className="h-3 w-[40%] max-w-[8rem]" />
+              </div>
+              <Skeleton className="h-8 w-8 rounded-md shrink-0" />
+            </div>
+            <Skeleton className="h-4 w-[88%]" />
+            <Skeleton className="h-4 w-[70%]" />
+            <Skeleton className="h-4 w-[55%]" />
+            <div className="flex justify-between items-center mt-auto pt-1">
+              <Skeleton className="h-6 w-20 rounded-full" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 const appointmentFormSchema = z.object({
@@ -853,31 +937,19 @@ export default function Agendamentos() {
   const gradeBarbers = barbers;
   const gradeMonthAppointments = monthAppointments;
 
-  const getAppointmentForSlot = (
+  /** Agendamento que cobre o slot (início ou continuação de serviço longo). */
+  const getAppointmentCoveringSlot = (
     list: AppointmentListItem[],
     time: string,
     barberId: string,
-  ) => {
-    const t = normalizeTime(time);
-    return list.find(
-      (apt) =>
-        apt.status !== "cancelled" &&
-        normalizeTime(apt.scheduled_time) === t && apt.barber_id === barberId,
-    ) as Appointment | undefined;
-  };
-
-  const isSlotOccupiedByAppointment = (
-    list: AppointmentListItem[],
-    time: string,
-    barberId: string,
-  ) => {
+  ): Appointment | undefined => {
     const slotMins = (() => {
       const [h, m] = time.split(":").map(Number);
       return (h ?? 0) * 60 + (m ?? 0);
     })();
-    return list.some((apt) => {
-      if (apt.status === "cancelled" || apt.status === "no_show") return false;
-      if (apt.barber_id !== barberId) return false;
+    for (const apt of list) {
+      if (apt.status === "cancelled" || apt.status === "no_show") continue;
+      if (apt.barber_id !== barberId) continue;
       const [h, m] = String(apt.scheduled_time).slice(0, 5).split(":").map(Number);
       const startMins = (h ?? 0) * 60 + (m ?? 0);
       const endMins =
@@ -887,8 +959,11 @@ export default function Agendamentos() {
               return (eh ?? 0) * 60 + (em ?? 0);
             })()
           : startMins + (apt.duration_minutes ?? 0);
-      return slotMins >= startMins && slotMins < endMins;
-    });
+      if (slotMins >= startMins && slotMins < endMins) {
+        return apt as Appointment;
+      }
+    }
+    return undefined;
   };
 
   const editSlotsToShow = (() => {
@@ -1346,9 +1421,9 @@ export default function Agendamentos() {
               {gradeViewMode === "day" && (
                 <>
                   {isLoading && (
-                    <div className="stat-card flex flex-1 min-h-0 items-center justify-center">
-                      <LoadingState />
-                    </div>
+                    <AgendamentosGradeDaySkeleton
+                      barberCount={Math.max(barbers.length, 3)}
+                    />
                   )}
                   {!isLoading && timeSlots.length === 0 && (
                     <div className="stat-card flex flex-1 min-h-0 items-center justify-center">
@@ -1419,12 +1494,7 @@ export default function Agendamentos() {
                                 {time}
                               </div>
                               {gradeBarbers.map((barber, i) => {
-                                const appointment = getAppointmentForSlot(
-                                  gradeDayAppointments,
-                                  time,
-                                  barber.id,
-                                );
-                                const occupied = isSlotOccupiedByAppointment(
+                                const appointment = getAppointmentCoveringSlot(
                                   gradeDayAppointments,
                                   time,
                                   barber.id,
@@ -1481,14 +1551,6 @@ export default function Agendamentos() {
                                     </div>
                                   );
                                 }
-                                if (occupied) {
-                                  return (
-                                    <div
-                                      key={`${time}-${barber.id}`}
-                                      className="min-h-[52px] rounded-lg bg-muted/30"
-                                    />
-                                  );
-                                }
                                 return (
                                   <button
                                     type="button"
@@ -1512,11 +1574,7 @@ export default function Agendamentos() {
 
               {gradeViewMode === "month" && (
                 <>
-                  {monthLoading && (
-                    <div className="stat-card flex flex-1 min-h-0 items-center justify-center">
-                      <LoadingState />
-                    </div>
-                  )}
+                  {monthLoading && <AgendamentosMonthSkeleton />}
                   {!monthLoading && (
                     <div className="stat-card h-full flex flex-col min-h-0">
                       <div className="grid grid-cols-7 gap-1 text-center text-xs font-medium text-muted-foreground mb-2 shrink-0">
@@ -1691,7 +1749,7 @@ export default function Agendamentos() {
                 }
               />
               {listLoading ? (
-                <LoadingState />
+                <AgendamentosListSkeleton />
               ) : listAppointments.length === 0 ? (
                 <div className="stat-card flex flex-1 min-h-0 flex-col gap-3 items-center justify-center py-12">
                   <EmptyState

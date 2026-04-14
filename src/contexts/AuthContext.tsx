@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { authApi, type BillingPlan, type AuthProfileBarbershop } from "@/lib/api";
+import { authApi, normalizeAuthProfile, type BillingPlan, type AuthProfileBarbershop } from "@/lib/api";
 import { setToken, clearToken, getToken, setBarbershopScope } from "@/lib/api";
 
 export type Profile = {
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const profile = await authApi.me();
+      const profile = normalizeAuthProfile(await authApi.me());
       localStorage.setItem("profile", JSON.stringify(profile));
       setState((s) => ({ ...s, profile, loading: false }));
       if (restoreSelectedBarbershop && profile.barbershops && profile.barbershops.length > 1) {
@@ -59,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try {
             const { token } = await authApi.switchBarbershop(saved);
             setToken(token);
-            const next = await authApi.me();
+            const next = normalizeAuthProfile(await authApi.me());
             localStorage.setItem("profile", JSON.stringify(next));
             setState((s) => ({ ...s, profile: next, loading: false }));
           } catch {
@@ -83,7 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const selectedScope = scopeStored === "__all__" ? "__all__" : null;
     if (stored) {
       try {
-        const profile = JSON.parse(stored) as Profile;
+        const profile = normalizeAuthProfile(JSON.parse(stored) as Profile);
         setState((s) => ({ ...s, profile, loading: false, selectedScope }));
       } catch {
         setState((s) => ({ ...s, loading: false, selectedScope }));
@@ -113,7 +113,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { token } = await authApi.login(email, password);
       setToken(token);
-      const profile = await authApi.me();
+      const profile = normalizeAuthProfile(await authApi.me());
       localStorage.setItem("profile", JSON.stringify(profile));
       setState((s) => ({ ...s, profile, loading: false, error: null }));
       restoredBarbershopRef.current = false;
@@ -129,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
       setToken(token);
-      const profile = await authApi.me();
+      const profile = normalizeAuthProfile(await authApi.me());
       localStorage.setItem("profile", JSON.stringify(profile));
       setState((s) => ({ ...s, profile, loading: false, error: null }));
       restoredBarbershopRef.current = false;

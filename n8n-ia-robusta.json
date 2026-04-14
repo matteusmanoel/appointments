@@ -152,7 +152,7 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+              "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES"
             },
             {
               "name": "Accept",
@@ -180,7 +180,7 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+              "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES"
             },
             {
               "name": "Accept",
@@ -217,7 +217,7 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+              "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES"
             },
             {
               "name": "Accept",
@@ -246,7 +246,7 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+              "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES"
             },
             {
               "name": "Accept",
@@ -296,7 +296,7 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+              "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES"
             },
             {
               "name": "Accept",

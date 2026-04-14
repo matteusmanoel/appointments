@@ -105,6 +105,21 @@ No `.env` (ou parâmetros do stack) para os workers:
 - No console AWS: **CloudWatch → Log groups** → abrir cada um e verificar **Log streams** recentes.
 - Confirmar que há invocações (EventBridge dispara a cada 1 min / 5 min) e que não há erros recorrentes (timeout, `OPENAI_API_KEY` ausente, falha de conexão com DB/Uazapi). Ver também `docs/WORKERS.md` e `docs/WORKERS_DEPLOY_ECONOMICO.md`.
 
+### 6.2.1 Agente n8n — teste local (Docker, Chat Trigger, API em `localhost`)
+
+Use quando quiser validar o fluxo **sem Uazapi**: o painel de chat do próprio n8n fala com o **mesmo agente** que depois receberá POST do `ai-worker` via Webhook.
+
+1. **Subir a API** no host (porta padrão **3003**): `cd backend && npm run dev` (ou o comando que você usa). Confira `GET http://localhost:3003/api/health` se existir.
+2. **Chave Product API**: em **Integrações → Chaves de API**, crie uma chave e copie o valor de `X-API-Key`.
+3. **n8n em Docker** (exemplo):  
+   `docker run -it --rm --name n8n-local -p 5678:5678 -e N8N_SECURE_COOKIE=false docker.n8n.io/n8nio/n8n`  
+   Abra `http://localhost:5678`, crie conta local se pedir.
+4. **Importar** o workflow `n8n-ia-local-chat.json` (raiz do repo). Em **cada** tool HTTP, substitua `REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES` pela chave do passo 2. Ajuste a base `http://host.docker.internal:3003` só se a API estiver em outra porta ou host (Linux puro: pode ser necessário `--add-host=host.docker.internal:host-gateway` no `docker run`).
+5. **Chat no n8n**: abra o workflow, use **Chat** / “Execute workflow” no nó *When chat message received* e converse. A resposta aparece no painel do n8n (não passa pelo WhatsApp).
+6. **Testar o mesmo fluxo que a API usa (Webhook)**: importe também `n8n-ia-robusta.json` (produção/Uazapi), ative o workflow e copie a **Production URL** do Webhook. Ou exponha o n8n com **ngrok** para o `ai-worker` local chamar de fora: `ngrok http 5678` e use a URL `https://….ngrok-free.app/webhook/...` em `N8N_CHAT_TRIGGER_URL` (backend) ou no campo **Webhook n8n (agente)** em Integrações. No `.env` local do backend: `NATIVE_AI_DISABLED=true` para o worker delegar ao n8n.
+
+**Resumo:** *Chat Trigger* = UX de teste interno; *Webhook + respondToWebhook* = mesmo contrato que o `ai-worker` (`{ text, from, sessionId, conversationId, barbershopId }`). Uazapi entra depois, na borda WhatsApp.
+
 ---
 
 ## 6.3 Domínio customizado e API mappings (api.navalhia.com.br)

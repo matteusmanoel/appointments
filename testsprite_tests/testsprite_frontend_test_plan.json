@@ -1,0 +1,667 @@
+[
+  {
+    "id": "TC001",
+    "title": "Create a barber with working hours so they become available for scheduling",
+    "description": "Admin can create a new barber with defined working hours and the barber appears as active in the barbers list.",
+    "category": "Barbers management (CRUD & schedule)",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the barbers section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new barber"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a unique barber name"
+      },
+      {
+        "type": "action",
+        "description": "Set working hours to valid open and close times for at least one day"
+      },
+      {
+        "type": "action",
+        "description": "Save the barber"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new barber appears in the barbers list as active"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC002",
+    "title": "Create a client record so reception can book appointments for them",
+    "description": "Staff can create a new client with name and phone and the client appears in the clients list with an empty visit history.",
+    "category": "Clients management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the clients section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new client"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a unique client name"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid phone number"
+      },
+      {
+        "type": "action",
+        "description": "Save the client"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new client appears in the clients list"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the client shows an empty state for visit history"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC003",
+    "title": "Create a service so it can be used during appointment booking",
+    "description": "Staff can create a new service with name, duration, and price and the service appears in the services list.",
+    "category": "Services management (CRUD)",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the services section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new service"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a unique service name"
+      },
+      {
+        "type": "action",
+        "description": "Select a valid service duration"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid service price"
+      },
+      {
+        "type": "action",
+        "description": "Optionally select a service category"
+      },
+      {
+        "type": "action",
+        "description": "Save the service"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the new service appears in the services list"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC004",
+    "title": "Open a conversation thread and audit messages and actions",
+    "description": "Verifies an authenticated admin can open a conversation and see message history along with recorded action events such as client creation and appointment creation.",
+    "category": "Admin inbox and conversation logs",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_USER}} into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_PASSWORD}} into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the inbox from the main navigation"
+      },
+      {
+        "type": "action",
+        "description": "Open the most recent conversation thread"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the conversation displays a chronological message history"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify recorded action events are displayed with metadata (for example client creation or appointment creation)"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC005",
+    "title": "Update a barber’s working hours and status so availability rules can change",
+    "description": "Admin can edit an existing barber to change working hours or active status and the updates are reflected in the barber details/list.",
+    "category": "Barbers management (CRUD & schedule)",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the barbers section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new barber"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a unique barber name"
+      },
+      {
+        "type": "action",
+        "description": "Set working hours to valid open and close times for at least one day"
+      },
+      {
+        "type": "action",
+        "description": "Save the barber"
+      },
+      {
+        "type": "action",
+        "description": "Open the newly created barber"
+      },
+      {
+        "type": "action",
+        "description": "Change the barber status to deactivated"
+      },
+      {
+        "type": "action",
+        "description": "Adjust the working hours to a different valid range"
+      },
+      {
+        "type": "action",
+        "description": "Save changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the barber is shown as deactivated and the updated working hours are displayed"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC006",
+    "title": "Search clients by phone or name to quickly find the right record",
+    "description": "Staff can search by phone or name and open a matching client to view visit and spending history.",
+    "category": "Clients management",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the clients section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new client"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a unique client name"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid phone number"
+      },
+      {
+        "type": "action",
+        "description": "Save the client"
+      },
+      {
+        "type": "action",
+        "description": "Fill the clients search field with the client phone number or name"
+      },
+      {
+        "type": "action",
+        "description": "Submit the search if required"
+      },
+      {
+        "type": "action",
+        "description": "Open the matching client from the results"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify client details are displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify visit and spending history sections are visible"
+      }
+    ],
+    "priority": "High"
+  },
+  {
+    "id": "TC007",
+    "title": "Review recent WhatsApp conversations in inbox",
+    "description": "Verifies an authenticated admin can open the inbox and view a list of recent conversation threads with identifying metadata such as phone and timestamps.",
+    "category": "Admin inbox and conversation logs",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_USER}} into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_PASSWORD}} into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the inbox from the main navigation"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify a list of conversation threads is displayed"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify each displayed conversation thread shows identifying metadata such as phone and a timestamp"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC008",
+    "title": "Edit an existing service to keep price and duration accurate",
+    "description": "Staff can edit a service’s price or duration and the updated details are shown in the services list or service detail view.",
+    "category": "Services management (CRUD)",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the services section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new service"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a unique service name"
+      },
+      {
+        "type": "action",
+        "description": "Select a valid service duration"
+      },
+      {
+        "type": "action",
+        "description": "Fill in a valid service price"
+      },
+      {
+        "type": "action",
+        "description": "Save the service"
+      },
+      {
+        "type": "action",
+        "description": "Open the newly created service for editing"
+      },
+      {
+        "type": "action",
+        "description": "Change the service duration to a different valid duration"
+      },
+      {
+        "type": "action",
+        "description": "Change the service price to a different valid price"
+      },
+      {
+        "type": "action",
+        "description": "Save changes"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the updated service details are displayed"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC009",
+    "title": "Search conversations by phone and open a matching result",
+    "description": "Verifies an authenticated admin can search conversation logs by phone and open a result that matches the search criteria.",
+    "category": "Admin inbox and conversation logs",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_USER}} into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_PASSWORD}} into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the inbox from the main navigation"
+      },
+      {
+        "type": "action",
+        "description": "Fill a phone number fragment into the conversation search field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the search"
+      },
+      {
+        "type": "action",
+        "description": "Open the first conversation in the search results"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the opened conversation is associated with the searched phone number"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC010",
+    "title": "Filter conversations by date range and open a filtered thread",
+    "description": "Verifies an authenticated admin can filter conversation logs by date and open a conversation that appears within the filtered results.",
+    "category": "Admin inbox and conversation logs",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_USER}} into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_PASSWORD}} into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the inbox from the main navigation"
+      },
+      {
+        "type": "action",
+        "description": "Open the date filter controls"
+      },
+      {
+        "type": "action",
+        "description": "Select a valid start date in the date filter"
+      },
+      {
+        "type": "action",
+        "description": "Select a valid end date in the date filter"
+      },
+      {
+        "type": "action",
+        "description": "Apply the date filter"
+      },
+      {
+        "type": "action",
+        "description": "Open the first conversation in the filtered results"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the opened conversation shows message timestamps within the selected date range"
+      }
+    ],
+    "priority": "Medium"
+  },
+  {
+    "id": "TC011",
+    "title": "Clear applied filters to restore full conversation list",
+    "description": "Verifies an authenticated admin can clear inbox search/filters and return to the unfiltered conversation list.",
+    "category": "Admin inbox and conversation logs",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_USER}} into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_PASSWORD}} into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the inbox from the main navigation"
+      },
+      {
+        "type": "action",
+        "description": "Fill a phone number fragment into the conversation search field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the search"
+      },
+      {
+        "type": "action",
+        "description": "Clear the conversation search input"
+      },
+      {
+        "type": "action",
+        "description": "Reset any applied filters"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify the conversation list is restored to the default unfiltered state"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC012",
+    "title": "Validate required fields when creating a barber to prevent incomplete profiles",
+    "description": "Admin cannot save a new barber when required fields are empty and sees validation errors for missing inputs.",
+    "category": "Barbers management (CRUD & schedule)",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the username or email field with {{LOGIN_USER}}"
+      },
+      {
+        "type": "action",
+        "description": "Fill in the password field with {{LOGIN_PASSWORD}}"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the barbers section"
+      },
+      {
+        "type": "action",
+        "description": "Start creating a new barber"
+      },
+      {
+        "type": "action",
+        "description": "Submit the barber form with required fields left empty"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify required-field validation errors are displayed"
+      }
+    ],
+    "priority": "Low"
+  },
+  {
+    "id": "TC013",
+    "title": "View empty state when no conversations match filters",
+    "description": "Verifies the inbox shows a clear empty state when a user applies filters that yield no matching conversation threads.",
+    "category": "Admin inbox and conversation logs",
+    "steps": [
+      {
+        "type": "action",
+        "description": "Navigate to /login"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_USER}} into the email field"
+      },
+      {
+        "type": "action",
+        "description": "Fill {{LOGIN_PASSWORD}} into the password field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the login form"
+      },
+      {
+        "type": "action",
+        "description": "Open the inbox from the main navigation"
+      },
+      {
+        "type": "action",
+        "description": "Fill an unlikely phone number fragment into the conversation search field"
+      },
+      {
+        "type": "action",
+        "description": "Submit the search"
+      },
+      {
+        "type": "assertion",
+        "description": "Verify an empty state is displayed indicating no conversations match the current criteria"
+      }
+    ],
+    "priority": "Low"
+  }
+]

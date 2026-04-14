@@ -62,12 +62,22 @@ export function ChangePasswordModal({ open }: ChangePasswordModalProps) {
     }
   };
 
+  const forced = !!profile?.must_change_password;
+
   return (
-    <Dialog open={open}>
+    <Dialog open={open} modal>
       <DialogContent
-        className="sm:max-w-md"
-        onPointerDownOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
+        className={
+          forced
+            ? "sm:max-w-md [&>button]:hidden"
+            : "sm:max-w-md"
+        }
+        onPointerDownOutside={(e) => {
+          if (forced) e.preventDefault();
+        }}
+        onEscapeKeyDown={(e) => {
+          if (forced) e.preventDefault();
+        }}
       >
         <DialogHeader>
           <DialogTitle>Altere sua senha</DialogTitle>

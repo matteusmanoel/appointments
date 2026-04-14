@@ -1,0 +1,270 @@
+{
+  "name": "NavalhIA — Chat local (Product API em localhost)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Teste local — chat do n8n (sem Uazapi)\n\n**Objetivo:** usar o **painel de chat** do n8n para validar o agente e as **HTTP Request Tools** contra a API no host (`localhost:3003`).\n\n**Passos (resumo)**\n1. API no host: `backend` em **3003** (veja `docs/RUNBOOK.md` §6.2.1).\n2. n8n em Docker: `docker run … -p 5678:5678` — nas tools, `host.docker.internal:3003` alcança o host (Mac/Windows; Linux: `--add-host=host.docker.internal:host-gateway`).\n3. **Integrações** → crie **X-API-Key** e substitua `REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES` em **cada** tool.\n4. Credencial **Google Gemini** no nó do modelo (ou troque por OpenAI).\n5. **Execute** o workflow e use o **Chat** no nó *When chat message received*.\n\n**Depois:** para o mesmo agente receber POST como em produção, use `n8n-ia-robusta.json` (Webhook + `respondToWebhook`) e/ou ngrok na porta do n8n para `N8N_CHAT_TRIGGER_URL`.",
+        "height": 720,
+        "width": 460,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [-720, -80],
+      "typeVersion": 1,
+      "id": "c8f1a2b3-4d5e-4f60-a1b2-c3d4e5f60708",
+      "name": "Instruções — local"
+    },
+    {
+      "parameters": { "options": {} },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-380, 280],
+      "id": "a1b2c3d4-e5f6-4789-a012-3456789abcde",
+      "name": "When chat message received",
+      "webhookId": "f1e2d3c4-b5a6-4789-8012-3456789fedcb"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aa001001-0001-4001-8001-000000000001",
+              "name": "text",
+              "value": "={{ $json.chatInput }}",
+              "type": "string"
+            },
+            {
+              "id": "aa001001-0001-4001-8001-000000000002",
+              "name": "sessionId",
+              "value": "={{ $json.sessionId || 'local-n8n-chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "aa001001-0001-4001-8001-000000000003",
+              "name": "from",
+              "value": "5511999999999",
+              "type": "string"
+            },
+            {
+              "id": "aa001001-0001-4001-8001-000000000004",
+              "name": "conversationId",
+              "value": "={{ $json.sessionId || 'local-n8n-chat' }}",
+              "type": "string"
+            },
+            {
+              "id": "aa001001-0001-4001-8001-000000000005",
+              "name": "barbershopId",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-80, 280],
+      "id": "b2c3d4e5-f6a7-4890-b123-456789abcdef",
+      "name": "Preparar entrada (chat)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "options": {
+          "systemMessage": "=# NavalhIA — Atendimento (Product API)\n\n**Contexto**\n- Hora no servidor n8n: {{ $now.format('yyyy-MM-dd HH:mm') }} (alinhe agendamentos a **America/Sao_Paulo**).\n- Telefone de teste (chat local): {{ $json.from }} — use **apenas dígitos** em upsert_client.\n\n**Papel**\nAtendente da barbearia no WhatsApp. Mensagens curtas; sem emoji salvo se o cliente usar primeiro. Negrito: *texto*.\n\n**Objetivo**\nAgendamento confirmado via tools. Não invente preços, serviços ou horários.\n\n**Ferramentas**\n- list_services, list_barbers, list_appointments (date=yyyy-MM-dd), upsert_client, create_appointment\n\n**Regras**\n- Não peça telefone para identificar: use o número do contexto nas tools.\n- Não mostre UUID ao cliente.\n- Combo costuma ser category=combo.\n- Confirme antes de create_appointment."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [220, 280],
+      "id": "73462b20-1e22-46d4-abf1-8c23695dbb45",
+      "name": "Agente NavalhIA",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.sessionId }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [220, 520],
+      "id": "40fce597-2856-434c-b553-6d90d16b561e",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": { "options": {} },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [40, 520],
+      "id": "216fa5f0-2fc9-4b32-a169-758c56fb3405",
+      "name": "Google Gemini Chat Model"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista serviços (nome, preço, duração, category).",
+        "url": "http://host.docker.internal:3003/api/tools/list_services",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 120],
+      "id": "d8a657e2-ddaa-4bf9-8057-fd40c3790adc",
+      "name": "NavalhIA — listar serviços"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista barbeiros.",
+        "url": "http://host.docker.internal:3003/api/tools/list_barbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 280],
+      "id": "e667c79a-625d-4f44-b6a4-bae245c33052",
+      "name": "NavalhIA — listar barbeiros"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Lista agendamentos por data (yyyy-MM-dd).",
+        "url": "http://host.docker.internal:3003/api/tools/list_appointments",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "date",
+              "value": "={{ $fromAI('parameters0_Value', 'Data yyyy-MM-dd', 'string') }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 440],
+      "id": "bac1d0df-3e0e-43b3-a195-158578c8cbce",
+      "name": "NavalhIA — listar agendamentos"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Cria/atualiza cliente por telefone (só dígitos).",
+        "method": "POST",
+        "url": "http://host.docker.internal:3003/api/tools/upsert_client",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES" },
+            { "name": "Accept", "value": "application/json" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "phone", "value": "={{ $fromAI('parameters0_Value', 'Telefone', 'string') }}" },
+            { "name": "name", "value": "={{ $fromAI('parameters1_Value', 'Nome', 'string') }}" },
+            { "name": "notes", "value": "={{ $fromAI('parameters2_Value', 'Obs', 'string') }}" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 600],
+      "id": "303f7953-71e1-4355-b307-b7fcbe38b060",
+      "name": "NavalhIA — upsert cliente"
+    },
+    {
+      "parameters": {
+        "toolDescription": "Cria agendamento após confirmação.",
+        "method": "POST",
+        "url": "http://host.docker.internal:3003/api/tools/create_appointment",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "X-API-Key", "value": "REPLACE_WITH_X_API_KEY_FROM_INTEGRACOES" },
+            { "name": "Accept", "value": "application/json" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "client_id", "value": "={{ $fromAI('parameters0_Value', 'client UUID', 'string') }}" },
+            { "name": "barber_id", "value": "={{ $fromAI('parameters1_Value', 'barber UUID', 'string') }}" },
+            { "name": "service_id", "value": "={{ $fromAI('parameters2_Value', 'service UUID', 'string') }}" },
+            { "name": "date", "value": "={{ $fromAI('parameters3_Value', 'yyyy-MM-dd', 'string') }}" },
+            { "name": "time", "value": "={{ $fromAI('parameters4_Value', 'HH:mm', 'string') }}" },
+            { "name": "notes", "value": "={{ $fromAI('parameters5_Value', 'notes', 'string') }}" },
+            { "name": "client_phone", "value": "={{ $fromAI('parameters6_Value', 'phone', 'string') }}" },
+            { "name": "client_name", "value": "={{ $fromAI('parameters7_Value', 'name', 'string') }}" }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [520, 760],
+      "id": "d3af2462-d3ca-45a3-8069-eb7d6ceab85d",
+      "name": "NavalhIA — criar agendamento"
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [[{ "node": "Preparar entrada (chat)", "type": "main", "index": 0 }]]
+    },
+    "Preparar entrada (chat)": {
+      "main": [[{ "node": "Agente NavalhIA", "type": "main", "index": 0 }]]
+    },
+    "Simple Memory": {
+      "ai_memory": [[{ "node": "Agente NavalhIA", "type": "ai_memory", "index": 0 }]]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [[{ "node": "Agente NavalhIA", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "NavalhIA — listar serviços": {
+      "ai_tool": [[{ "node": "Agente NavalhIA", "type": "ai_tool", "index": 0 }]]
+    },
+    "NavalhIA — listar barbeiros": {
+      "ai_tool": [[{ "node": "Agente NavalhIA", "type": "ai_tool", "index": 0 }]]
+    },
+    "NavalhIA — listar agendamentos": {
+      "ai_tool": [[{ "node": "Agente NavalhIA", "type": "ai_tool", "index": 0 }]]
+    },
+    "NavalhIA — upsert cliente": {
+      "ai_tool": [[{ "node": "Agente NavalhIA", "type": "ai_tool", "index": 0 }]]
+    },
+    "NavalhIA — criar agendamento": {
+      "ai_tool": [[{ "node": "Agente NavalhIA", "type": "ai_tool", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateCredsSetupCompleted": false },
+  "tags": [{ "name": "NavalhIA", "id": "fb74771c-91b7-4502-8f7c-3a13d993af6c" }]
+}

@@ -1,0 +1,52 @@
+[
+  {
+    "id": "TC001",
+    "title": "test_admin_login_with_valid_and_invalid_credentials",
+    "description": "Verify that administrators can successfully log in with valid credentials and receive appropriate error messages when using invalid credentials at the /auth login endpoint."
+  },
+  {
+    "id": "TC002",
+    "title": "test_onboarding_initial_setup_flow",
+    "description": "Test the onboarding process by submitting establishment basic data and verifying successful setup and access to the admin dashboard via the /onboarding endpoint."
+  },
+  {
+    "id": "TC003",
+    "title": "test_establishment_settings_update",
+    "description": "Validate that establishment information such as name, phone, email, and address can be viewed and updated correctly through the establishment settings API."
+  },
+  {
+    "id": "TC004",
+    "title": "test_barbers_crud_and_schedule_management",
+    "description": "Ensure that barbers can be created, updated, deactivated, and their working schedules managed properly, including validation for required fields in the barbers management endpoints."
+  },
+  {
+    "id": "TC005",
+    "title": "test_services_crud_operations",
+    "description": "Check that services can be created, updated with price and duration changes, and listed correctly in the services management API."
+  },
+  {
+    "id": "TC006",
+    "title": "test_clients_management_and_search",
+    "description": "Verify client creation with name and phone, searching clients by phone or name, and viewing client visit and spending history through the clients management endpoints."
+  },
+  {
+    "id": "TC007",
+    "title": "test_appointments_create_edit_cancel_with_conflict_rule",
+    "description": "Test appointment scheduling enforcing one booking per barber per slot, editing appointments to available slots, and cancelling appointments with status updates in the appointments API."
+  },
+  {
+    "id": "TC008",
+    "title": "test_loyalty_rewards_and_redemptions_view",
+    "description": "Confirm that the loyalty section allows viewing the list of rewards and past redemptions in a read-only manner via the loyalty API."
+  },
+  {
+    "id": "TC009",
+    "title": "test_whatsapp_booking_bot_conversational_flow",
+    "description": "Validate the WhatsApp booking bot's ability to receive messages, auto-create clients, propose services and slots, create appointments after confirmation, and log all interactions through the integrations/whatsapp API."
+  },
+  {
+    "id": "TC010",
+    "title": "test_admin_inbox_and_conversation_logs_access_and_filtering",
+    "description": "Ensure administrators can access the internal inbox, view conversation threads with timestamps and actions, and filter/search conversation logs by phone or date via the inbox API."
+  }
+]

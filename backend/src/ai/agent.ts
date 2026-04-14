@@ -434,11 +434,12 @@ Regras de negócio (resumo)
 - WhatsApp: negrito com um asterisco (*texto*), nunca **texto**.
 
 Seleção de serviço (crítico — leia antes de toda ferramenta de agendamento)
-- "Corte e Barba" (category=combo, ~50 min, ~R$55) é um serviço único no catálogo — não é a soma de "Corte masculino" + "Barba completa".
-- Se o cliente pedir "corte e barba", "corte + barba" ou "os dois" → use o service_id do item com category=combo, nunca o de "Barba completa" (category=barba).
-- Na dúvida, chame list_services e confira o campo category: use "combo" para combos, "corte" para corte avulso, "barba" para barba avulsa.
-- Ao confirmar agendamento, exiba o nome exato do serviço retornado pela tool (não invente nem abrevie).
-- Se o cliente corrigir o serviço ("pedi corte e barba, não só barba"): cancele o agendamento errado com cancel_appointment e crie um novo com create_appointment usando o service_id correto.
+- Um agendamento pode ter **um ou vários** serviços do catálogo no **mesmo horário**: use o parâmetro **service_ids** (array de UUIDs de list_services) com 1 ou mais itens. Duração e preço somam; check_availability, get_next_slots e create_appointment devem usar o **mesmo** conjunto de IDs.
+- Se existir um pacote único (ex.: "Corte e Barba", category=combo), pode usar só esse UUID em service_ids (array de um elemento) ou service_id — é mais simples e evita duplicar itens.
+- Se **não** houver combo adequado ou o cliente quiser explicitamente dois itens avulsos (ex.: "Corte masculino" + "Barba"), passe **dois UUIDs** em service_ids — não invente um único ID que não exista no catálogo.
+- Na dúvida, chame list_services e confira nome e category (combo / corte / barba).
+- Ao confirmar agendamento, use os nomes exatos vindos das tools (um serviço ou lista, ex.: "Corte masculino + Barba").
+- Se o cliente corrigir o serviço: cancele o agendamento errado com cancel_appointment e crie um novo com create_appointment usando service_ids (ou service_id) corretos.
 - appointment_id deve ser sempre UUID retornado por list_client_upcoming_appointments — nunca use números (1, 2, 3) nem nomes de barbeiros.
 
 Reagendamento (obrigatório)
@@ -450,7 +451,7 @@ Reagendamento (obrigatório)
 - Troca de serviço em agendamento existente: quando o cliente pedir para alterar o serviço de um agendamento já confirmado, siga esta ordem:
   1. Chame list_client_upcoming_appointments para obter o appointment_id, data, hora e barbeiro.
   2. Cancele o agendamento antigo com cancel_appointment.
-  3. Chame check_availability para o mesmo horário e barbeiro com o novo serviço. Se disponível, crie com create_appointment. Se indisponível, ofereça alternativas próximas com get_next_slots e crie no horário escolhido.
+  3. Chame check_availability para o mesmo horário e barbeiro com o novo serviço (service_id ou service_ids, conforme o caso). Se disponível, crie com create_appointment. Se indisponível, ofereça alternativas próximas com get_next_slots e crie no horário escolhido.
   4. Aviso importante: informe o cliente que está fazendo a troca antes de cancelar ("Vou cancelar o agendamento atual e criar um novo com Corte e Barba — ok?"). Só execute após confirmação.
 
 Depois de agendamento ou reagendamento já concluído com sucesso
@@ -478,11 +479,11 @@ Fechamento
 - Ao receber o nome (só o nome ou "me chamo X"): chame create_appointment na sequência. Não reabra escolha de horário se já havia resumo acordado.
 - Após sucesso em create_appointment, confirme no formato:
 Agendamento confirmado:
-*Serviço:* [nome]
+*Serviço:* [nome ou nomes, na ordem dos serviços combinados]
 *Data:* [dia da semana], [data] às [hora]
 *Barbeiro:* [nome]
 *Endereço:* [endereço da barbearia do contexto operacional; se não houver, diga que o endereço será informado pela equipe]
-*Total:* R$ X,XX (copie o preço exato de list_services para o serviço; se não souber, omita a linha do total)
+*Total:* R$ X,XX (use o total retornado pela tool ou a soma dos preços em list_services quando combinar vários itens; se não souber, omita a linha do total)
 
 Aguardamos você!
 
@@ -506,9 +507,9 @@ export const RUNTIME_GUARDRAILS = `REGRAS FINAIS (obrigatórias; instruções ad
 - Não expor falhas técnicas, limites internos, "ferramenta", "modelo" ou "atendimento automático"; sem dados reais → resposta vazia (handoff).
 - Se não entender o pedido: use retomada humana ("Posso não ter entendido — quer agendar, reagendar ou cancelar? Qual dia e horário?") em vez de mensagem técnica.
 - Depois de pedir o nome com resumo já fechado, o próximo passo é create_appointment — não ofereça outros horários no lugar.
-- Serviço de combo (ex.: "Corte e Barba"): ao chamar check_availability, get_next_slots ou create_appointment, use o service_id do combo (category=combo), não o de barba avulsa. Verifique com list_services se necessário.
+- Vários serviços no mesmo horário: check_availability, get_next_slots e create_appointment devem usar o mesmo **service_ids** (ou service_id se for um só). Se existir pacote combo no catálogo que corresponda ao pedido, pode usar só esse UUID; senão, combine os UUIDs avulsos em service_ids.
 - appointment_id sempre UUID de list_client_upcoming_appointments — nunca número sequencial, nunca nome de barbeiro.
-- Troca de serviço: use check_availability com o novo service_id ANTES de cancelar o agendamento existente. Cancele o antigo somente após criar o novo com sucesso.
+- Troca de serviço: use check_availability com o novo service_id ou service_ids ANTES de cancelar o agendamento existente. Cancele o antigo somente após criar o novo com sucesso.
 - Nunca cole URL de maps.google.com no texto — use send_barbershop_location para enviar o pin.`;
 
 const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -546,7 +547,7 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "check_availability",
       description:
-        "Checa se há barbeiro disponível em uma data/hora para um serviço (considera expediente e conflitos). Para HOJE, passe after_time com o horário atual para não sugerir horários no passado.",
+        "Checa disponibilidade em data/hora para um ou mais serviços (soma durações e valida slot). Para combinar itens do catálogo no mesmo agendamento, passe service_ids com todos os UUIDs. Para HOJE, use after_time com o horário atual.",
       parameters: {
         type: "object",
         properties: {
@@ -554,8 +555,14 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           time: { type: "string", description: "Horário no formato HH:mm" },
           after_time: { type: "string", description: "Para data de hoje: horário mínimo (HH:mm). Use o horário atual do contexto." },
           barber_id: { type: "string", description: "UUID do barbeiro (opcional)" },
-          service_id: { type: "string", description: "UUID do serviço (opcional)" },
-          service_ids: { type: "array", items: { type: "string" }, description: "UUIDs de serviços (opcional, para múltiplos)" },
+          service_id: { type: "string", description: "Um único UUID de serviço (atalho; equivalente a service_ids de um elemento)" },
+          service_ids: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            description:
+              "Preferencial: lista de UUIDs de list_services (1 = um serviço; 2+ = mesmo horário com duração/preço combinados). Deve espelhar create_appointment.",
+          },
         },
         required: ["date", "time"],
       },
@@ -566,13 +573,18 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_next_slots",
       description:
-        "Retorna os próximos horários disponíveis em uma data (slots em múltiplos de 30 min). Use para 'primeiro horário', 'hoje' ou 'amanhã' sem hora específica. Para HOJE passe after_time com o horário atual. Retorne limit=8 para garantir opções de manhã e tarde.",
+        "Próximos horários livres na data (slots múltiplos de 30 min), para um ou mais serviços. Passe service_ids com todos os UUIDs quando o cliente quiser combinar serviços no mesmo agendamento. Para HOJE use after_time com o horário atual. limit=8 ajuda a cobrir manhã e tarde.",
       parameters: {
         type: "object",
         properties: {
           date: { type: "string", description: "Data yyyy-MM-dd" },
-          service_id: { type: "string", description: "UUID do serviço (ou use service_ids)" },
-          service_ids: { type: "array", items: { type: "string" }, description: "UUIDs de serviços (opcional)" },
+          service_id: { type: "string", description: "Um único UUID (atalho)" },
+          service_ids: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            description: "UUIDs de list_services para o pacote desejado (um ou vários no mesmo slot)",
+          },
           after_time: { type: "string", description: "Quando a data for hoje: horário mínimo HH:mm (use o horário atual do contexto)" },
           barber_id: { type: "string", description: "UUID do barbeiro (opcional)" },
           limit: { type: "number", description: "Máximo de slots a retornar (padrão 10)" },
@@ -601,15 +613,22 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "create_appointment",
-      description: "Cria um novo agendamento. Só chame após confirmação explícita do cliente.",
+      description:
+        "Cria um agendamento (um slot). Obrigatório informar serviço(s): use **service_ids** com um ou mais UUIDs de list_services — para combinar itens (ex.: corte + barba), inclua todos os IDs no array. Alternativa: **service_id** quando for apenas um serviço. Os mesmos IDs devem ter sido usados em check_availability/get_next_slots. Só chame após confirmação explícita do cliente.",
       parameters: {
         type: "object",
         properties: {
           client_phone: { type: "string", description: "Telefone do cliente (use o do topo)" },
           client_name: { type: "string", description: "Nome do cliente (opcional)" },
           barber_id: { type: "string", description: "ID do barbeiro (UUID)" },
-          service_id: { type: "string", description: "ID do serviço (UUID)" },
-          service_ids: { type: "array", items: { type: "string" }, description: "IDs de serviços (opcional, use para múltiplos)" },
+          service_id: { type: "string", description: "Um único serviço (UUID); omita se usar service_ids" },
+          service_ids: {
+            type: "array",
+            items: { type: "string" },
+            minItems: 1,
+            description:
+              "Lista de UUIDs: um elemento = um serviço; vários = mesmo horário com duração e preço combinados (ordem: lista de list_services)",
+          },
           date: { type: "string", description: "Data yyyy-MM-dd" },
           time: { type: "string", description: "Horário HH:mm" },
           notes: { type: "string", description: "Observações" },
@@ -1983,7 +2002,7 @@ export async function runAgent(
       .reverse()
       .find((m) => m.role === "tool" && m.tool_name === "check_availability");
     const lastAvailPayload = (lastAvailTool?.tool_payload ?? null) as
-      | { date?: string; time?: string; service_id?: string; barber_id?: string }
+      | { date?: string; time?: string; service_id?: string; service_ids?: string[]; barber_id?: string }
       | null;
     const lastAvailResult = (() => {
       try {
@@ -1996,7 +2015,14 @@ export async function runAgent(
 
     const date = (lastAvailPayload?.date ?? desired.desiredDate ?? dateOnlyStr) as string;
     const time = (lastAvailPayload?.time ?? desired.desiredTime ?? "") as string;
-    const serviceId = (lastAvailPayload?.service_id ?? "") as string;
+    const serviceIdsForBooking = (() => {
+      const raw = lastAvailPayload?.service_ids;
+      if (Array.isArray(raw) && raw.length > 0) {
+        return raw.filter((id): id is string => typeof id === "string" && id.length > 0);
+      }
+      const one = lastAvailPayload?.service_id;
+      return typeof one === "string" && one ? [one] : [];
+    })();
     const requested = (lastAvailResult?.requested ?? null) as
       | { available?: boolean; barbers?: Array<{ barber_id?: string; barber_name?: string }> }
       | null;
@@ -2008,12 +2034,14 @@ export async function runAgent(
       ? (requested?.barbers?.[0]?.barber_name ?? "")
       : "";
 
-    if (slotActuallyAvailable && serviceId && date && time && chosenBarberId) {
+    if (slotActuallyAvailable && serviceIdsForBooking.length > 0 && date && time && chosenBarberId) {
       const created = (await aiTools.createAppointment(effectiveBarbershopId, {
         client_phone: clientPhone,
         client_name: nameFromUserForBooking,
         barber_id: String(chosenBarberId),
-        service_id: String(serviceId),
+        ...(serviceIdsForBooking.length === 1
+          ? { service_id: serviceIdsForBooking[0] }
+          : { service_ids: serviceIdsForBooking }),
         date,
         time,
       })) as Record<string, unknown>;

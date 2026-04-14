@@ -41,6 +41,9 @@ coverage/
 jest-report.*
 test-results/
 
+# TestSprite MCP (pode conter API keys injetadas pelo CLI)
+testsprite_tests/tmp/config.json
+
 # Supabase local development artifacts
 supabase/.temp
 

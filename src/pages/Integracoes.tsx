@@ -6,7 +6,7 @@ import { integrationsApi, billingApi, whatsappApi, type ApiKeyItem } from "@/lib
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
 import { hasPro } from "@/lib/plan";
 import { useAuth } from "@/contexts/AuthContext";
-import { Key, Plus, Trash2, Copy, Check } from "lucide-react";
+import { Key, Plus, Trash2, Copy, Check, Loader2, AlertCircle } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import {
   Dialog,
@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/shared";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { UpgradeGate } from "@/components/UpgradeGate";
@@ -43,15 +44,25 @@ function ApiKeysTab() {
     queryFn: () => integrationsApi.listApiKeys(),
   });
 
-  const { data: n8nWebhook, isLoading: n8nWebhookLoading } = useQuery({
+  const {
+    data: n8nWebhook,
+    isFetching: n8nWebhookFetching,
+    isPlaceholderData: n8nWebhookPlaceholder,
+    isError: n8nWebhookError,
+    error: n8nWebhookErrorDetail,
+    refetch: refetchN8nWebhook,
+  } = useQuery({
     queryKey: ["integrations", "n8n-webhook"],
     queryFn: () => integrationsApi.getN8nWebhook(),
+    /** Evita `isPending` longo / skeleton infinito quando a rede ou o proxy demoram. */
+    placeholderData: { n8n_chat_webhook_url: null },
+    retry: 1,
   });
 
   useEffect(() => {
-    if (n8nWebhookLoading) return;
+    if (n8nWebhookFetching && n8nWebhookPlaceholder) return;
     setN8nUrlDraft(n8nWebhook?.n8n_chat_webhook_url ?? "");
-  }, [n8nWebhookLoading, n8nWebhook]);
+  }, [n8nWebhook?.n8n_chat_webhook_url, n8nWebhookFetching, n8nWebhookPlaceholder]);
 
   const saveN8nMutation = useMutation({
     mutationFn: (url: string | null) => integrationsApi.updateN8nWebhook(url),
@@ -123,47 +134,65 @@ function ApiKeysTab() {
               Uazapi). Cole a URL completa (https). Deixe vazio para usar apenas a variável global do servidor, se existir.
             </p>
           </div>
-          {n8nWebhookLoading ? (
-            <Skeleton className="h-10 w-full rounded-lg" />
-          ) : (
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
-              <div className="flex-1 grid gap-2">
-                <Label htmlFor="n8n-webhook-url">Production URL do webhook</Label>
-                <Input
-                  id="n8n-webhook-url"
-                  type="url"
-                  name="n8n_webhook_url"
-                  autoComplete="off"
-                  placeholder="https://seu-n8n.com/webhook/..."
-                  value={n8nUrlDraft}
-                  onChange={(e) => setN8nUrlDraft(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={saveN8nMutation.isPending}
-                  onClick={() => {
-                    setN8nUrlDraft("");
-                    saveN8nMutation.mutate(null);
-                  }}
-                >
-                  Limpar
+          {n8nWebhookError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" aria-hidden />
+              <AlertTitle>Não foi possível carregar a URL</AlertTitle>
+              <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <span className="break-words">
+                  {n8nWebhookErrorDetail instanceof Error
+                    ? n8nWebhookErrorDetail.message
+                    : "Erro desconhecido"}
+                </span>
+                <Button type="button" variant="outline" size="sm" className="shrink-0 w-fit" onClick={() => refetchN8nWebhook()}>
+                  Tentar de novo
                 </Button>
-                <Button
-                  type="button"
-                  disabled={saveN8nMutation.isPending}
-                  onClick={() => {
-                    const t = n8nUrlDraft.trim();
-                    saveN8nMutation.mutate(t === "" ? null : t);
-                  }}
-                >
-                  Salvar
-                </Button>
-              </div>
-            </div>
+              </AlertDescription>
+            </Alert>
           )}
+          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+            <div className="flex-1 grid gap-2">
+              <Label htmlFor="n8n-webhook-url" className="flex items-center gap-2">
+                Production URL do webhook
+                {n8nWebhookFetching && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />
+                )}
+              </Label>
+              <Input
+                id="n8n-webhook-url"
+                type="url"
+                name="n8n_webhook_url"
+                autoComplete="off"
+                placeholder="https://seu-n8n.com/webhook/..."
+                value={n8nUrlDraft}
+                onChange={(e) => setN8nUrlDraft(e.target.value)}
+                disabled={saveN8nMutation.isPending}
+              />
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={saveN8nMutation.isPending}
+                onClick={() => {
+                  setN8nUrlDraft("");
+                  saveN8nMutation.mutate(null);
+                }}
+              >
+                Limpar
+              </Button>
+              <Button
+                type="button"
+                disabled={saveN8nMutation.isPending}
+                onClick={() => {
+                  const t = n8nUrlDraft.trim();
+                  saveN8nMutation.mutate(t === "" ? null : t);
+                }}
+              >
+                Salvar
+              </Button>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-4">

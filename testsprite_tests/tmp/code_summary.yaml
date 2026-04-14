@@ -1,0 +1,79 @@
+# Gerado para TestSprite MCP — resumo do repositório barber-harmony (NavalhIA)
+project:
+  name: NavalhIA
+  repo: barber-harmony
+  type: monorepo
+  description: >
+    Plataforma SaaS multi-tenant para barbearias: painel administrativo (React),
+    API Node/Express (Postgres), assinaturas Stripe, integração WhatsApp via Uazapi,
+    agente de IA (OpenAI) com fila de jobs, base de conhecimento (S3 + ingestão PDF/DOC),
+    automações opcionais via n8n.
+
+tech_stack:
+  frontend:
+    runtime: React 18 + TypeScript
+    bundler: Vite 5 (dev port 3002)
+    routing: react-router-dom v6
+    state_server: "@tanstack/react-query"
+    forms: react-hook-form + zod
+    ui: Radix UI + shadcn-style components + TailwindCSS
+    charts: recharts
+    payments_ui: "@stripe/react-stripe-js"
+    tests: Vitest + Playwright (e2e)
+  backend:
+    runtime: Node.js + TypeScript (ESM)
+    framework: Express 4
+    database: PostgreSQL via pg (SQL explícito, migrations)
+    auth: JWT (jsonwebtoken) + bcryptjs
+    validation: zod
+    integrations: Stripe, AWS SES/S3, OpenAI, Uazapi (WhatsApp)
+    deployment: serverless-http compatível; scripts AWS para API estática
+    tests: Vitest + supertest
+
+major_directories:
+  - path: src/
+    role: SPA — páginas, layouts, componentes WhatsApp, dashboard, planos, auth
+  - path: backend/src/
+    role: API REST sob /api, workers (ai-worker), rotas por domínio
+  - path: scripts/aws/
+    role: deploy API e assets estáticos
+
+api_surface:
+  base: /api
+  routers:
+    - /auth — login, registro, recuperação de senha, JWT
+    - /account — conta e membros multi-unidade
+    - /billing — Stripe checkout, sessão, assinatura
+    - /integrations — WhatsApp (sub-rota /whatsapp extensa: inbox, Uazapi, IA, knowledge)
+    - /barbershops, /barbers, /services, /clients, /appointments
+    - /reports, /loyalty
+    - /public — booking público por slug
+    - /tools — chave de API para automações
+    - /webhooks — Stripe, Uazapi (/webhooks/uazapi no app), WhatsApp legado
+    - /plans — catálogo de planos
+  special_routes:
+    - POST /api/billing/webhook — raw body Stripe
+    - GET /health — healthcheck
+
+product_features:
+  - Multi-tenant com barbearias/filiais e controle de plano (upgrade gate no front)
+  - Agendamento interno e página pública /b/:slug
+  - Reagendamento/cancelamento por token (/reagendar, /cancelar)
+  - Billing recorrente Stripe + webhook + fluxo pós-checkout
+  - WhatsApp: conexão Uazapi, inbox interno, handoff humano/IA, stickers
+  - IA: worker assíncrono, simulação, versões de prompt, benchmark suite, knowledge RAG
+  - Integração opcional n8n (triggers/eventos)
+  - E-mail transacional SES
+
+frontend_routes_summary:
+  public: [/, /login, /onboarding, /docs, /b/:slug, /reagendar/:token, /cancelar/:token]
+  app_shell: /app/* — dashboard, agendamentos, barbeiros, serviços, clientes, fidelidade,
+    integrações, whatsapp-interno (condicional), configurações, relatórios, planos, ajuda
+
+test_artifacts:
+  backend_tests: backend/src/__tests__/*.test.ts
+  frontend_tests: Vitest em src; Playwright em e2e ou playwright config
+
+notes:
+  - Repositório sem .testsprite/config.json até primeira inicialização TestSprite (bootstrap).
+  - Conta TestSprite verificada via MCP: plano Free, créditos disponíveis.
