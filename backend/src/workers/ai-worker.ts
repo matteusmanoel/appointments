@@ -194,7 +194,7 @@ async function markJobFailed(jobId: string, errorMessage: string, attempts: numb
 }
 
 async function isAiEnabled(barbershopId: string): Promise<boolean> {
-  if (config.nativeAiDisabled) {
+  if (config.nativeAiDisabled && !config.n8nChatTriggerUrl?.trim()) {
     return false;
   }
   const r = await pool.query<{ enabled: boolean }>(
@@ -203,6 +203,78 @@ async function isAiEnabled(barbershopId: string): Promise<boolean> {
   );
   const row = r.rows[0];
   return row?.enabled ?? true;
+}
+
+/** User messages since last assistant reply (debounce-aware text for n8n). */
+async function getN8nUserTextAggregate(conversationId: string, fallbackText: string): Promise<string> {
+  try {
+    const r = await pool.query<{ agg: string | null }>(
+      `WITH bounds AS (
+         SELECT coalesce(max(created_at), '-infinity'::timestamptz) AS last_a
+         FROM public.ai_messages
+         WHERE conversation_id = $1::uuid AND role = 'assistant'
+       )
+       SELECT coalesce(string_agg(m.content, E'\\n' ORDER BY m.created_at), '') AS agg
+       FROM public.ai_messages m
+       CROSS JOIN bounds b
+       WHERE m.conversation_id = $1::uuid AND m.role = 'user' AND m.created_at > b.last_a`,
+      [conversationId]
+    );
+    const agg = r.rows[0]?.agg?.trim();
+    if (agg) return agg.slice(0, 64 * 1024);
+  } catch (e) {
+    console.warn("[ai-worker] getN8nUserTextAggregate failed:", e);
+  }
+  return (fallbackText ?? "").slice(0, 64 * 1024);
+}
+
+async function callN8nAgent(
+  conversationId: string,
+  fromPhone: string,
+  barbershopId: string,
+  fallbackUserText: string
+): Promise<string> {
+  const url = config.n8nChatTriggerUrl?.trim();
+  if (!url) throw new Error("N8N_CHAT_TRIGGER_URL not configured");
+
+  const text = await getN8nUserTextAggregate(conversationId, fallbackUserText);
+  const timeoutMs = Math.max(5000, config.n8nChatTimeoutMs ?? 120_000);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        text,
+        from: fromPhone,
+        sessionId: fromPhone,
+        conversationId,
+        barbershopId,
+      }),
+    });
+    const rawText = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`n8n HTTP ${resp.status}: ${rawText.slice(0, 500)}`);
+    }
+    let data: { output?: string; reply?: string; data?: unknown } = {};
+    try {
+      data = JSON.parse(rawText) as { output?: string; reply?: string; data?: unknown };
+    } catch {
+      throw new Error("n8n response is not JSON");
+    }
+    const out =
+      data.output ??
+      data.reply ??
+      (typeof data.data === "string" ? data.data : undefined);
+    if (out == null || !String(out).trim()) {
+      throw new Error("n8n JSON missing output/reply");
+    }
+    return String(out);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function ensureAiSettingsRow(barbershopId: string): Promise<void> {
@@ -255,7 +327,7 @@ async function processOneJob(): Promise<boolean> {
   if (!job) return false;
 
   const { id: jobId, barbershop_id: barbershopId, conversation_id: conversationId, payload_json, attempts } = job;
-  const { fromPhone, text: _userText } = payload_json;
+  const { fromPhone, text: userTextFromJob } = payload_json;
   console.info("[ai-worker] processing jobId=%s barbershopId=%s conversationId=%s fromPhone=%s", jobId, barbershopId, conversationId, fromPhone);
 
   try {
@@ -268,6 +340,32 @@ async function processOneJob(): Promise<boolean> {
       await updateConversationLastMessage(conversationId);
       await markJobDone(jobId);
       return true;
+    } else if (config.nativeAiDisabled && config.n8nChatTriggerUrl?.trim()) {
+      try {
+        const raw = await callN8nAgent(conversationId, fromPhone, barbershopId, String(userTextFromJob ?? ""));
+        reply = sanitizeClientFacingReply(raw);
+        console.info("[ai-worker] jobId=%s n8n reply len=%s", jobId, reply.length);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[ai-worker] jobId=%s n8n error: %s", jobId, msg);
+        reply = FALLBACK_MESSAGE;
+      }
+      const convRowN8n = await pool.query<{ is_sandbox: boolean }>(
+        `SELECT is_sandbox FROM public.ai_conversations WHERE id = $1`,
+        [conversationId]
+      );
+      const isSandboxN8n = convRowN8n.rows[0]?.is_sandbox ?? true;
+      if (!isSandboxN8n && reply) {
+        const violations = detectViolations(reply);
+        const emojiCount = (reply.match(/\p{Extended_Pictographic}/gu) ?? []).length;
+        await pool
+          .query(
+            `INSERT INTO public.ai_quality_metrics (barbershop_id, conversation_id, violations, emoji_count)
+             VALUES ($1, $2, $3, $4)`,
+            [barbershopId, conversationId, violations, emojiCount]
+          )
+          .catch((e) => console.warn("[ai-worker] failed to insert quality metrics (n8n):", e));
+      }
     } else if (!config.openaiApiKey) {
       reply = FALLBACK_MESSAGE;
     } else {

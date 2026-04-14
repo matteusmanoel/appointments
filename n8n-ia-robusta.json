@@ -1,279 +1,71 @@
 {
-  "name": "NavalhIA — WhatsApp (Evolution) + Agente + Product API",
+  "name": "NavalhIA — Uazapi + Product API (produção)",
   "nodes": [
     {
       "parameters": {
-        "numberInputs": 3
+        "content": "## NavalhIA — Produção (Uazapi + Supabase + API)\n\n**Fluxo:** API NavalhIA (`/api/webhooks/uazapi`) → fila `ai_jobs` → **ai-worker** faz POST neste webhook (`N8N_CHAT_TRIGGER_URL`) com `{ text, from, sessionId, conversationId, barbershopId }`. Respostas são enviadas ao WhatsApp pela **API via Uazapi** (token no Supabase) — **não** use Evolution nem Postgres local aqui.\n\n**Configuração**\n1. Importe o workflow, ative, copie a **Production URL** do nó *Webhook API (Uazapi)*.\n2. No backend (Lambda/env): `NATIVE_AI_DISABLED=true`, `N8N_CHAT_TRIGGER_URL=<URL copiada>`, opcional `N8N_CHAT_TIMEOUT_MS=120000`.\n3. **Product API** já está nas tools com header `X-API-Key` (key do painel Integrações). Tenant vem da key — não envie `barbershop_id`.\n4. **Modelo (Gemini):** credencial Google no n8n.\n\n**Supabase:** conversas e mensagens ficam na base da API; **não** é necessário credencial Postgres no n8n para este fluxo.\n\n**Postgres só no n8n:** use apenas se quiser logs/analytics em DB separado (credenciais: host na Supabase *Settings → Database* ou RDS; string em *Credentials → Postgres*).",
+        "height": 820,
+        "width": 460,
+        "color": 5
       },
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
+      "type": "n8n-nodes-base.stickyNote",
       "position": [
-        1072,
-        624
+        -700,
+        -120
       ],
-      "id": "faa7e457-26d4-4eaa-a458-fa251a8fffa9",
-      "name": "Merge"
-    },
-    {
-      "parameters": {
-        "jsCode": "// Recebe o texto de entrada\nconst texto = $input.first().json.output;\n\n// Divide o texto apenas pela sequência de barra invertida dupla (\\\\)\nconst itens = texto.split(/\\\\/);\n\n// Retorna cada item como um objeto separado, filtrando itens vazios\nreturn itens\n  .filter(item => item.trim() !== \"\")\n  .map(item => ({ item }));"
-      },
-      "id": "7fa24f58-089e-4abc-943b-a61649b7e459",
-      "name": "SEPARA MENSAGENS2",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1696,
-        640
-      ]
-    },
-    {
-      "parameters": {
-        "options": {}
-      },
-      "id": "c1e497ab-5163-4438-9741-c5c3f002939a",
-      "name": "Loop Over Items1",
-      "type": "n8n-nodes-base.splitInBatches",
-      "typeVersion": 3,
-      "position": [
-        2016,
-        640
-      ]
-    },
-    {
-      "parameters": {
-        "amount": 7
-      },
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        -144,
-        384
-      ],
-      "id": "7a2402ec-b7d2-4e1a-8eb5-7458bce16aba",
-      "name": "PAUSA DE 7 SEGUNDOS",
-      "webhookId": "a94026f8-338c-4441-a4d2-1f7633918121"
-    },
-    {
-      "parameters": {
-        "amount": 1
-      },
-      "id": "9b7b1013-02e7-499e-8f30-3edf3798d479",
-      "name": "DELAY 1 SEGUNDO",
-      "type": "n8n-nodes-base.wait",
-      "typeVersion": 1.1,
-      "position": [
-        2448,
-        640
-      ],
-      "webhookId": "dad277f2-a584-45e2-ad70-a45c4229f5e6"
-    },
-    {
-      "parameters": {
-        "operation": "select",
-        "schema": {
-          "__rl": true,
-          "mode": "list",
-          "value": "public"
-        },
-        "table": {
-          "__rl": true,
-          "value": "messages",
-          "mode": "list",
-          "cachedResultName": "messages"
-        },
-        "returnAll": true,
-        "where": {
-          "values": [
-            {
-              "column": "source_id",
-              "value": "=={{ $('Recebe mensagem').item.json.body.data.key.remoteJid }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        80,
-        384
-      ],
-      "id": "e9ccd8b3-2c71-4529-8b71-c03c128705d7",
-      "name": "BUSCA MENSAGENS DO USUÁRIO"
-    },
-    {
-      "parameters": {
-        "fieldsToSummarize": {
-          "values": [
-            {
-              "aggregation": "concatenate",
-              "field": "content"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.summarize",
-      "typeVersion": 1.1,
-      "position": [
-        304,
-        384
-      ],
-      "id": "24904e7f-5928-47d7-bae7-d2c84b66bb31",
-      "name": "AGRUPA MENSAGENS"
-    },
-    {
-      "parameters": {
-        "operation": "deleteTable",
-        "schema": {
-          "__rl": true,
-          "mode": "list",
-          "value": "public"
-        },
-        "table": {
-          "__rl": true,
-          "value": "messages",
-          "mode": "list",
-          "cachedResultName": "messages"
-        },
-        "deleteCommand": "delete",
-        "where": {
-          "values": [
-            {
-              "column": "source_id",
-              "value": "=={{ $('Recebe mensagem').item.json.body.data.key.remoteJid }}"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        512,
-        384
-      ],
-      "id": "8e974c6f-d09f-4c67-a8e8-a0e7857255e2",
-      "name": "DELETA MENSAGENS"
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "loose",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "leftValue": "={{ $('Recebe mensagem').item.json.body.data.messageType }}",
-                    "rightValue": "conversation",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    },
-                    "id": "9187681f-1216-4786-9c22-8861c428b577"
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "texto"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "loose",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "f21fa68b-70b2-494a-b914-4b15aa5bae3f",
-                    "leftValue": "={{ $('Recebe mensagem').item.json.body.data.messageType }}",
-                    "rightValue": "audioMessage",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals",
-                      "name": "filter.operator.equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Audio"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "loose",
-                  "version": 2
-                },
-                "conditions": [
-                  {
-                    "id": "dd71e80b-1078-46d5-b367-958e5790a113",
-                    "leftValue": "={{ $('Recebe mensagem').item.json.body.data.messageType }}\n",
-                    "rightValue": "imageMessage",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals",
-                      "name": "filter.operator.equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "Imagem"
-            }
-          ]
-        },
-        "looseTypeValidation": true,
-        "options": {}
-      },
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3.3,
-      "position": [
-        -720,
-        624
-      ],
-      "id": "5d6c4610-79ae-4925-9328-341b3e1416ca",
-      "name": "Verifica tipo de arquivo"
-    },
-    {
-      "parameters": {
-        "resource": "messages-api",
-        "instanceName": "REPLACE_WITH_EVOLUTION_INSTANCE",
-        "remoteJid": "={{ $('Coleta').item.json.telefone }}",
-        "messageText": "={{ $json.item }}",
-        "options_message": {}
-      },
-      "type": "n8n-nodes-evolution-api.evolutionApi",
       "typeVersion": 1,
+      "id": "bda54dfa-ec13-4bd1-ba56-0f1a0ee47f78",
+      "name": "Instruções — produção"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "navalhia-uazapi-4fc446d2",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
       "position": [
-        2256,
-        640
+        -380,
+        280
       ],
-      "id": "b0e566d7-f64a-4ae6-a303-ecee08a007fa",
-      "name": "Envia mensagem para o WhatsApp"
+      "id": "9e553629-e53c-44c2-bc0c-d00adf6dabca",
+      "name": "Webhook API (Uazapi)",
+      "webhookId": "b49c73cc-6da2-4854-a9d2-b99e55141787"
     },
     {
       "parameters": {
         "assignments": {
           "assignments": [
             {
-              "id": "5356af18-19e2-43c7-a230-a250eae425cf",
+              "id": "bf2243ee-16dc-498d-97fb-4b23d56f11ca",
               "name": "text",
-              "value": "={{ $('AGRUPA MENSAGENS').item.json.concatenated_content }}",
+              "value": "={{ $json.body.text }}",
+              "type": "string"
+            },
+            {
+              "id": "b98161cd-3b3f-41f5-a5b7-031bc860029e",
+              "name": "sessionId",
+              "value": "={{ $json.body.sessionId }}",
+              "type": "string"
+            },
+            {
+              "id": "a105ca64-c537-414a-be93-59f51ed3693c",
+              "name": "from",
+              "value": "={{ $json.body.from }}",
+              "type": "string"
+            },
+            {
+              "id": "4f0f40bd-8b36-42af-b1dd-11ac3b8b2341",
+              "name": "conversationId",
+              "value": "={{ $json.body.conversationId }}",
+              "type": "string"
+            },
+            {
+              "id": "3d8d3999-059f-4b7e-a416-6df4885451f3",
+              "name": "barbershopId",
+              "value": "={{ $json.body.barbershopId }}",
               "type": "string"
             }
           ]
@@ -283,526 +75,44 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        704,
-        384
+        -80,
+        280
       ],
-      "id": "3d485ad8-4f71-4fc6-ad6b-53db019955a2",
-      "name": "output mensagem"
-    },
-    {
-      "parameters": {
-        "schema": {
-          "__rl": true,
-          "value": "public",
-          "mode": "list",
-          "cachedResultName": "public"
-        },
-        "table": {
-          "__rl": true,
-          "value": "messages",
-          "mode": "list"
-        },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "status": 0,
-            "created_at": "={{ $now }}",
-            "updated_at": "={{ $now }}",
-            "id": "={{ $execution.id }}",
-            "inbox_id": 1,
-            "conversation_id": 1,
-            "message_type": 0,
-            "source_id": "=={{ $('Coleta').item.json.telefone }}",
-            "content": "=={{ $('Coleta').item.json.mensagem }}",
-            "account_id": 1,
-            "content_type": 0,
-            "sender_id": 0
-          },
-          "matchingColumns": [
-            "id"
-          ],
-          "schema": [
-            {
-              "id": "id",
-              "displayName": "id",
-              "required": false,
-              "defaultMatch": true,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "content",
-              "displayName": "content",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "account_id",
-              "displayName": "account_id",
-              "required": true,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "inbox_id",
-              "displayName": "inbox_id",
-              "required": true,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "conversation_id",
-              "displayName": "conversation_id",
-              "required": true,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "message_type",
-              "displayName": "message_type",
-              "required": true,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "created_at",
-              "displayName": "created_at",
-              "required": true,
-              "defaultMatch": false,
-              "display": true,
-              "type": "dateTime",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "updated_at",
-              "displayName": "updated_at",
-              "required": true,
-              "defaultMatch": false,
-              "display": true,
-              "type": "dateTime",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "private",
-              "displayName": "private",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "boolean",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "status",
-              "displayName": "status",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "source_id",
-              "displayName": "source_id",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "content_type",
-              "displayName": "content_type",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "content_attributes",
-              "displayName": "content_attributes",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "object",
-              "canBeUsedToMatch": true,
-              "removed": true
-            },
-            {
-              "id": "sender_type",
-              "displayName": "sender_type",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": true
-            },
-            {
-              "id": "sender_id",
-              "displayName": "sender_id",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "external_source_ids",
-              "displayName": "external_source_ids",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "object",
-              "canBeUsedToMatch": true,
-              "removed": true
-            },
-            {
-              "id": "additional_attributes",
-              "displayName": "additional_attributes",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "object",
-              "canBeUsedToMatch": true,
-              "removed": true
-            },
-            {
-              "id": "processed_message_content",
-              "displayName": "processed_message_content",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": true
-            },
-            {
-              "id": "sentiment",
-              "displayName": "sentiment",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "object",
-              "canBeUsedToMatch": true,
-              "removed": true
-            }
-          ],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        -352,
-        384
-      ],
-      "id": "a981ce50-7ac9-4d5c-ac9e-7da9e73fcde5",
-      "name": "REGISTRA MENSAGEM2"
-    },
-    {
-      "parameters": {
-        "content": "## 1. Webhook\n\nO nó Webhook é o ponto inicial desse fluxo n8n — responsável por receber eventos de mensagens provenientes da Evolution API (integrada com WhatsApp). Ele está configurado com as seguintes características principais:\n\n-Endpoint: URL de produção\nEssa URL é usada na configuração do Evolution para que todas as mensagens, documentos, imagens etc. sejam enviadas diretamente para o fluxo, disparando a automação.\n\n-Método: Recebe requisições POST (formato padrão de eventos/webhook enviados pelo Evolution para n8n).\n\n",
-        "height": 400,
-        "width": 400
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -2032,
-        592
-      ],
-      "typeVersion": 1,
-      "id": "3c7a1798-b587-43d7-a82a-24640fd5a054",
-      "name": "Sticky Note1"
-    },
-    {
-      "parameters": {
-        "content": "## 1.1 Conectando no evolution\n\nPara conectar o webhook no Evolution, copie a URL exibida em “Production URL” no n8n e cole no campo “Webhook URL” nas configurações da Evolution API. Dessa forma, todos os eventos e mensagens serão enviados automaticamente para o seu fluxo, permitindo o processamento em tempo real.",
-        "height": 208,
-        "width": 352
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -1616,
-        784
-      ],
-      "typeVersion": 1,
-      "id": "a9f2f76a-a04a-4325-844b-e5e817cf4f38",
-      "name": "Sticky Note2"
-    },
-    {
-      "parameters": {
-        "content": "### Webhook",
-        "height": 176,
-        "width": 352,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -1616,
-        592
-      ],
-      "typeVersion": 1,
-      "id": "d99d2070-a75f-450c-94f9-7dece2f14577",
-      "name": "Sticky Note3"
-    },
-    {
-      "parameters": {
-        "content": "## 2. Coleta\n\nEsse nó é responsável por separar todos os dados que serão utilizados ao longo do workflow. Como por exemplo: Nome, telefone, tipo de mensagem e a mensagem que foi recebida",
-        "height": 416,
-        "width": 288
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -1200,
-        416
-      ],
-      "typeVersion": 1,
-      "id": "636874e7-901b-44ff-9571-26beef1d1055",
-      "name": "Sticky Note5"
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "bb5f3999-fed4-44e1-972f-1397a3c6fee6",
-              "name": "nome",
-              "value": "={{ $json.body.data.pushName }}",
-              "type": "string"
-            },
-            {
-              "id": "65cf5864-7b1f-457f-8007-0a2bc0380a3c",
-              "name": "telefone",
-              "value": "={{ $json.body.data.key.remoteJid }}",
-              "type": "string"
-            },
-            {
-              "id": "be20cf5a-21c3-47e1-8344-fd78b9d04bff",
-              "name": "tipo",
-              "value": "={{ $json.body.data.messageType }}\n",
-              "type": "string"
-            },
-            {
-              "id": "cf2af045-3ffa-4d58-8a2d-c5cb8f85f849",
-              "name": "mensagem",
-              "value": "={{ $json.body.data.message.conversation }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
-      "position": [
-        -1168,
-        640
-      ],
-      "id": "6dd7284a-0816-4e9b-9906-626691ab805f",
-      "name": "Coleta"
-    },
-    {
-      "parameters": {
-        "content": "## 4. Divisão por mensagem",
-        "height": 336,
-        "width": 288,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -816,
-        512
-      ],
-      "typeVersion": 1,
-      "id": "e5883e54-a365-462b-aab6-803cd922cb40",
-      "name": "Sticky Note10"
-    },
-    {
-      "parameters": {
-        "content": "## Switch\n\nComo funciona:\n\n- O nó avalia o campo messageType presente no corpo da mensagem (item.json.body.data.messageType).\n\n- Ele utiliza regras (“Routing Rules”) para comparar o valor desse campo:\n\n- Se for igual a conversation, classifica como texto.\n\n- Se for igual a audioMessage, classifica como áudio.\n\n- Se for igual a imageMessage, classifica como imagem.",
-        "height": 432,
-        "width": 288
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -816,
-        864
-      ],
-      "typeVersion": 1,
-      "id": "b3a72bdd-4c57-43cb-9ad9-8554c9a2106e",
-      "name": "Sticky Note11"
-    },
-    {
-      "parameters": {
-        "content": "## 5.1 Mensagem de Texto (com espaçamento/buffer) ",
-        "height": 240,
-        "width": 1264,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -400,
-        320
-      ],
-      "typeVersion": 1,
-      "id": "fde28578-ffbd-44eb-a2ab-22032bc827e7",
-      "name": "Sticky Note13"
-    },
-    {
-      "parameters": {
-        "content": "## Agente de I.A",
-        "height": 192,
-        "width": 256,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        1248,
-        592
-      ],
-      "typeVersion": 1,
-      "id": "84a0edff-ca10-4017-afcc-db1d0cfb89db",
-      "name": "Sticky Note18"
+      "id": "b39d13ee-57a2-43ce-a592-b429cfcbebe6",
+      "name": "Preparar entrada"
     },
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ $('AGRUPA MENSAGENS').item.json.concatenated_content }}",
+        "text": "={{ $json.text }}",
         "options": {
-          "systemMessage": "=# NavalhIA — Atendimento WhatsApp (Product API)\n\n**Contexto**\n- Referência de tempo (n8n): {{ $now.format('yyyy-MM-dd HH:mm') }} — alinhe datas de agendamento a **America/Sao_Paulo**.\n- JID/contato Evolution: {{ $('Coleta').item.json.telefone }} — para **upsert_client**, use **apenas dígitos** do telefone (ex.: remova @s.whatsapp.net se vier anexado ao número).\n\n**Papel**\nVocê é o atendente da barbearia (NavalhIA). Estilo WhatsApp: mensagens curtas e diretas; sem emoji salvo se o cliente usar primeiro. Negrito no padrão WhatsApp: *texto* (um asterisco por lado).\n\n**Objetivo**\nFechar **agendamento** com o mínimo de idas e vindas. Use **somente** dados retornados pelas ferramentas (Product API). Não invente preços, serviços, horários, nomes de barbeiros ou disponibilidade.\n\n**Ferramentas HTTP**\n- **list_services** — catálogo (nome, preço, duração, category: combo | corte | barba).\n- **list_barbers** — profissionais e IDs.\n- **list_appointments** — ocupação em uma data (**date** = yyyy-MM-dd).\n- **upsert_client** — cria/atualiza cliente por **phone** (só dígitos) e nome/obs opcionais.\n- **create_appointment** — cria agendamento após confirmação explícita.\n\n**Regras operacionais**\n- Não peça telefone para “identificar” o cliente: o canal já identifica; use o número derivado do JID nas tools quando precisar cadastrar.\n- Não exiba UUIDs ao cliente.\n- Combo “corte e barba” costuma ser **um** item (category=**combo**); não some corte avulso + barba avulsa nesse caso.\n- Antes de **create_appointment**: confirme com o cliente serviço, data, hora e barbeiro (sim/pode/ok).\n- Só diga que está agendado após **create_appointment** retornar sucesso.\n- Ao falar datas com o cliente: dd/MM/yyyy ou por extenso; nas tools use **yyyy-MM-dd**.\n- Se **list_appointments** não bastar para cravar horário, sugira no máximo **2–3** opções conversacionais.\n\n**Falhas**\nNão exponha erro técnico nem nomes de ferramentas. Ofereça outro horário ou peça para repetir a preferência."
+          "systemMessage": "=# NavalhIA — Atendimento (Product API)\n\n**Contexto**\n- Hora no servidor n8n: {{ $now.format('yyyy-MM-dd HH:mm') }} (alinhe agendamentos a **America/Sao_Paulo**).\n- Telefone do contato (API): {{ $json.from }} — use **apenas dígitos** em upsert_client.\n\n**Papel**\nAtendente da barbearia no WhatsApp. Mensagens curtas; sem emoji salvo se o cliente usar primeiro. Negrito: *texto*.\n\n**Objetivo**\nAgendamento confirmado via tools. Não invente preços, serviços ou horários.\n\n**Ferramentas**\n- list_services, list_barbers, list_appointments (date=yyyy-MM-dd), upsert_client, create_appointment\n\n**Regras**\n- Não peça telefone para identificar: use o número do contexto nas tools.\n- Não mostre UUID ao cliente.\n- Combo costuma ser category=combo.\n- Confirme antes de create_appointment."
         }
       },
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
       "position": [
-        1264,
-        640
+        220,
+        280
       ],
-      "id": "6f407f54-a0fa-41b7-9408-8a740c8d7878",
-      "name": "AGENTE DE I.A.",
+      "id": "73462b20-1e22-46d4-abf1-8c23695dbb45",
+      "name": "Agente NavalhIA",
       "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 5000
-    },
-    {
-      "parameters": {
-        "content": "## 6.2. Modelo",
-        "height": 192,
-        "width": 256,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        1088,
-        912
-      ],
-      "typeVersion": 1,
-      "id": "1849c612-272c-4dca-a270-54d320bee3ae",
-      "name": "Sticky Note19"
-    },
-    {
-      "parameters": {
-        "content": "### Chat model\n\nÉ o cérebro do Agent, usando inteligência artificial para interpretar as mensagens do usuário e gerar respostas. O modelo pode entender perguntas, analisar contexto e criar interações de conversa de forma natural.",
-        "height": 224,
-        "width": 256
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        1088,
-        1120
-      ],
-      "typeVersion": 1,
-      "id": "29a7b953-9573-466c-8345-b19606b5398c",
-      "name": "Sticky Note20"
-    },
-    {
-      "parameters": {
-        "content": "## 6.3. Memory",
-        "height": 192,
-        "width": 256,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        1360,
-        912
-      ],
-      "typeVersion": 1,
-      "id": "621ff083-e125-423b-8972-f13ed3440366",
-      "name": "Sticky Note21"
-    },
-    {
-      "parameters": {
-        "content": "### Memory\n\nFunciona como uma memória de curto ou longo prazo do Agent. Ele armazena informações relevantes durante a conversa, como histórico, dados do usuário ou preferências, permitindo respostas mais personalizadas e contextualizadas",
-        "height": 224,
-        "width": 256
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        1360,
-        1120
-      ],
-      "typeVersion": 1,
-      "id": "50e76793-a816-41e4-af6a-b7f9460e7076",
-      "name": "Sticky Note22"
-    },
-    {
-      "parameters": {
-        "content": "## Faz o envio fracionado das mensagens",
-        "height": 256,
-        "width": 688,
-        "color": 4
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        1920,
-        576
-      ],
-      "typeVersion": 1,
-      "id": "caad2f9b-7105-4263-a778-54febef09f99",
-      "name": "Sticky Note30",
-      "disabled": true
+      "maxTries": 2,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
         "sessionIdType": "customKey",
-        "sessionKey": "={{ $('Coleta').item.json.telefone }}"
+        "sessionKey": "={{ $json.sessionId }}"
       },
       "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1.3,
       "position": [
-        1440,
-        976
+        220,
+        520
       ],
-      "id": "cdb67cd5-aad7-4ba4-a3f2-66440bf56824",
+      "id": "40fce597-2856-434c-b553-6d90d16b561e",
       "name": "Simple Memory"
     },
     {
@@ -812,100 +122,37 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
       "position": [
-        1168,
-        976
+        40,
+        520
       ],
-      "id": "0a7abb01-22d4-44f2-9bfc-45c6d6ac99af",
+      "id": "216fa5f0-2fc9-4b32-a169-758c56fb3405",
       "name": "Google Gemini Chat Model"
     },
     {
       "parameters": {
-        "content": "## Mensagem de Texto\n\nComo funciona:\n- Quando o usuário manda uma mensagem, o agente espera alguns segundos.\n- Se o usuário mandar mais mensagens nesse tempo, todas são juntadas.\n- Depois desse tempo, o agente responde todas de uma vez.\n\nAssim, o agente não interrompe o usuário com várias respostas e pode responder de forma mais parecida com uma pessoa conversando normalmente.",
-        "height": 272,
-        "width": 464
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        0,
-        0
-      ],
-      "typeVersion": 1,
-      "id": "88e033cb-de7c-48e9-9656-e9f359648e5b",
-      "name": "Sticky Note15"
-    },
-    {
-      "parameters": {
-        "httpMethod": "POST",
-        "path": "5ca49874-447c-46fc-9e4a-3a2bc8f98afd",
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ output: $json.output }) }}",
         "options": {}
       },
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2.1,
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
       "position": [
-        -1504,
-        640
+        520,
+        280
       ],
-      "id": "b0a32491-0575-48d5-bf7d-f86b87975ee4",
-      "name": "Recebe mensagem",
-      "webhookId": "5ca49874-447c-46fc-9e4a-3a2bc8f98afd"
+      "id": "e9f58610-5ecf-427c-8a7e-4055ca4b6459",
+      "name": "Responder JSON (API)"
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "CREATE TABLE IF NOT EXISTS public.messages (\n    id BIGINT PRIMARY KEY,\n    content TEXT,\n    account_id INTEGER NOT NULL DEFAULT 1,\n    inbox_id INTEGER NOT NULL DEFAULT 1,\n    conversation_id INTEGER NOT NULL DEFAULT 1,\n    message_type INTEGER NOT NULL DEFAULT 0,\n    created_at TIMESTAMP NOT NULL DEFAULT NOW(),\n    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),\n    private BOOLEAN DEFAULT FALSE,\n    status INTEGER DEFAULT 0,\n    source_id VARCHAR(255),\n    content_type INTEGER DEFAULT 0,\n    sender_id INTEGER DEFAULT 0\n);\n\nCREATE INDEX IF NOT EXISTS idx_messages_source_id ON public.messages(source_id);\nCREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages(created_at);\n",
-        "options": {}
-      },
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
-      "position": [
-        -1952,
-        336
-      ],
-      "id": "35bc6a00-0cea-4d82-8266-b76bd00f6112",
-      "name": "Execute a SQL query"
-    },
-    {
-      "parameters": {
-        "content": "## Execute para começar\n**Execute esse nó antes de começar seu fluxo. Ele irá fazer o Postgres funcionar.**",
-        "height": 304,
-        "width": 400,
-        "color": 3
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -2032,
-        208
-      ],
-      "typeVersion": 1,
-      "id": "a762cb61-415e-4c19-b725-e1732e9c388d",
-      "name": "Sticky Note"
-    },
-    {
-      "parameters": {
-        "content": "## NavalhIA — Integração produção\n\n**Product API (este fluxo)**  \n- Base: `https://api.navalhia.com.br`  \n- Header em todas as tools: `X-API-Key: REPLACE_WITH_TOOLS_API_KEY`  \n- Substitua pelo valor da **API Key** gerada no painel (Integrações). **Não** commite a key no Git.\n\n**Tenant**  \n- A API identifica a barbearia pela key. **Não** envie `barbershop_id` manualmente nas tools.\n\n**Entrada WhatsApp (Evolution)**  \n- Webhook POST compatível com Evolution API (messages.upsert). Copie a **Production URL** do nó *Recebe mensagem* e configure na Evolution.\n\n**Saída WhatsApp**  \n- Nó *Envia mensagem para o WhatsApp*: ajuste **instanceName** para o nome da sua instância Evolution (substitua o placeholder se ainda estiver como TESTE).\n\n**Buffer de mensagens (Postgres)**  \n- Os nós *REGISTRA/BUSCA/DELETA mensagens* usam uma tabela `messages` **no Postgres conectado ao n8n** (não é o Supabase da NavalhIA). Rode *Execute a SQL query* uma vez nesse banco, ou aponte credenciais para um Postgres dedicado.\n\n**NavalhIA + Uazapi (painel)**  \n- O app em produção recebe WhatsApp via API própria. Para encaminhar conversas do backend para n8n, use o fluxo/documentação de **Chat Trigger** / variável `N8N_CHAT_TRIGGER_URL` — o payload **não** é idêntico ao da Evolution; este arquivo é focado em **Evolution → webhook**.\n\n**Documentação:** `docs/N8N_PRODUCT_API_SETUP.md` no repositório.",
-        "height": 720,
-        "width": 460,
-        "color": 5
-      },
-      "type": "n8n-nodes-base.stickyNote",
-      "position": [
-        -2032,
-        560
-      ],
-      "typeVersion": 1,
-      "id": "f2f61f0d-fcce-4c37-831e-78d4489feb91",
-      "name": "NavalhIA — integração produção"
-    },
-    {
-      "parameters": {
-        "toolDescription": "Lista serviços da barbearia (nome, preço, duração, category). Chame quando precisar de catálogo ou IDs de serviço.",
+        "toolDescription": "Lista serviços (nome, preço, duração, category).",
         "url": "https://api.navalhia.com.br/api/tools/list_services",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "REPLACE_WITH_TOOLS_API_KEY"
+              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
             },
             {
               "name": "Accept",
@@ -918,22 +165,22 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        1520,
-        400
+        520,
+        120
       ],
-      "id": "9f216220-c1f0-47fa-bad7-ddd943718333",
+      "id": "d8a657e2-ddaa-4bf9-8057-fd40c3790adc",
       "name": "NavalhIA — listar serviços"
     },
     {
       "parameters": {
-        "toolDescription": "Lista barbeiros disponíveis e seus IDs.",
+        "toolDescription": "Lista barbeiros.",
         "url": "https://api.navalhia.com.br/api/tools/list_barbers",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "REPLACE_WITH_TOOLS_API_KEY"
+              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
             },
             {
               "name": "Accept",
@@ -946,22 +193,22 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        1520,
-        560
+        520,
+        280
       ],
-      "id": "058ac2c7-0abc-49d9-b46d-b0017902c130",
+      "id": "e667c79a-625d-4f44-b6a4-bae245c33052",
       "name": "NavalhIA — listar barbeiros"
     },
     {
       "parameters": {
-        "toolDescription": "Lista agendamentos/ocupação para uma data (yyyy-MM-dd). Use para inferir horários ocupados.",
+        "toolDescription": "Lista agendamentos por data (yyyy-MM-dd).",
         "url": "https://api.navalhia.com.br/api/tools/list_appointments",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
             {
               "name": "date",
-              "value": "={{ $fromAI('parameters0_Value', 'Data no formato yyyy-MM-dd', 'string') }}"
+              "value": "={{ $fromAI('parameters0_Value', 'Data yyyy-MM-dd', 'string') }}"
             }
           ]
         },
@@ -970,7 +217,7 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "REPLACE_WITH_TOOLS_API_KEY"
+              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
             },
             {
               "name": "Accept",
@@ -983,15 +230,15 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        1520,
-        720
+        520,
+        440
       ],
-      "id": "952f77ed-3477-4477-8236-532443f9198f",
+      "id": "bac1d0df-3e0e-43b3-a195-158578c8cbce",
       "name": "NavalhIA — listar agendamentos"
     },
     {
       "parameters": {
-        "toolDescription": "Cria ou atualiza cliente pelo telefone. Phone: apenas dígitos (ex.: 5511999990000).",
+        "toolDescription": "Cria/atualiza cliente por telefone (só dígitos).",
         "method": "POST",
         "url": "https://api.navalhia.com.br/api/tools/upsert_client",
         "sendHeaders": true,
@@ -999,7 +246,11 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "REPLACE_WITH_TOOLS_API_KEY"
+              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
             },
             {
               "name": "Content-Type",
@@ -1012,15 +263,15 @@
           "parameters": [
             {
               "name": "phone",
-              "value": "={{ $fromAI('parameters0_Value', 'Telefone só dígitos', 'string') }}"
+              "value": "={{ $fromAI('parameters0_Value', 'Telefone', 'string') }}"
             },
             {
               "name": "name",
-              "value": "={{ $fromAI('parameters1_Value', 'Nome do cliente', 'string') }}"
+              "value": "={{ $fromAI('parameters1_Value', 'Nome', 'string') }}"
             },
             {
               "name": "notes",
-              "value": "={{ $fromAI('parameters2_Value', 'Observações', 'string') }}"
+              "value": "={{ $fromAI('parameters2_Value', 'Obs', 'string') }}"
             }
           ]
         },
@@ -1029,15 +280,15 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        1520,
-        880
+        520,
+        600
       ],
-      "id": "4e60d318-aae8-40ee-a1ef-84a4c275773b",
+      "id": "303f7953-71e1-4355-b307-b7fcbe38b060",
       "name": "NavalhIA — upsert cliente"
     },
     {
       "parameters": {
-        "toolDescription": "Cria agendamento. Só chame após confirmação explícita do cliente. IDs vêm de list_services / list_barbers / upsert_client.",
+        "toolDescription": "Cria agendamento após confirmação.",
         "method": "POST",
         "url": "https://api.navalhia.com.br/api/tools/create_appointment",
         "sendHeaders": true,
@@ -1045,7 +296,11 @@
           "parameters": [
             {
               "name": "X-API-Key",
-              "value": "REPLACE_WITH_TOOLS_API_KEY"
+              "value": "bfk_75ab4029-3c67-4844-93f2-edbeaf3af70b_k6dekrh5"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
             },
             {
               "name": "Content-Type",
@@ -1058,35 +313,35 @@
           "parameters": [
             {
               "name": "client_id",
-              "value": "={{ $fromAI('parameters0_Value', 'UUID do cliente', 'string') }}"
+              "value": "={{ $fromAI('parameters0_Value', 'client UUID', 'string') }}"
             },
             {
               "name": "barber_id",
-              "value": "={{ $fromAI('parameters1_Value', 'UUID do barbeiro', 'string') }}"
+              "value": "={{ $fromAI('parameters1_Value', 'barber UUID', 'string') }}"
             },
             {
               "name": "service_id",
-              "value": "={{ $fromAI('parameters2_Value', 'UUID do serviço', 'string') }}"
+              "value": "={{ $fromAI('parameters2_Value', 'service UUID', 'string') }}"
             },
             {
               "name": "date",
-              "value": "={{ $fromAI('parameters3_Value', 'Data yyyy-MM-dd', 'string') }}"
+              "value": "={{ $fromAI('parameters3_Value', 'yyyy-MM-dd', 'string') }}"
             },
             {
               "name": "time",
-              "value": "={{ $fromAI('parameters4_Value', 'Horário HH:mm', 'string') }}"
+              "value": "={{ $fromAI('parameters4_Value', 'HH:mm', 'string') }}"
             },
             {
               "name": "notes",
-              "value": "={{ $fromAI('parameters5_Value', 'Observações', 'string') }}"
+              "value": "={{ $fromAI('parameters5_Value', 'notes', 'string') }}"
             },
             {
               "name": "client_phone",
-              "value": "={{ $fromAI('parameters6_Value', 'Telefone do cliente (dígitos)', 'string') }}"
+              "value": "={{ $fromAI('parameters6_Value', 'phone', 'string') }}"
             },
             {
               "name": "client_name",
-              "value": "={{ $fromAI('parameters7_Value', 'Nome do cliente', 'string') }}"
+              "value": "={{ $fromAI('parameters7_Value', 'name', 'string') }}"
             }
           ]
         },
@@ -1095,298 +350,41 @@
       "type": "n8n-nodes-base.httpRequestTool",
       "typeVersion": 4.3,
       "position": [
-        1520,
-        1040
+        520,
+        760
       ],
-      "id": "efcf9e9c-1fb4-4e1b-9d16-dbef6e55bae3",
+      "id": "d3af2462-d3ca-45a3-8069-eb7d6ceab85d",
       "name": "NavalhIA — criar agendamento"
     }
   ],
-  "pinData": {
-    "Recebe mensagem": [
-      {
-        "json": {
-          "headers": {
-            "host": "n8n.example.com",
-            "user-agent": "axios/1.12.2",
-            "content-length": "1628",
-            "accept": "application/json, text/plain, */*",
-            "accept-encoding": "gzip, br",
-            "cdn-loop": "cloudflare; loops=1",
-            "cf-connecting-ip": "5.78.46.96",
-            "cf-ipcountry": "US",
-            "cf-ray": "999686d85ed9ff19-PDX",
-            "cf-visitor": "{\"scheme\":\"https\"}",
-            "content-type": "application/json",
-            "x-forwarded-for": "172.68.174.173",
-            "x-forwarded-host": "fatcrow-n8n.cloudfy.cloud",
-            "x-forwarded-port": "443",
-            "x-forwarded-proto": "https",
-            "x-forwarded-server": "d4be2114313d",
-            "x-real-ip": "172.68.174.173"
-          },
-          "params": {},
-          "query": {},
-          "body": {
-            "event": "messages.upsert",
-            "instance": "TESTE",
-            "data": {
-              "key": {
-                "remoteJid": "5531936180648@s.whatsapp.net",
-                "remoteJidAlt": "218318120185914@lid",
-                "fromMe": false,
-                "id": "3EB09E56E34606DA80C3C0",
-                "participant": "",
-                "addressingMode": "pn"
-              },
-              "pushName": "Bruno Gabarra",
-              "status": "DELIVERY_ACK",
-              "message": {
-                "conversation": "como vc ta",
-                "messageContextInfo": {
-                  "deviceListMetadata": {
-                    "senderKeyIndexes": [],
-                    "recipientKeyIndexes": [],
-                    "senderKeyHash": {
-                      "0": 208,
-                      "1": 158,
-                      "2": 46,
-                      "3": 47,
-                      "4": 218,
-                      "5": 252,
-                      "6": 53,
-                      "7": 87,
-                      "8": 241,
-                      "9": 210
-                    },
-                    "senderTimestamp": {
-                      "low": 1762259098,
-                      "high": 0,
-                      "unsigned": true
-                    },
-                    "senderAccountType": 0,
-                    "receiverAccountType": 0,
-                    "recipientKeyHash": {
-                      "0": 31,
-                      "1": 32,
-                      "2": 154,
-                      "3": 226,
-                      "4": 215,
-                      "5": 124,
-                      "6": 47,
-                      "7": 27,
-                      "8": 251,
-                      "9": 176
-                    },
-                    "recipientTimestamp": {
-                      "low": 1762261878,
-                      "high": 0,
-                      "unsigned": true
-                    }
-                  },
-                  "deviceListMetadataVersion": 2,
-                  "messageSecret": {
-                    "0": 240,
-                    "1": 242,
-                    "2": 206,
-                    "3": 72,
-                    "4": 50,
-                    "5": 3,
-                    "6": 11,
-                    "7": 217,
-                    "8": 113,
-                    "9": 95,
-                    "10": 226,
-                    "11": 196,
-                    "12": 136,
-                    "13": 3,
-                    "14": 224,
-                    "15": 43,
-                    "16": 187,
-                    "17": 128,
-                    "18": 226,
-                    "19": 146,
-                    "20": 94,
-                    "21": 78,
-                    "22": 32,
-                    "23": 19,
-                    "24": 66,
-                    "25": 43,
-                    "26": 17,
-                    "27": 164,
-                    "28": 129,
-                    "29": 253,
-                    "30": 141,
-                    "31": 208
-                  },
-                  "limitSharingV2": {
-                    "sharingLimited": false,
-                    "trigger": 0,
-                    "limitSharingSettingTimestamp": {
-                      "low": 0,
-                      "high": 0,
-                      "unsigned": false
-                    },
-                    "initiatedByMe": false
-                  }
-                }
-              },
-              "messageType": "conversation",
-              "messageTimestamp": 1762284634,
-              "instanceId": "0c70d0a3-e000-4dd8-906c-7108d30a5e19",
-              "source": "web"
-            },
-            "destination": "https://n8n.example.com/webhook/<seu-path>",
-            "date_time": "2025-11-04T16:30:34.925Z",
-            "sender": "553198633692@s.whatsapp.net",
-            "server_url": "https://evolution.example.com",
-            "apikey": "B1F777A79FB7-4EF2-B812-D016743DB4C6"
-          },
-          "webhookUrl": "https://n8n.example.com/webhook/<seu-path>",
-          "executionMode": "production"
-        }
-      }
-    ]
-  },
   "connections": {
-    "Merge": {
+    "Webhook API (Uazapi)": {
       "main": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Preparar entrada",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Loop Over Items1": {
+    "Preparar entrada": {
       "main": [
-        [],
         [
           {
-            "node": "Envia mensagem para o WhatsApp",
+            "node": "Agente NavalhIA",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "SEPARA MENSAGENS2": {
+    "Agente NavalhIA": {
       "main": [
         [
           {
-            "node": "Loop Over Items1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "PAUSA DE 7 SEGUNDOS": {
-      "main": [
-        [
-          {
-            "node": "BUSCA MENSAGENS DO USUÁRIO",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "DELAY 1 SEGUNDO": {
-      "main": [
-        [
-          {
-            "node": "Loop Over Items1",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "BUSCA MENSAGENS DO USUÁRIO": {
-      "main": [
-        [
-          {
-            "node": "AGRUPA MENSAGENS",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AGRUPA MENSAGENS": {
-      "main": [
-        [
-          {
-            "node": "DELETA MENSAGENS",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "DELETA MENSAGENS": {
-      "main": [
-        [
-          {
-            "node": "output mensagem",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Verifica tipo de arquivo": {
-      "main": [
-        [
-          {
-            "node": "REGISTRA MENSAGEM2",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Envia mensagem para o WhatsApp": {
-      "main": [
-        [
-          {
-            "node": "DELAY 1 SEGUNDO",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "REGISTRA MENSAGEM2": {
-      "main": [
-        [
-          {
-            "node": "PAUSA DE 7 SEGUNDOS",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Coleta": {
-      "main": [
-        [
-          {
-            "node": "Verifica tipo de arquivo",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "AGENTE DE I.A.": {
-      "main": [
-        [
-          {
-            "node": "SEPARA MENSAGENS2",
+            "node": "Responder JSON (API)",
             "type": "main",
             "index": 0
           }
@@ -1397,7 +395,7 @@
       "ai_memory": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_memory",
             "index": 0
           }
@@ -1408,30 +406,8 @@
       "ai_languageModel": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_languageModel",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "output mensagem": {
-      "main": [
-        [
-          {
-            "node": "Merge",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Recebe mensagem": {
-      "main": [
-        [
-          {
-            "node": "Coleta",
-            "type": "main",
             "index": 0
           }
         ]
@@ -1441,7 +417,7 @@
       "ai_tool": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_tool",
             "index": 0
           }
@@ -1452,7 +428,7 @@
       "ai_tool": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_tool",
             "index": 0
           }
@@ -1463,7 +439,7 @@
       "ai_tool": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_tool",
             "index": 0
           }
@@ -1474,7 +450,7 @@
       "ai_tool": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_tool",
             "index": 0
           }
@@ -1485,7 +461,7 @@
       "ai_tool": [
         [
           {
-            "node": "AGENTE DE I.A.",
+            "node": "Agente NavalhIA",
             "type": "ai_tool",
             "index": 0
           }
@@ -1493,19 +469,18 @@
       ]
     }
   },
+  "pinData": {},
   "active": false,
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "ea61a167-6bf4-4ddf-a486-4e1c0edcb35e",
   "meta": {
-    "instanceId": "03d32a206f2d8840fce482e6c587726f18775bd9177e9401c00ca76d3086ad41"
+    "templateCredsSetupCompleted": false
   },
-  "id": "QWcaAi0m8nfpenYx",
   "tags": [
     {
       "name": "NavalhIA",
-      "id": "tag-navalhia-prod"
+      "id": "fb74771c-91b7-4502-8f7c-3a13d993af6c"
     }
   ]
 }

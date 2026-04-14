@@ -33,9 +33,11 @@ export const config = {
   uazapiRequireWebhook: optional("UAZAPI_REQUIRE_WEBHOOK", "").toLowerCase() === "true",
   appEncryptionKey: optional("APP_ENCRYPTION_KEY", ""),
   n8nChatTriggerUrl: optional("N8N_CHAT_TRIGGER_URL", ""),
+  /** Timeout (ms) for POST ao n8n quando NATIVE_AI_DISABLED + N8N_CHAT_TRIGGER_URL. */
+  n8nChatTimeoutMs: parseInt(optional("N8N_CHAT_TIMEOUT_MS", "120000"), 10),
   // AI agent (OpenAI)
   openaiApiKey: optionalNull("OPENAI_API_KEY"),
-  /** When true, ai-worker never calls runAgent (deploy sem agente nativo; n8n/tools seguem ativos). */
+  /** When true, ai-worker never calls runAgent; use n8n se N8N_CHAT_TRIGGER_URL estiver definida. */
   nativeAiDisabled: optional("NATIVE_AI_DISABLED", "").toLowerCase() === "true",
   aiWorkerConcurrency: parseInt(optional("AI_WORKER_CONCURRENCY", "5"), 10),
   aiJobMaxAttempts: parseInt(optional("AI_JOB_MAX_ATTEMPTS", "5"), 10),

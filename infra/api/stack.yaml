@@ -404,6 +404,8 @@ Resources:
           UAZAPI_BASE_URL: !Ref UazapiBaseUrl
           N8N_EVENTS_WEBHOOK_URL: !Ref N8nEventsWebhookUrl
           N8N_EVENTS_SECRET: !Ref N8nEventsSecret
+          N8N_CHAT_TRIGGER_URL: !Ref N8nChatTriggerUrl
+          N8N_CHAT_TIMEOUT_MS: "120000"
           AI_WORKER_CONCURRENCY: "1"
           AI_JOB_MAX_ATTEMPTS: "5"
           AI_JOB_BACKOFF_BASE_SECONDS: "2"
