@@ -706,6 +706,38 @@ const groups: DocGroup[] = [
         ],
       },
       {
+        id: "integrations-n8n-webhook-get",
+        method: "GET",
+        path: `${API_BASE}/integrations/n8n-webhook`,
+        title: "URL do webhook n8n",
+        description:
+          "Retorna a Production URL do webhook n8n salva para a barbearia (agente quando IA nativa está desligada).",
+        responses: [
+          { status: 200, label: "Sucesso" },
+          { status: 401, label: "Não autorizado" },
+        ],
+      },
+      {
+        id: "integrations-n8n-webhook-patch",
+        method: "PATCH",
+        path: `${API_BASE}/integrations/n8n-webhook`,
+        title: "Salvar URL do webhook n8n",
+        description:
+          "Define ou remove a URL. Use null para limpar (fallback: variável de ambiente no servidor). Exige https em produção.",
+        bodyParams: [{ name: "n8n_chat_webhook_url", type: "string | null", required: true }],
+        bodyExample: JSON.stringify(
+          { n8n_chat_webhook_url: "https://n8n.exemplo.com/webhook/abc" },
+          null,
+          2
+        ),
+        responses: [
+          { status: 200, label: "Sucesso" },
+          { status: 400, label: "URL inválida" },
+          { status: 401, label: "Não autorizado" },
+          { status: 503, label: "Migration não aplicada" },
+        ],
+      },
+      {
         id: "integrations-whatsapp",
         method: "GET",
         path: `${API_BASE}/integrations/whatsapp`,

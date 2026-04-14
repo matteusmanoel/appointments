@@ -193,9 +193,27 @@ async function markJobFailed(jobId: string, errorMessage: string, attempts: numb
   }
 }
 
+/** Prefer URL salva na barbearia; fallback N8N_CHAT_TRIGGER_URL (env/Lambda). */
+async function resolveN8nChatUrl(barbershopId: string): Promise<string | null> {
+  try {
+    const r = await pool.query<{ u: string | null }>(
+      `SELECT nullif(trim(coalesce(n8n_chat_webhook_url, '')), '') AS u
+       FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+      [barbershopId]
+    );
+    const db = r.rows[0]?.u?.trim();
+    if (db) return db;
+  } catch (e) {
+    console.warn("[ai-worker] resolveN8nChatUrl (column missing?):", e);
+  }
+  const envUrl = config.n8nChatTriggerUrl?.trim();
+  return envUrl || null;
+}
+
 async function isAiEnabled(barbershopId: string): Promise<boolean> {
-  if (config.nativeAiDisabled && !config.n8nChatTriggerUrl?.trim()) {
-    return false;
+  if (config.nativeAiDisabled) {
+    const n8nUrl = await resolveN8nChatUrl(barbershopId);
+    if (!n8nUrl) return false;
   }
   const r = await pool.query<{ enabled: boolean }>(
     `SELECT enabled FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
@@ -234,8 +252,8 @@ async function callN8nAgent(
   barbershopId: string,
   fallbackUserText: string
 ): Promise<string> {
-  const url = config.n8nChatTriggerUrl?.trim();
-  if (!url) throw new Error("N8N_CHAT_TRIGGER_URL not configured");
+  const url = await resolveN8nChatUrl(barbershopId);
+  if (!url) throw new Error("n8n webhook URL not configured (Integrações → Chaves de API ou env)");
 
   const text = await getN8nUserTextAggregate(conversationId, fallbackUserText);
   const timeoutMs = Math.max(5000, config.n8nChatTimeoutMs ?? 120_000);
@@ -340,7 +358,7 @@ async function processOneJob(): Promise<boolean> {
       await updateConversationLastMessage(conversationId);
       await markJobDone(jobId);
       return true;
-    } else if (config.nativeAiDisabled && config.n8nChatTriggerUrl?.trim()) {
+    } else if (config.nativeAiDisabled) {
       try {
         const raw = await callN8nAgent(conversationId, fromPhone, barbershopId, String(userTextFromJob ?? ""));
         reply = sanitizeClientFacingReply(raw);

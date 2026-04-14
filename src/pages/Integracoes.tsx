@@ -36,10 +36,32 @@ function ApiKeysTab() {
   } | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [n8nUrlDraft, setN8nUrlDraft] = useState("");
 
   const { data: keys, isLoading } = useQuery({
     queryKey: ["integrations", "api-keys"],
     queryFn: () => integrationsApi.listApiKeys(),
+  });
+
+  const { data: n8nWebhook, isLoading: n8nWebhookLoading } = useQuery({
+    queryKey: ["integrations", "n8n-webhook"],
+    queryFn: () => integrationsApi.getN8nWebhook(),
+  });
+
+  useEffect(() => {
+    if (n8nWebhookLoading) return;
+    setN8nUrlDraft(n8nWebhook?.n8n_chat_webhook_url ?? "");
+  }, [n8nWebhookLoading, n8nWebhook]);
+
+  const saveN8nMutation = useMutation({
+    mutationFn: (url: string | null) => integrationsApi.updateN8nWebhook(url),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["integrations", "n8n-webhook"], data);
+      setN8nUrlDraft(data.n8n_chat_webhook_url ?? "");
+      toastSuccess("URL do webhook salva");
+    },
+    onError: (e) =>
+      toastError(e instanceof Error ? e.message : "Erro ao salvar URL do n8n"),
   });
 
   const createMutation = useMutation({
@@ -90,6 +112,58 @@ function ApiKeysTab() {
               Use no header <code className="text-xs bg-muted px-1 rounded">X-API-Key</code> nas requisições (n8n, integrações).
             </p>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-border/60 bg-card/50 p-4 space-y-3">
+          <div>
+            <h4 className="text-sm font-medium text-foreground">Webhook n8n (agente)</h4>
+            <p className="text-sm text-muted-foreground mt-1">
+              Com a <strong className="font-medium text-foreground">IA nativa desligada</strong> no servidor, a API chama esta{" "}
+              <strong className="font-medium text-foreground">Production URL</strong> do nó Webhook do fluxo no n8n (ex.: fluxo
+              Uazapi). Cole a URL completa (https). Deixe vazio para usar apenas a variável global do servidor, se existir.
+            </p>
+          </div>
+          {n8nWebhookLoading ? (
+            <Skeleton className="h-10 w-full rounded-lg" />
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+              <div className="flex-1 grid gap-2">
+                <Label htmlFor="n8n-webhook-url">Production URL do webhook</Label>
+                <Input
+                  id="n8n-webhook-url"
+                  type="url"
+                  name="n8n_webhook_url"
+                  autoComplete="off"
+                  placeholder="https://seu-n8n.com/webhook/..."
+                  value={n8nUrlDraft}
+                  onChange={(e) => setN8nUrlDraft(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={saveN8nMutation.isPending}
+                  onClick={() => {
+                    setN8nUrlDraft("");
+                    saveN8nMutation.mutate(null);
+                  }}
+                >
+                  Limpar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={saveN8nMutation.isPending}
+                  onClick={() => {
+                    const t = n8nUrlDraft.trim();
+                    saveN8nMutation.mutate(t === "" ? null : t);
+                  }}
+                >
+                  Salvar
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">

@@ -160,5 +160,14 @@ export async function ensureCriticalSchema(): Promise<void> {
     .catch((e) => {
       if (!isUndefinedTableOrColumn(e)) throw e;
     });
+
+  await pool
+    .query(
+      `ALTER TABLE public.barbershop_ai_settings
+       ADD COLUMN IF NOT EXISTS n8n_chat_webhook_url text`
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
 }
 

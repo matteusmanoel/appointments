@@ -52,5 +52,5 @@ O `n8n-ia-barbeiro.json` continua igual: o agente usa o **MCP Client** que apont
 
 1. O WhatsApp plug-and-play usa **Uazapi** → eventos em `POST /api/webhooks/uazapi` → fila `ai_jobs` → o **WorkerAi** (Lambda) chama `N8N_CHAT_TRIGGER_URL` com JSON `{ text, from, sessionId, conversationId, barbershopId }`.
 2. O template **`n8n-ia-robusta.json`** usa um webhook + agente + `Respond to Webhook` devolvendo `{ "output": "..." }` (o worker lê `output` ou `reply`).
-3. Backend: `NATIVE_AI_DISABLED=true` e `N8N_CHAT_TRIGGER_URL` apontando para a **Production URL** do nó Webhook no n8n. No deploy AWS, o parâmetro CloudFormation `N8nChatTriggerUrl` deve estar preenchido (também injetado no **WorkerAi**, não só na API).
+3. Backend: `NATIVE_AI_DISABLED=true` e URL do webhook: **painel → Integrações → Chaves de API** (campo *Production URL do webhook n8n*), ou `N8N_CHAT_TRIGGER_URL` no servidor como fallback global. No deploy AWS, o parâmetro CloudFormation `N8nChatTriggerUrl` continua opcional se cada barbearia salvar a URL no painel.
 4. **Postgres no n8n** não é obrigatório: histórico e fila ficam no **Supabase** da aplicação. Use credencial Postgres no n8n só para cenários extras (analytics); no Supabase: *Project Settings → Database* (connection string, modo pooler se for o caso).

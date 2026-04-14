@@ -99,6 +99,17 @@ export type AuthProfile = {
   barbershops?: AuthProfileBarbershop[];
 };
 
+/**
+ * Normaliza o perfil vindo da API ou de `localStorage` para que o modal de troca de senha
+ * só apareça quando o backend realmente exigir (evita `!!"false"` truthy e strings legadas).
+ */
+export function normalizeAuthProfile<T extends AuthProfile>(raw: T): T {
+  const v: unknown = raw.must_change_password;
+  const must_change_password =
+    v === true || v === "true" || v === 1 || v === "1";
+  return { ...raw, must_change_password };
+}
+
 export type BillingPlan = "essential" | "pro" | "premium";
 
 export const billingApi = {
@@ -454,8 +465,16 @@ export const clientsApi = {
 export type ApiKeyItem = { id: string; name: string; last_used_at: string | null; created_at: string; revoked: boolean };
 export type ScheduledMessagesSummary = { queued: number; sent: number; failed: number; skipped: number };
 
+export type N8nWebhookSettings = { n8n_chat_webhook_url: string | null };
+
 export const integrationsApi = {
   listApiKeys: () => api<ApiKeyItem[]>("/api/integrations/api-keys"),
+  getN8nWebhook: () => api<N8nWebhookSettings>("/api/integrations/n8n-webhook"),
+  updateN8nWebhook: (n8n_chat_webhook_url: string | null) =>
+    api<N8nWebhookSettings>("/api/integrations/n8n-webhook", {
+      method: "PATCH",
+      body: JSON.stringify({ n8n_chat_webhook_url }),
+    }),
   createApiKey: (name: string) =>
     api<{ id: string; name: string; created_at: string; api_key: string }>("/api/integrations/api-keys", {
       method: "POST",

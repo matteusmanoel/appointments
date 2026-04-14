@@ -11,6 +11,10 @@ function isUndefinedTable(e: unknown): boolean {
   return (e as { code?: string })?.code === "42P01";
 }
 
+function isUndefinedColumn(e: unknown): boolean {
+  return (e as { code?: string })?.code === "42703";
+}
+
 export const integrationsRouter = Router();
 integrationsRouter.use(requireJwt);
 integrationsRouter.use("/whatsapp", whatsappRouter);
@@ -69,6 +73,100 @@ integrationsRouter.delete("/api-keys/:id", async (req: Request, res: Response): 
     return;
   }
   res.status(204).send();
+});
+
+function parseN8nWebhookUrl(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") {
+    throw new Error("n8n_chat_webhook_url must be a string or null");
+  }
+  const s = raw.trim();
+  if (s === "") return null;
+  if (s.length > 2048) {
+    throw new Error("URL muito longa (máx. 2048 caracteres)");
+  }
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    throw new Error("URL inválida");
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") {
+    throw new Error("Use http ou https");
+  }
+  if (u.protocol === "http:") {
+    const h = u.hostname.toLowerCase();
+    if (h !== "localhost" && h !== "127.0.0.1") {
+      throw new Error("HTTP permitido apenas para localhost ou 127.0.0.1; em produção use https");
+    }
+  }
+  return s;
+}
+
+/** GET /api/integrations/n8n-webhook — Production URL do webhook n8n (agente quando IA nativa desligada) */
+integrationsRouter.get("/n8n-webhook", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  try {
+    const r = await pool.query<{ n8n_chat_webhook_url: string | null }>(
+      `SELECT n8n_chat_webhook_url FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+      [barbershopId]
+    );
+    const row = r.rows[0];
+    res.json({
+      n8n_chat_webhook_url: row?.n8n_chat_webhook_url?.trim() || null,
+    });
+  } catch (e) {
+    if (isUndefinedTable(e) || isUndefinedColumn(e)) {
+      res.json({ n8n_chat_webhook_url: null });
+      return;
+    }
+    console.error("integrations n8n-webhook GET:", e);
+    res.status(500).json({ error: "Failed to load n8n webhook URL" });
+  }
+});
+
+const n8nWebhookPatchBody = z.object({
+  n8n_chat_webhook_url: z.union([z.string(), z.null()]),
+});
+
+/** PATCH /api/integrations/n8n-webhook — salva URL (null = remover; fallback continua sendo env N8N_CHAT_TRIGGER_URL no worker) */
+integrationsRouter.patch("/n8n-webhook", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const parsed = n8nWebhookPatchBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+    return;
+  }
+  const raw = parsed.data.n8n_chat_webhook_url;
+  let normalized: string | null;
+  try {
+    normalized = parseN8nWebhookUrl(raw);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "Invalid URL" });
+    return;
+  }
+  try {
+    await pool.query(
+      `INSERT INTO public.barbershop_ai_settings (
+         barbershop_id, enabled, timezone, model, temperature, n8n_chat_webhook_url, updated_at
+       )
+       VALUES ($1, true, 'America/Sao_Paulo', 'gpt-4o-mini', 0.3, $2, now())
+       ON CONFLICT (barbershop_id) DO UPDATE SET
+         n8n_chat_webhook_url = EXCLUDED.n8n_chat_webhook_url,
+         updated_at = now()`,
+      [barbershopId, normalized]
+    );
+    res.json({ n8n_chat_webhook_url: normalized });
+  } catch (e) {
+    if (isUndefinedTable(e) || isUndefinedColumn(e)) {
+      res.status(503).json({
+        error: "Coluna n8n_chat_webhook_url não encontrada. Aplique a migration no banco.",
+      });
+      return;
+    }
+    console.error("integrations n8n-webhook PATCH:", e);
+    res.status(500).json({ error: "Failed to save n8n webhook URL" });
+  }
 });
 
 /** GET /api/integrations/automations/scheduled-messages/summary — counts by status for dashboard */
