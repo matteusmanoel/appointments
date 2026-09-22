@@ -83,6 +83,30 @@ async function cleanupHarnessConversations(prefix: string): Promise<number> {
   return r.rowCount ?? 0;
 }
 
+/**
+ * Wipes clients/appointments/memory/conversations for the shared harness phone
+ * BEFORE a live run starts. Without this, `clients`/`appointments`/`client_ai_memory`
+ * rows for `harnessFromPhone` survive across runs (only `ai_conversations` is ever
+ * cleaned up), so stale names (e.g. a bad name captured in a previous run) and
+ * leftover appointments bleed into the next run and contaminate scenarios that
+ * depend on a clean client (rescheduling, cancellation, name capture, etc.).
+ *
+ * Runs once per full benchmark run (not per scenario), so the "organic memory"
+ * built up by earlier scenarios within the same run (e.g. book- scenarios creating
+ * appointments that resched-, cancel- and mem- scenarios later rely on) is preserved.
+ */
+async function wipeHarnessTestContext(barbershopId: string, phone: string): Promise<void> {
+  try {
+    const { wipeWhatsAppTestContext } = await import("../../src/ai/wipe-test-context.js");
+    const result = await wipeWhatsAppTestContext({ barbershopId, phone });
+    console.log(
+      `  Wiped harness test context for ${phone}: ${result.clients} client(s), ${result.appointments} appointment(s), ${result.conversations} conversation(s).`
+    );
+  } catch (e) {
+    console.warn("  Wipe warning:", (e as Error).message);
+  }
+}
+
 async function getBarbershopId(): Promise<string> {
   const { pool } = await import("../../src/db.js");
   const r = await pool.query<{ id: string }>(
@@ -347,6 +371,7 @@ export async function runBenchmark(opts: RunBenchmarkOptions): Promise<Benchmark
     }
     openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     barbershopId = await getBarbershopId();
+    await wipeHarnessTestContext(barbershopId, config.harnessFromPhone);
   }
 
   const meta: BenchmarkRunMeta = {
