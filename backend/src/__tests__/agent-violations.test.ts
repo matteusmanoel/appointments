@@ -52,6 +52,12 @@ describe("sanitizeClientFacingReply", () => {
     expect(out).not.toContain("550e8400");
   });
 
+  it("rewrites the em dash as a comma", () => {
+    const out = sanitizeClientFacingReply("Posso não ter entendido — quer agendar?");
+    expect(out).not.toContain("—");
+    expect(out).toMatch(/entendido, quer agendar/);
+  });
+
   it("strips ISO dates and maps URLs from client-facing copy", () => {
     const out = sanitizeClientFacingReply(
       "Fica na 2026-09-22 às 17h https://maps.google.com/maps?q=-24,-54 pin",

@@ -1,23 +1,49 @@
 /**
  * Deterministic templates for reminders and follow-ups (no LLM).
- * Variables: clientName, date, time, serviceNames, barberName, bookingLink, rescheduleLink, cancelLink.
+ * WhatsApp bold is a single pair of asterisks.
  */
+
+import { addDaysIso, formatDateBr, formatTimePt, weekdayShortPtFromIso } from "../ai/date-calendar.js";
 
 export type ReminderVars = {
   clientName?: string;
+  /** yyyy-MM-dd of the appointment. */
   date: string;
+  /** HH:mm. */
   time: string;
   serviceNames?: string;
   barberName?: string;
-  bookingLink?: string;
-  rescheduleLink?: string;
-  cancelLink?: string;
+  totalPrice?: number;
+  /** yyyy-MM-dd of "today" in the shop timezone, so hoje/amanhã stay correct at send time. */
+  todayIso?: string;
+  /** When the 24h window fires and presence is already confirmed, don't ask again. */
+  alreadyConfirmed?: boolean;
 };
 
-/** Formata YYYY-MM-DD para DD/MM/YYYY. */
-function formatDateBr(isoDate: string): string {
-  const [y, m, d] = isoDate.split("-");
-  return d && m && y ? `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}` : isoDate;
+function moneyBr(amount: number): string {
+  return amount.toFixed(2).replace(".", ",");
+}
+
+/** "Amanhã, terça, 22/09 às 18h" */
+export function formatReminderWhen(dateIso: string, timeHHmm: string, todayIso?: string): string {
+  const short = weekdayShortPtFromIso(dateIso);
+  const br = formatDateBr(dateIso);
+  const ddmm = br.length >= 5 ? br.slice(0, 5) : br;
+  const timePt = formatTimePt(timeHHmm);
+  if (todayIso && dateIso === todayIso) return `Hoje, ${short}, ${ddmm} às ${timePt}`;
+  if (todayIso && dateIso === addDaysIso(todayIso, 1)) return `Amanhã, ${short}, ${ddmm} às ${timePt}`;
+  const cap = short ? short.charAt(0).toUpperCase() + short.slice(1) : dateIso;
+  return `${cap}, ${ddmm} às ${timePt}`;
+}
+
+/** "hoje" | "amanhã" | "terça, 22/09" — used in the 2h window, which is usually same-day. */
+function relativeDay(dateIso: string, todayIso?: string): string {
+  if (todayIso && dateIso === todayIso) return "hoje";
+  if (todayIso && dateIso === addDaysIso(todayIso, 1)) return "amanhã";
+  const short = weekdayShortPtFromIso(dateIso);
+  const br = formatDateBr(dateIso);
+  const ddmm = br.length >= 5 ? br.slice(0, 5) : br;
+  return short ? `${short}, ${ddmm}` : ddmm;
 }
 
 /** Primeiro nome para saudação (ex.: "Mateus Ferreira" → "Mateus"). */
@@ -29,50 +55,45 @@ function firstName(fullName: string | undefined): string {
 export function buildReminder24h(v: ReminderVars): string {
   const first = firstName(v.clientName);
   const greeting = first ? `Fala, ${first}!` : "Fala!";
-  const dateBr = formatDateBr(v.date);
-
-  const lines: string[] = [
-    `${greeting} Só passando pra lembrar do seu agendamento:`,
+  const when = formatReminderWhen(v.date, v.time, v.todayIso);
+  const lines: Array<string | null> = [
+    `${greeting} Passando para confirmar seu agendamento:`,
     "",
-    v.serviceNames ? `- Serviços: ${v.serviceNames}` : null,
-    `- Data: ${dateBr} às ${v.time}`,
-    v.barberName ? `- Barbeiro: ${v.barberName}` : null,
-  ].filter((line): line is string => line !== null);
-
-  let msg = lines.join("\n").trim();
-
-  if (v.rescheduleLink || v.cancelLink) {
-    msg += "\n\nPrecisa reagendar ou cancelar?\n";
-    if (v.rescheduleLink) msg += `Reagendar: ${v.rescheduleLink}\n`;
-    if (v.cancelLink) msg += `Cancelar: ${v.cancelLink}`;
-  } else if (v.bookingLink) {
-    msg += `\n\nReagendar pelo link: ${v.bookingLink}`;
-  }
-
-  msg += "\n\nEsperamos por você. Até lá!";
-  return msg.trim();
+    v.serviceNames?.trim() ? `✂️ *${v.serviceNames.trim()}*` : null,
+    v.barberName?.trim() ? `💈 *${v.barberName.trim()}*` : null,
+    `📅 ${when}`,
+    typeof v.totalPrice === "number" && Number.isFinite(v.totalPrice) ? `💰 R$ ${moneyBr(v.totalPrice)}` : null,
+    "",
+    v.alreadyConfirmed
+      ? "Seu horário está confirmado. Esperamos por você!"
+      : "Seu horário está reservado. *Você confirma sua presença ou prefere reagendar?*",
+  ];
+  return lines.filter((line): line is string => line !== null).join("\n").trim();
 }
 
 export function buildReminder2h(v: ReminderVars): string {
-  const first = firstName(v.clientName);
-  const greeting = first ? `Oi, ${first}!` : "Oi!";
-  const dateBr = formatDateBr(v.date);
-  const lines: string[] = [
-    `${greeting} Passando pra lembrar que seu horário é em breve:`,
-    "",
-    v.serviceNames ? `- Serviços: ${v.serviceNames}` : null,
-    `- Data: ${dateBr} às ${v.time}`,
-    v.barberName ? `- Barbeiro: ${v.barberName}` : null,
-  ].filter((line): line is string => line !== null);
+  return v.alreadyConfirmed ? buildReminder2hConfirmed(v) : buildReminder2hPending(v);
+}
 
-  let msg = lines.join("\n").trim();
-  if (v.rescheduleLink || v.cancelLink) {
-    msg += "\n\nSe precisar reagendar ou cancelar:\n";
-    if (v.rescheduleLink) msg += `Reagendar: ${v.rescheduleLink}\n`;
-    if (v.cancelLink) msg += `Cancelar: ${v.cancelLink}`;
-  }
-  msg += "\n\nA gente te espera. Ate ja!";
-  return msg.trim();
+export function buildReminder2hPending(v: ReminderVars): string {
+  const first = firstName(v.clientName);
+  const day = relativeDay(v.date, v.todayIso);
+  const clock = formatTimePt(v.time);
+  const lead = first
+    ? `${first}, ainda não recebemos sua confirmação.`
+    : "Ainda não recebemos sua confirmação.";
+  return (
+    `${lead}\n\n` +
+    `*Você vem ${day} às ${clock}?* Confirme agora para mantermos seu horário reservado. Caso não haja confirmação, precisaremos liberá-lo.`
+  );
+}
+
+export function buildReminder2hConfirmed(v: ReminderVars): string {
+  const first = firstName(v.clientName);
+  const day = relativeDay(v.date, v.todayIso);
+  const clock = formatTimePt(v.time);
+  const hi = first ? `Tudo certo, ${first}!` : "Tudo certo!";
+  return `${hi} *Seu horário está confirmado.* 💈\n\nNos vemos ${day}, às ${clock}.\nEsperamos por você!`;
 }
 
 export type FollowUp30dVars = {
@@ -137,6 +158,7 @@ export type PlanPaymentMessageVars = {
   amount: number;
   dueDate: string;
   billingDay: number;
+  overdueDays?: number;
 };
 
 /** Mensagem enviada antes do botão PIX na cobrança recorrente de plano. */
@@ -145,6 +167,13 @@ export function buildPlanPaymentMessage(v: PlanPaymentMessageVars): string {
   const greeting = first ? `Oi, ${first}!` : "Oi!";
   const dateBr = formatDateBr(v.dueDate);
   const amountStr = v.amount.toFixed(2).replace(".", ",");
+  if (v.overdueDays) {
+    return (
+      `${greeting} Seu plano *${v.planName}* venceu ha ${v.overdueDays} dias (${dateBr}) e o pagamento ainda nao foi identificado.\n\n` +
+      `- Valor: *R$ ${amountStr}*\n\n` +
+      `Para evitar a suspensao, use o PIX abaixo. Qualquer duvida, estamos aqui!`
+    ).trim();
+  }
   return (
     `${greeting} Chegou o dia da renovacao do seu plano *${v.planName}*.\n\n` +
     `- Valor: *R$ ${amountStr}*\n` +

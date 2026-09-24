@@ -7,6 +7,7 @@ import {
   type ClientDateSource,
 } from "./date-calendar.js";
 import {
+  inferServiceKeyword,
   resolveBarberFromText,
   resolveServiceFromText,
   type BookingDraft,
@@ -36,6 +37,12 @@ export function isClientConfirmation(text: string): boolean {
     return false;
   }
   if (/^(perfeito|otimo|claro|excelente)([,!.\s]|$)/.test(t)) return true;
+  if (/^estarei\s+(ai|la|presente)\b/.test(t)) return true;
+  if (/^vou\s+sim\b/.test(t)) return true;
+  if (/^(compareco|comparecerei)\b/.test(t)) return true;
+  if (/^irei\s+sim\b/.test(t)) return true;
+  if (/^ate\s+la\b/.test(t)) return true;
+  if (/^pode\s+contar\s+comigo\b/.test(t)) return true;
   if (/\b(pode|podes)\s+(agendar|marcar|confirmar)\b/.test(t)) return true;
   if (
     /^(sim|s|pode|ok|okay|beleza|confirmo|isso|fechado|combinado|manda ver|top|show|claro|excelente)([,!.\s]|$)/.test(
@@ -44,7 +51,11 @@ export function isClientConfirmation(text: string): boolean {
   ) {
     return true;
   }
-  return /^(sim|pode|ok).{0,40}(confirmar|gentileza|favor|obrigad)/.test(t);
+  if (/^(sim|pode|ok).{0,40}(confirmar|gentileza|favor|obrigad)/.test(t)) return true;
+  // Same affirmative vocabulary as above, but not anchored to the first word — a filler
+  // lead-in ("Fica sim", "Show, fechado") is the same claim as "Sim" in different word
+  // order and must resolve the same way (RC3: anchored-regex word-order brittleness).
+  return /\b(sim|confirmo|fechado|combinado)\b/.test(t) && !/\bnao\b/.test(t);
 }
 
 export function looksLikeConsultIntent(text: string): boolean {
@@ -63,6 +74,11 @@ export function looksLikeConsultIntent(text: string): boolean {
   );
 }
 
+export function looksLikePixIntent(text: string): boolean {
+  const t = fold(text);
+  return /\bpix\b/.test(t);
+}
+
 export function looksLikeLocationIntent(text: string): boolean {
   const t = fold(text);
   return (
@@ -70,7 +86,7 @@ export function looksLikeLocationIntent(text: string): boolean {
     /\blocalizacao\b/.test(t) ||
     /\bendereco\b/.test(t) ||
     /\bcomo chego\b/.test(t) ||
-    /\bmanda (o )?pin\b/.test(t) ||
+    /\bmanda (a |o )?(pin|loc\b|localizacao|mapa|endereco)/.test(t) ||
     /\bmapa\b/.test(t)
   );
 }
@@ -80,8 +96,9 @@ export function looksLikeCancelIntent(text: string): boolean {
   return (
     /\bcancel(ar|e|o)\b/.test(t) ||
     /\bdesmarcar\b/.test(t) ||
-    /nao (vou|consigo) (poder )?ir/.test(t) ||
-    /n[aã]o vou poder ir/.test(t) ||
+    /nao (vou|consigo|poderei) (poder )?ir\b/.test(t) ||
+    /n[aã]o (vou poder|poderei) (ir|comparecer)\b/.test(t) ||
+    /\bnao vou (poder )?ir\b/.test(t) ||
     /\bimprevisto\b/.test(t) ||
     /nao vai dar/.test(t)
   );
@@ -123,6 +140,52 @@ export function looksLikeHumanHandoff(text: string): boolean {
   );
 }
 
+/**
+ * Pedido de agendamento novo. Reagendar, cancelar, consultar e correção de serviço
+ * já marcado não entram aqui.
+ */
+export function looksLikeNewBookingIntent(text: string): boolean {
+  const t = fold(text);
+  if (!t) return false;
+  if (looksLikeCancelIntent(text) || looksLikeRescheduleIntent(text) || looksLikeConsultIntent(text)) return false;
+  if (/\b(alterar|corrigir|na verdade|trocar o servico|nao so)\b/.test(t)) return false;
+  return /\b(agendar|marcar|agenda)\b/.test(t) || /\bquero\b/.test(t) || /\bgostaria de\b/.test(t);
+}
+
+/**
+ * Mensagem sem nenhum sinal de intenção: sem verbo de agendamento, serviço, data,
+ * horário, saudação, plano ou pergunta de FAQ. "pode ser" solto cai aqui.
+ */
+export function looksLikeZeroIntentUnknown(text: string): boolean {
+  const t = fold(text);
+  if (!t) return true;
+  if (
+    looksLikeCancelIntent(text) ||
+    looksLikeRescheduleIntent(text) ||
+    looksLikeConsultIntent(text) ||
+    looksLikeLocationIntent(text) ||
+    looksLikePixIntent(text) ||
+    looksLikePlanIntent(text) ||
+    looksLikeWaitlistIntent(text) ||
+    looksLikeHumanHandoff(text) ||
+    looksLikeSocialGreeting(text) ||
+    isShopHoursQuestion(text)
+  ) {
+    return false;
+  }
+  if (/^(oi|ola|opa|salve|bom dia|boa tarde|boa noite|fala|iae|e ai)\b/.test(t)) return false;
+  if (/\b(agendar|marcar|quero|gostaria|remarcar|cancelar|desmarcar|reagendar)\b/.test(t)) return false;
+  if (parseClientTime(text)) return false;
+  if (/\b(hoje|amanha|depois de amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/.test(t)) return false;
+  if (/\b\d{1,2}\/\d{1,2}\b/.test(t)) return false;
+  if (inferServiceKeyword(text)) return false;
+  if (acceptsAnyBarber(text) || /\bbarbeiro\b/.test(t)) return false;
+  if (/\b(pix|preco|valor|quanto|endereco|localizacao|expediente|funcionamento|aberto|aberta|abertos)\b/.test(t)) {
+    return false;
+  }
+  return true;
+}
+
 export function looksLikePlanIntent(text: string): boolean {
   const t = fold(text);
   return /\b(plano|assinatura|mensalidade)\b/.test(t);
@@ -130,7 +193,15 @@ export function looksLikePlanIntent(text: string): boolean {
 
 export function looksLikeWaitlistIntent(text: string): boolean {
   const t = fold(text);
-  return /lista de espera/.test(t) || /nenhum horario/.test(t) || /de jeito nenhum/.test(t);
+  return (
+    /lista de espera/.test(t) ||
+    /nenhum horario/.test(t) ||
+    /de jeito nenhum/.test(t) ||
+    // "se o Lucas liberar me avise" / "me avisa quando abrir" — same request as
+    // "lista de espera" in different words: notify me when a specific slot frees up.
+    /\bme avis[ae]\b.{0,30}\b(liberar|abrir|desocupar|vagar|sobrar)\b/.test(t) ||
+    /\bse\b.{0,20}\b(liberar|abrir|desocupar|vagar)\b.{0,20}\bavis/.test(t)
+  );
 }
 
 export function looksLikeTestWipeCommand(text: string): boolean {
@@ -281,9 +352,27 @@ export function assistantAskedBarberPreference(text: string): boolean {
   return /\bou seria so com\b/.test(t);
 }
 
+/**
+ * Detects when the assistant's last message was a reminder asking for an RSVP
+ * (presence confirmation), so a bare "sim"/"estarei aí" reply resolves to
+ * confirm_appointment instead of falling through to a generic guard.
+ *
+ * Must stay in sync with the real templates in outbound/templates.ts
+ * (buildReminder24h / buildReminder2h) — the earlier pattern list only matched
+ * an imagined copy that was never actually sent, so live RSVP replies never
+ * matched here and fell through to unrelated deterministic branches.
+ */
 export function assistantAskedReminderRsvp(text: string): boolean {
   const t = fold(text);
   return (
+    // buildReminder24h (pending)
+    /\bvoce confirma sua presenca\b/.test(t) ||
+    // buildReminder2h (pending)
+    /\bainda nao recebemos sua confirmacao\b/.test(t) ||
+    /\bconfirme agora para mantermos seu horario reservado\b/.test(t) ||
+    // composeHumanConsult / greeting-with-appointment check-in copy
+    /\btudo certo com seu horario\b/.test(t) ||
+    // legacy/alternate copy kept for backward compatibility
     /\bcancela ou remarca\b/.test(t) ||
     /\bresponde \*confirmo\*/.test(t) ||
     /\bainda nao tivemos sua confirmacao\b/.test(t) ||
@@ -345,16 +434,20 @@ export function looksLikeAfterTimeIntent(text: string): boolean {
 export function composeHumanConsult(params: {
   firstName?: string;
   serviceName: string;
+  /** "hoje" | "amanhã" | "terça" | "sábado" etc. */
   weekdayShort: string;
   barberName: string;
   timeHHmm?: string;
 }): string {
   const hi = params.firstName ? `Olá, ${params.firstName}! ` : "Olá! ";
   const service = params.serviceName.trim() || "seu horário";
-  const prep = /^(s[áa]bado|domingo)$/i.test(params.weekdayShort) ? "no" : "na";
+  const wd = params.weekdayShort;
+  const isRelative = /^(hoje|amanhã|amanha)$/.test(wd);
+  // "hoje"/"amanhã" don't need a preposition; "sábado/domingo" use "no", others use "na"
+  const prep = isRelative ? "" : /^(s[áa]bado|domingo)$/i.test(wd) ? "no " : "na ";
   const timeBit = params.timeHHmm ? ` às ${formatTimePt(params.timeHHmm)}` : "";
   return (
-    `${hi}Tudo certo com seu horário para ${service} ${prep} ${params.weekdayShort}${timeBit} com o ${params.barberName}? ` +
+    `${hi}Tudo certo com seu horário para ${service} ${prep}${wd}${timeBit} com o ${params.barberName}? ` +
     `Se preferir reagendar, me diz o novo dia/horário.`
   );
 }

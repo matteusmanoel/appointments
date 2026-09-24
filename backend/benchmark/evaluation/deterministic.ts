@@ -106,18 +106,38 @@ function checkPreBookingClaim(reply: string): boolean {
   return PRE_BOOKING_CLAIM_PATTERNS.some((re) => re.test(reply));
 }
 
+const OTHER_DAY_REFERENCE_RE =
+  /\b(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo|amanhã|amanha)\b/i;
+
 function checkPastTimeSuggestion(reply: string): boolean {
   const now = new Date();
   const nowMins = now.getHours() * 60 + now.getMinutes();
-  // Only relevant if the reply mentions "hoje" or no date context
-  const mentionsToday = /\bhoje\b/i.test(reply);
-  if (!mentionsToday) return false;
-  const matches = reply.match(/\b(\d{1,2}):(\d{2})\b/g) ?? [];
-  return matches.some((m) => {
-    const [h, min] = m.split(":").map(Number);
-    const slotMins = h * 60 + min;
-    // More than 30 minutes in the past is a violation
-    return slotMins < nowMins - 30;
+  // Evaluate sentence-by-sentence (split on line breaks / sentence-ending
+  // punctuation) instead of the whole reply. A business-hours message
+  // routinely mentions "hoje" in one clause ("já encerramos hoje") and a
+  // completely different day's opening time in another ("voltamos quinta,
+  // às 09:00", or a weekly table with "Segunda: 09:00–19:00"). Checking the
+  // reply as a single blob conflates those unrelated times with a slot
+  // being suggested for today.
+  const sentences = reply.split(/[\n.!?]+/);
+  return sentences.some((sentence) => {
+    if (!/\bhoje\b/i.test(sentence)) return false;
+    // If this clause also references another day, its time tokens belong
+    // to that day (e.g. "abre quinta-feira, às 09:00"), not to "hoje".
+    if (OTHER_DAY_REFERENCE_RE.test(sentence)) return false;
+    // Strip business-hours RANGES (e.g. "09:00 às 19:00") — informational,
+    // not a slot being offered for booking.
+    const withoutRanges = sentence.replace(
+      /\b\d{1,2}:\d{2}\s*(?:às|a|-|–)\s*\d{1,2}:\d{2}\b/gi,
+      "",
+    );
+    const matches = withoutRanges.match(/\b(\d{1,2}):(\d{2})\b/g) ?? [];
+    return matches.some((m) => {
+      const [h, min] = m.split(":").map(Number);
+      const slotMins = h * 60 + min;
+      // More than 30 minutes in the past is a violation
+      return slotMins < nowMins - 30;
+    });
   });
 }
 
@@ -161,6 +181,10 @@ function checkFalseClosure(reply: string): boolean {
 /**
  * Detects duplicate confirmation — agent asks the same confirmation question
  * twice in a row.
+ *
+ * A repeated "Posso confirmar?" is NOT a duplicate when the summary actually changed
+ * between turns (the client corrected the service or price mid-flow, e.g. book-07).
+ * Only flag it when both the price and the named service are identical too.
  */
 export function checkDuplicateConfirmation(turns: string[]): boolean {
   if (turns.length < 2) return false;
@@ -174,9 +198,15 @@ export function checkDuplicateConfirmation(turns: string[]): boolean {
     "está certo",
     "pode confirmar",
   ];
-  return confirmPhrases.some(
+  const sameWording = confirmPhrases.some(
     (p) => last.includes(p) && prev.includes(p) && similarity(last, prev) > 0.7
   );
+  if (!sameWording) return false;
+
+  const priceOf = (t: string) => t.match(/r\$\s*[\d.,]+/g)?.join("|") ?? "";
+  const serviceOf = (t: string) =>
+    [...t.matchAll(/\*([^*]{2,40})\*/g)].map((m) => m[1].trim()).join("|");
+  return priceOf(last) === priceOf(prev) && serviceOf(last) === serviceOf(prev);
 }
 
 /**

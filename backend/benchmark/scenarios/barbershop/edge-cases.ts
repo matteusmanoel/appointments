@@ -178,7 +178,7 @@ export const edgeCaseScenarios: Scenario[] = [
           name: "Trata múltiplos serviços corretamente",
           severity: "medium",
           check: (_i, reply) =>
-            /corte|barba|sobrancelha|serviç|horário|\d{1,2}:\d{2}/i.test(reply),
+            /corte|barba|sobrancelha|serviç|horário|barbeiro|\d{1,2}:\d{2}/i.test(reply),
         },
       ],
     },
@@ -343,6 +343,54 @@ export const edgeCaseScenarios: Scenario[] = [
           name: "Agente recupera e lista os agendamentos reais",
           severity: "medium",
           check: (_i, reply) => reply.trim().length > 20,
+        },
+      ],
+    },
+  },
+  // ── Adicionados na correção do diagnóstico "Understanding" (transcript 23/09) ──
+  {
+    id: "edge-15-confirmacao-com-preenchimento",
+    name: "Confirmação com preenchimento antes do 'sim' ('Fica sim')",
+    description:
+      "Cliente confirma com uma frase informal onde a afirmação não é a primeira palavra " +
+      "('Fica sim' em vez de 'Sim'). O agente deve tratar como a mesma confirmação e avançar " +
+      "o fluxo, sem repetir a pergunta de confirmação.",
+    tags: ["booking", "multi-turn", "edge"],
+    vertical: "barbershop",
+    turns: [
+      { role: "user", content: "Corte masculino amanhã às 14:00" },
+      { role: "user", content: "Fica sim" },
+      { role: "user", content: "Rafael" },
+    ],
+    expected: {
+      finalState: "appointment_created",
+      noViolations: ["uuid_leak", "ai_exposure", "phone_ask"],
+      mustCallTools: ["create_appointment"],
+      asserts: [
+        {
+          name: "'Fica sim' avança o fluxo (não repete a pergunta de confirmação)",
+          severity: "critical",
+          check: (i, reply) => i !== 1 || !/posso confirmar\?|confirma\?/i.test(reply),
+        },
+      ],
+    },
+  },
+  {
+    id: "edge-16-fila-de-espera-frase-natural",
+    name: "Pedido de lista de espera em frase natural (sem a expressão fixa)",
+    description:
+      "Cliente pede para ser avisado se um barbeiro específico liberar horário, sem usar a " +
+      "frase 'lista de espera'. O agente deve reconhecer a intenção do mesmo jeito.",
+    tags: ["waitlist", "edge"],
+    vertical: "barbershop",
+    turns: [{ role: "user", content: "Se o Lucas liberar um horário hoje, pode me avisar?" }],
+    expected: {
+      noViolations: ["uuid_leak", "ai_exposure"],
+      asserts: [
+        {
+          name: "Reconhece o pedido como lista de espera mesmo sem a frase fixa",
+          severity: "medium",
+          check: (_i, reply) => /lista de espera/i.test(reply),
         },
       ],
     },
