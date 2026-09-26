@@ -1,0 +1,28 @@
+aws_region              = "us-east-2"
+domain_name             = "navalhia.com"
+app_subdomain           = "app"
+api_subdomain           = "api"
+attach_custom_domains   = false
+budget_email            = "mateusmanoelfr@gmail.com"
+budget_limit_usd        = "30"
+from_email              = "no-reply@navalhia.com"
+cors_origin             = "https://app.navalhia.com,https://navalhia.com"
+log_retention_days      = 14
+
+# Copie para terraform.tfvars (gitignored) e preencha. Nunca commite valores reais.
+# Plan com este example usa strings vazias — a API não funciona até o apply com secrets.
+database_url            = ""
+jwt_secret              = ""
+app_encryption_key      = ""
+uazapi_base_url         = ""
+uazapi_admin_token      = ""
+openai_api_key          = ""
+stripe_secret_key       = ""
+stripe_webhook_secret   = ""
+stripe_price_id         = ""
+stripe_price_id_essential = ""
+stripe_price_id_pro     = ""
+stripe_price_id_premium = ""
+stripe_price_id_extra_number = ""
+stripe_price_id_followup_credit = ""
+lambda_zip_path         = ""
