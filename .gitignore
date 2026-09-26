@@ -20,12 +20,13 @@ bun.lockb
 .env
 .env.prod
 .env.staging
+.env.evolution
 .env.*.local
 .env.local
 .env.development
 .env.production
 .env.test
-.env.example
+!.env.example
 
 # Build / cache / tooling
 .turbo
@@ -40,6 +41,8 @@ coverage/
 *.lcov
 jest-report.*
 test-results/
+benchmark/
+__tests__/
 
 # TestSprite MCP (pode conter API keys injetadas pelo CLI)
 testsprite_tests/tmp/config.json
@@ -50,6 +53,25 @@ supabase/.temp
 # AWS / CDK / SAM (se usados)
 cdk.out
 .aws-sam
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars
+*.auto.tfvars
+infra/production/.placeholder.zip
+infra/production/production.tfplan
+infra/production/local-pending.tfstate
+infra/production/backend.s3.tf.bak
+.terraform.tfstate.lock.info
 
 # Editor directories and files
 .vscode/*
@@ -62,3 +84,5 @@ cdk.out
 *.sln
 *.sw?
 chats
+backend/.lab/
+.firecrawl/
