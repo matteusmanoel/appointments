@@ -20,6 +20,7 @@ import {
   HelpCircle,
   MessageCircle,
   CreditCard,
+  BrainCircuit,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,7 +40,8 @@ import {
 } from "@/components/ui/select";
 
 const navigationAll = [
-  { name: "Dashboard", href: "/app", icon: LayoutDashboard },
+  { name: "Inteligência", href: "/app/inteligencia", icon: BrainCircuit },
+  { name: "Dashboard", href: "/app/dashboard", icon: LayoutDashboard },
   { name: "Agendamentos", href: "/app/agendamentos", icon: Calendar },
   { name: "Barbeiros", href: "/app/barbeiros", icon: Scissors },
   { name: "Serviços", href: "/app/servicos", icon: Package },

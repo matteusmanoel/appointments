@@ -1,5 +1,5 @@
 import * as React from "react";
-import { format, subDays, startOfMonth, type Locale } from "date-fns";
+import { format, subDays, startOfMonth, endOfMonth, type Locale } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Calendar as CalendarIcon, X } from "lucide-react";
 import {
@@ -54,7 +54,7 @@ const PRESETS = [
     label: "Mês atual",
     getValue: () => {
       const today = new Date();
-      return { from: startOfMonth(today), to: today };
+      return { from: startOfMonth(today), to: endOfMonth(today) };
     },
   },
 ];

@@ -38,7 +38,6 @@ import {
   UserX,
   Ban,
   Clock,
-  DollarSign,
   List,
   LayoutGrid,
   Pencil,
@@ -89,14 +88,13 @@ import {
 } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
-import { formatPhoneBR, formatPhoneDisplay, parsePhoneBR } from "@/lib/input-masks";
+import { formatPhoneBR, formatPhoneDisplay, formatPhoneEditable, parsePhoneBR } from "@/lib/input-masks";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import { DatePicker } from "@/components/ui/date-picker";
 import { DateHourPicker } from "@/components/ui/date-hour-picker";
 import { MonthPicker } from "@/components/ui/month-picker";
 import { YearPicker } from "@/components/ui/year-picker";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -146,6 +144,40 @@ const BARBER_COLORS = [
 ] as const;
 
 type Appointment = AppointmentListItem;
+
+function appointmentDayKey(scheduledDate: string | null | undefined): string {
+  return scheduledDate != null ? String(scheduledDate).slice(0, 10) : "";
+}
+
+function AppointmentDayDots({
+  count,
+  size = "md",
+}: {
+  count: number;
+  size?: "sm" | "md";
+}) {
+  const slot = size === "sm" ? "h-1" : "h-1.5";
+  if (count <= 0) return <span className={slot} aria-hidden />;
+  const max = size === "sm" ? 3 : 5;
+  const shown = Math.min(count, max);
+  const extra = count - shown;
+  const dot = size === "sm" ? "h-1 w-1" : "h-1.5 w-1.5";
+  return (
+    <span
+      className="inline-flex max-w-full flex-wrap items-center gap-0.5"
+      aria-hidden
+    >
+      {Array.from({ length: shown }, (_, i) => (
+        <span key={i} className={`${dot} shrink-0 rounded-full bg-primary`} />
+      ))}
+      {extra > 0 ? (
+        <span className="text-[9px] leading-none text-muted-foreground">
+          +{extra}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function formatAppointmentDateTime(
   scheduled_date: string | null | undefined,
@@ -534,6 +566,7 @@ export default function Agendamentos() {
         search: filterSearch.trim() || undefined,
       }),
     enabled: viewMode === "grade" && gradeViewMode === "day",
+    refetchInterval: 5000,
   });
 
   const { data: monthAppointments = [], isLoading: monthLoading } = useQuery({
@@ -557,7 +590,48 @@ export default function Agendamentos() {
       gradeViewMode === "month" &&
       !!gradeMonthFrom &&
       !!gradeMonthTo,
+    refetchInterval: 5000,
   });
+
+  const gradeYear = selectedDate.getFullYear();
+  const gradeYearFrom =
+    gradeViewMode === "year" ? `${gradeYear}-01-01` : undefined;
+  const gradeYearTo =
+    gradeViewMode === "year" ? `${gradeYear}-12-31` : undefined;
+
+  const { data: yearAppointments = [], isLoading: yearLoading } = useQuery({
+    queryKey: [
+      "appointments",
+      "year",
+      gradeYearFrom,
+      gradeYearTo,
+      filterSearch,
+      gradeStatus,
+    ],
+    queryFn: () =>
+      appointmentsApi.list({
+        from: gradeYearFrom,
+        to: gradeYearTo,
+        status: gradeStatus !== "__all__" ? gradeStatus : undefined,
+        search: filterSearch.trim() || undefined,
+      }),
+    enabled:
+      viewMode === "grade" &&
+      gradeViewMode === "year" &&
+      !!gradeYearFrom &&
+      !!gradeYearTo,
+    refetchInterval: 5000,
+  });
+
+  const yearCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const apt of yearAppointments) {
+      const key = appointmentDayKey(apt.scheduled_date);
+      if (!key) continue;
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [yearAppointments]);
 
   const { data: listAppointmentsRaw = [], isLoading: listLoading } = useQuery({
     queryKey: [
@@ -576,6 +650,7 @@ export default function Agendamentos() {
         search: filterSearch.trim() || undefined,
       }),
     enabled: viewMode === "lista" && !!listFromStr && !!listToStr,
+    refetchInterval: 5000,
   });
 
   const listAppointments = listAppointmentsRaw;
@@ -1118,7 +1193,10 @@ export default function Agendamentos() {
         price: Number(apt.price) || 0,
       });
       setFormOpen(true);
-      navigate(location.pathname, { replace: true, state: {} });
+      navigate(
+        { pathname: location.pathname, search: location.search },
+        { replace: true, state: {} },
+      );
     }
   }, [location.state, location.pathname, form, navigate]);
 
@@ -1610,55 +1688,29 @@ export default function Agendamentos() {
                                 />
                               );
                             const dayStr = format(day, "yyyy-MM-dd");
-                            const dayApts = gradeMonthAppointments.filter(
-                              (a) => a.scheduled_date === dayStr,
-                            );
-                            const byBarber = dayApts.reduce<
-                              Record<
-                                string,
-                                { id: string; name: string; count: number }
-                              >
-                            >((acc, a) => {
-                              const id = a.barber_id ?? "__unknown__";
-                              const name = a.barber_name ?? "Barbeiro";
-                              if (!acc[id]) acc[id] = { id, name, count: 0 };
-                              acc[id].count += 1;
-                              return acc;
-                            }, {});
-                            const barberBadges = Object.values(byBarber);
+                            const dayCount = gradeMonthAppointments.filter(
+                              (a) => appointmentDayKey(a.scheduled_date) === dayStr,
+                            ).length;
                             return (
                               <button
                                 type="button"
                                 key={dayStr}
-                                className="min-h-[120px] rounded border border-border p-1.5 overflow-hidden text-left flex flex-col hover:bg-muted/30 transition-colors"
+                                className="min-h-[4.5rem] rounded border border-border p-2 overflow-hidden text-left flex flex-col gap-1.5 hover:bg-muted/30 transition-colors"
+                                aria-label={
+                                  dayCount > 0
+                                    ? `${format(day, "d 'de' MMMM", { locale: ptBR })}, ${dayCount} agendamento${dayCount > 1 ? "s" : ""}`
+                                    : format(day, "d 'de' MMMM", { locale: ptBR })
+                                }
                                 onClick={() => {
                                   setSelectedDate(day);
                                   setGradeViewMode("day");
                                 }}
                               >
-                                <div className="text-xs font-medium text-muted-foreground mb-1">
+                                <div className="text-xs font-medium text-muted-foreground">
                                   {format(day, "d")}
                                 </div>
-                                {barberBadges.length > 0 && (
-                                  <div className="flex flex-wrap gap-0.5">
-                                    {barberBadges.map(
-                                      ({ id: barberId, name, count }) => (
-                                        <Badge
-                                          key={barberId}
-                                          variant="secondary"
-                                          className="text-[10px] px-1 py-0 font-normal"
-                                        >
-                                          {name} · {count}
-                                        </Badge>
-                                      ),
-                                    )}
-                                    <Badge
-                                      variant="outline"
-                                      className="text-[10px] px-1 py-0 font-normal"
-                                    >
-                                      Total: {dayApts.length}
-                                    </Badge>
-                                  </div>
+                                {dayCount > 0 && (
+                                  <AppointmentDayDots count={dayCount} />
                                 )}
                               </button>
                             );
@@ -1671,32 +1723,73 @@ export default function Agendamentos() {
               )}
 
               {gradeViewMode === "year" && (
-                <div className="stat-card h-full flex flex-col min-h-0">
-                  <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 gap-3 items-center justify-center">
+                <div className="stat-card h-full flex flex-col min-h-0 overflow-auto">
+                  {yearLoading ? (
+                    <AgendamentosMonthSkeleton />
+                  ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     {Array.from({ length: 12 }, (_, i) => {
-                      const monthDate = new Date(
-                        selectedDate.getFullYear(),
-                        i,
-                        1,
-                      );
-                      const monthLabel = format(monthDate, "MMM", {
+                      const monthDate = new Date(gradeYear, i, 1);
+                      const monthLabel = format(monthDate, "MMMM", {
                         locale: ptBR,
                       });
+                      const startPad = monthDate.getDay();
+                      const lastDay = endOfMonth(monthDate).getDate();
+                      const cells: (Date | null)[] = [];
+                      for (let p = 0; p < startPad; p++) cells.push(null);
+                      for (let dayNum = 1; dayNum <= lastDay; dayNum++) {
+                        cells.push(new Date(gradeYear, i, dayNum));
+                      }
                       return (
-                        <Button
+                        <div
                           key={i}
-                          variant="outline"
-                          className="h-auto flex flex-col items-center gap-1 py-8"
-                          onClick={() => {
-                            setSelectedDate(monthDate);
-                            setGradeViewMode("month");
-                          }}
+                          className="rounded-lg border border-border p-3"
                         >
-                          <span className="capitalize">{monthLabel}</span>
-                        </Button>
+                          <button
+                            type="button"
+                            className="mb-2 text-sm font-medium capitalize text-foreground hover:text-primary"
+                            onClick={() => {
+                              setSelectedDate(monthDate);
+                              setGradeViewMode("month");
+                            }}
+                          >
+                            {monthLabel}
+                          </button>
+                          <div className="grid grid-cols-7 gap-y-1">
+                            {cells.map((day, idx) => {
+                              if (!day) {
+                                return <span key={`pad-${i}-${idx}`} />;
+                              }
+                              const dayStr = format(day, "yyyy-MM-dd");
+                              const count = yearCounts.get(dayStr) ?? 0;
+                              return (
+                                <button
+                                  key={dayStr}
+                                  type="button"
+                                  className="flex flex-col items-center gap-0.5 rounded py-0.5 hover:bg-muted"
+                                  aria-label={
+                                    count > 0
+                                      ? `${format(day, "d 'de' MMMM", { locale: ptBR })}, ${count} agendamento${count > 1 ? "s" : ""}`
+                                      : format(day, "d 'de' MMMM", { locale: ptBR })
+                                  }
+                                  onClick={() => {
+                                    setSelectedDate(day);
+                                    setGradeViewMode("day");
+                                  }}
+                                >
+                                  <span className="text-[11px] leading-none text-muted-foreground">
+                                    {day.getDate()}
+                                  </span>
+                                  <AppointmentDayDots count={count} size="sm" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       );
                     })}
                   </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1876,7 +1969,7 @@ export default function Agendamentos() {
             ? "Confira os dados e confirme com o cliente."
             : "Preencha os dados do agendamento."
         }
-        contentClassName={editingAppointment ? "sm:max-w-4xl" : "sm:max-w-2xl"}
+        contentClassName={editingAppointment ? "sm:max-w-3xl" : "sm:max-w-2xl"}
         footer={
           <>
             {(editingAppointment && appointmentModalMode === "edit") ||
@@ -1911,7 +2004,7 @@ export default function Agendamentos() {
             <div
               className={
                 editingAppointment && appointmentModalMode === "view"
-                  ? "col-span-2 flex flex-nowrap items-center gap-2 overflow-x-auto"
+                  ? "col-span-2 flex flex-wrap items-center justify-between gap-2"
                   : "flex flex-nowrap items-center justify-end gap-2 overflow-x-auto"
               }
             >
@@ -1927,6 +2020,7 @@ export default function Agendamentos() {
                     <Pencil className="h-3.5 w-3.5" />
                     Editar
                   </Button>
+                  <div className="flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
                     size="sm"
@@ -1994,6 +2088,7 @@ export default function Agendamentos() {
                     <Ban className="h-4 w-4 mr-1 sm:mr-2" />
                     Cancelar
                   </Button>
+                  </div>
                 </>
               ) : (
                 <Button
@@ -2012,11 +2107,11 @@ export default function Agendamentos() {
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             {editingAppointment && appointmentModalMode === "view" && (
-              <div className="rounded-lg border border-border bg-card p-4 relative">
-                <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
-                  <div className="min-w-0">
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-lg font-semibold text-foreground truncate">
+                      <p className="text-lg font-semibold text-foreground">
                         {editingAppointment.client_name}
                       </p>
                       <span
@@ -2044,10 +2139,10 @@ export default function Agendamentos() {
                                 : "Faltou"}
                       </span>
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                      <span className="inline-flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground">
+                      <span className="inline-flex items-center gap-2 pr-1">
                         <Phone className="h-4 w-4" />
-                        {formatPhoneDisplay(editingAppointment.client_phone)}
+                        {formatPhoneEditable(editingAppointment.client_phone)}
                       </span>
                       <button
                         type="button"
@@ -2073,110 +2168,106 @@ export default function Agendamentos() {
                         Ligar
                       </a>
                     </div>
-
-                    <div className="mt-4 grid gap-3 grid-cols-1 md:grid-cols-3">
-                      <div className="rounded-lg bg-muted/40 px-4 py-3 min-h-[72px] flex flex-col justify-center">
-                        <p className="text-sm text-muted-foreground">
-                          Agendamento
-                        </p>
-                        <p className="text-base font-medium text-foreground flex items-center gap-2 mt-0.5">
-                          <Clock className="h-4 w-4 text-muted-foreground" />
-                          {formatAppointmentDateTime(
-                            editDateStr,
-                            watchedTime ?? editingAppointment.scheduled_time,
-                          )}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-muted/40 px-4 py-3 min-h-[72px] flex flex-col justify-center">
-                        <p className="text-sm text-muted-foreground">
-                          Barbeiro
-                        </p>
-                        <p className="text-base font-medium text-foreground truncate mt-0.5">
-                          {(barbers.find((b) => b.id === editBarberId)?.name ??
-                            editingAppointment.barber_name) ||
-                            "—"}
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-muted/40 px-4 py-3 min-h-[72px] flex flex-col justify-center">
-                        <p className="text-sm text-muted-foreground">Duração</p>
-                        <p className="text-base font-medium text-foreground mt-0.5">
-                          {computedTotals.totalDuration} min
-                        </p>
-                      </div>
-                      <div className="rounded-lg bg-muted/40 px-4 py-3 min-h-[72px] flex flex-col justify-center">
-                        <p className="text-sm text-muted-foreground">Valor</p>
-                        <p className="text-base font-medium text-foreground flex items-center gap-2 mt-0.5">
-                          <DollarSign className="h-4 w-4 text-muted-foreground" />
-                          R${" "}
-                          {Number(
-                            watchedPrice ?? editingAppointment.price ?? 0,
-                          ).toFixed(2)}
-                        </p>
-                      </div>
-                      {editingAppointment.commission_amount != null && (
-                        <div className="rounded-lg bg-muted/40 px-4 py-3 min-h-[72px] flex flex-col justify-center">
-                          <p className="text-sm text-muted-foreground">
-                            Comissão
-                          </p>
-                          <p className="text-base font-medium text-foreground mt-0.5">
-                            R${" "}
-                            {Number(
-                              editingAppointment.commission_amount,
-                            ).toFixed(2)}
-                          </p>
-                        </div>
-                      )}
-                      <div className="rounded-lg bg-muted/40 px-4 py-3 min-h-[72px] md:col-span-2 flex flex-col justify-center">
-                        <p className="text-sm text-muted-foreground">
-                          Serviços
-                        </p>
-                        <p className="text-base font-medium text-foreground mt-0.5">
-                          {selectedServices.length > 0
-                            ? serviceLabel(
-                                selectedServices.map((s) => s.name),
-                              )
-                            : serviceLabel(
-                                editingAppointment.service_names,
-                                editingAppointment.service_name,
-                              )}
-                        </p>
-                      </div>
-                    </div>
                   </div>
-
-                  <div className="flex flex-col gap-2 md:items-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full md:w-auto hover:bg-green-600/10 hover:text-green-600 hover:border-green-600/30"
-                      asChild
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0 hover:bg-green-600/10 hover:text-green-600 hover:border-green-600/30"
+                    asChild
+                  >
+                    <a
+                      href={getClientWhatsAppUrl(
+                        editingAppointment.client_phone,
+                        [
+                          `Olá, ${editingAppointment.client_name}!`,
+                          `Aqui é da ${barbershop?.name ?? "NavalhIA"}.`,
+                          "",
+                          `Sobre seu agendamento em ${String(editDateStr ?? editingAppointment.scheduled_date).slice(0, 10)} às ${String(watchedTime ?? editingAppointment.scheduled_time).slice(0, 5)}.`,
+                          `Serviço(s): ${
+                            selectedServices.length > 0
+                              ? selectedServices.map((s) => s.name).join(", ")
+                              : serviceLabel(
+                                  editingAppointment.service_names,
+                                  editingAppointment.service_name,
+                                )
+                          }`,
+                          `Valor: R$ ${Number(watchedPrice ?? editingAppointment.price ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                        ].join("\n"),
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
                     >
-                      <a
-                        href={getClientWhatsAppUrl(
-                          editingAppointment.client_phone,
-                          [
-                            `Salve, ${editingAppointment.client_name}!`,
-                            `Aqui é da ${barbershop?.name ?? "NavalhIA"}.`,
-                            "",
-                            `Sobre seu agendamento em ${String(editDateStr ?? editingAppointment.scheduled_date).slice(0, 10)} às ${String(watchedTime ?? editingAppointment.scheduled_time).slice(0, 5)}.`,
-                            `Serviço(s): ${
-                              selectedServices.length > 0
-                                ? selectedServices.map((s) => s.name).join(", ")
-                                : serviceLabel(
-                                    editingAppointment.service_names,
-                                    editingAppointment.service_name,
-                                  )
-                            }`,
-                            `Valor: R$ ${Number(watchedPrice ?? editingAppointment.price ?? 0).toFixed(2)}`,
-                          ].join("\n"),
+                      <MessageCircle className="h-4 w-4" />
+                      WhatsApp
+                    </a>
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Agendamento</p>
+                    <p className="mt-1 text-sm font-medium text-foreground flex items-start gap-2">
+                      <Clock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      {formatAppointmentDateTime(
+                        editDateStr,
+                        watchedTime ?? editingAppointment.scheduled_time,
+                      )}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Barbeiro</p>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      {(barbers.find((b) => b.id === editBarberId)?.name ??
+                        editingAppointment.barber_name) ||
+                        "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Duração</p>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      {computedTotals.totalDuration} min
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+                    <p className="text-xs text-muted-foreground">Valor</p>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      R${" "}
+                      {Number(
+                        watchedPrice ?? editingAppointment.price ?? 0,
+                      ).toLocaleString("pt-BR", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+                  </div>
+                  {editingAppointment.commission_amount != null && (
+                    <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3">
+                      <p className="text-xs text-muted-foreground">Comissão</p>
+                      <p className="mt-1 text-sm font-medium text-foreground">
+                        R${" "}
+                        {Number(editingAppointment.commission_amount).toLocaleString(
+                          "pt-BR",
+                          { minimumFractionDigits: 2, maximumFractionDigits: 2 },
                         )}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <MessageCircle className="h-4 w-4" />
-                        WhatsApp
-                      </a>
-                    </Button>
+                      </p>
+                    </div>
+                  )}
+                  <div
+                    className={`rounded-lg border border-border/60 bg-muted/30 px-4 py-3 ${
+                      editingAppointment.commission_amount == null
+                        ? "sm:col-span-2"
+                        : ""
+                    }`}
+                  >
+                    <p className="text-xs text-muted-foreground">Serviços</p>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      {selectedServices.length > 0
+                        ? serviceLabel(selectedServices.map((s) => s.name))
+                        : serviceLabel(
+                            editingAppointment.service_names,
+                            editingAppointment.service_name,
+                          )}
+                    </p>
                   </div>
                 </div>
               </div>

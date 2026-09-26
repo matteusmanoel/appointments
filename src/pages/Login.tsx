@@ -37,10 +37,14 @@ export default function Login() {
       const from = (location.state as { from?: { pathname: string } })?.from?.pathname;
       navigate(from && from.startsWith("/app") ? from : "/app", { replace: true });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      const apiDown = /fetch|network|demorou|Failed|ECONNREFUSED/i.test(msg);
       toastError(
         "Não foi possível entrar",
         err,
-        "E-mail ou senha incorretos. Verifique e tente novamente.",
+        apiDown
+          ? "A API não está respondendo em :3003. Suba o backend e tente de novo."
+          : "E-mail ou senha incorretos. Verifique e tente novamente.",
       );
     }
   };

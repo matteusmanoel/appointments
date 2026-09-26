@@ -1,15 +1,12 @@
 import { useMemo, useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   formatCurrencyBR,
   parseCurrencyDigitsToNumber,
@@ -23,6 +20,8 @@ type Props = {
   defaultPlan?: BillingPlan;
 };
 
+const PRO_PRICE = 297;
+
 const PLAN_LABEL: Record<BillingPlan, string> = {
   essential: "Essencial",
   pro: "Profissional",
@@ -35,17 +34,48 @@ function recommendPlan(monthlyLoss: number): BillingPlan {
   return "essential";
 }
 
-export function RoiCalculator({ onCtaClick }: Props) {
-  const [ticketDigits, setTicketDigits] = useState(() =>
-    numberToCurrencyDigits(60),
+function FluidSlider({
+  label,
+  value,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  max: number;
+  onChange: (n: number) => void;
+}) {
+  const fill = `${(value / max) * 100}%`;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="font-mono text-[11px] uppercase tracking-widest text-white/40">
+          {label}
+        </span>
+        <span className="font-mono text-sm tabular-nums text-white">{value}</span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={max}
+        step={1}
+        value={value}
+        aria-label={label}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="lp-range"
+        style={{ ["--fill" as string]: fill }}
+      />
+    </div>
   );
+}
+
+export function RoiCalculator({ onCtaClick }: Props) {
+  const [ticketDigits, setTicketDigits] = useState(() => numberToCurrencyDigits(60));
   const [lostClientsPerWeek, setLostClientsPerWeek] = useState(4);
   const [noShowsPerWeek, setNoShowsPerWeek] = useState(2);
 
-  const ticket = useMemo(
-    () => parseCurrencyDigitsToNumber(ticketDigits),
-    [ticketDigits],
-  );
+  const ticket = useMemo(() => parseCurrencyDigitsToNumber(ticketDigits), [ticketDigits]);
+
   const monthlyLoss = useMemo(() => {
     const weeks = 4.3;
     const lost = (lostClientsPerWeek + noShowsPerWeek) * ticket * weeks;
@@ -54,114 +84,90 @@ export function RoiCalculator({ onCtaClick }: Props) {
 
   const cutsToBreakEven = useMemo(() => {
     const price = ticket || 1;
-    return Math.max(1, Math.ceil(197 / price));
+    return Math.max(1, Math.ceil(PRO_PRICE / price));
   }, [ticket]);
 
   const recommended = useMemo(() => recommendPlan(monthlyLoss), [monthlyLoss]);
 
   return (
-    <Card className="border-primary/30 min-w-0 w-full overflow-hidden">
-      <CardHeader className="pb-2 md:pb-3">
-        <CardTitle className="text-base md:text-lg leading-snug">
-          Quanto custa “demorar no WhatsApp”?{" "}
-        </CardTitle>
-        <CardDescription className="text-sm leading-relaxed">
-          Ajuste os números e veja quanto você pode estar perdendo por mês.
-          (Estimativa simples.)
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-5 pb-6 pt-0">
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="md:col-span-1 min-h-[7rem] flex flex-col">
-            <Label htmlFor="ticket" className="text-sm">
-              Ticket médio (R$)
-            </Label>
+    <TooltipProvider delayDuration={150}>
+      <div className="relative rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.04] to-[#0c0c12] p-6 md:p-8">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Como o cálculo é feito"
+              className="absolute right-4 top-4 cursor-pointer rounded-full p-1.5 text-white/35 transition-colors hover:bg-white/5 hover:text-white"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent
+            side="left"
+            className="max-w-[260px] border-white/10 bg-[#12121a] font-mono text-[11px] leading-relaxed text-white/75"
+          >
+            Perda do mês = (clientes que desistem + faltas na semana) × ticket × 4,3 semanas.
+            O plano sugerido é o que cabe nessa perda. Cortes para o Profissional se pagar = R$ 297 ÷ ticket.
+          </TooltipContent>
+        </Tooltip>
+
+        <p className="font-mono text-[11px] uppercase tracking-widest text-white/35">
+          Perda estimada / mês
+        </p>
+        <p className="mt-2 font-display text-4xl font-bold tabular-nums text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400 md:text-5xl">
+          R$ {formatCurrencyBR(monthlyLoss)}
+        </p>
+        <p className="mt-2 font-display text-sm text-white/55">
+          Plano sugerido{" "}
+          <span className="text-white">{PLAN_LABEL[recommended]}</span>
+        </p>
+
+        <div className="mt-8 space-y-6">
+          <div>
+            <label htmlFor="ticket" className="font-mono text-[11px] uppercase tracking-widest text-white/40">
+              Ticket médio
+            </label>
             <Input
               id="ticket"
               inputMode="numeric"
               value={formatCurrencyDigits(ticketDigits)}
               onChange={(e) => setTicketDigits(e.target.value)}
-              className="mt-1.5 h-10 w-full min-w-0"
+              className="mt-2 h-11 border-white/10 bg-white/[0.03] font-mono text-white placeholder:text-white/25"
               placeholder="60,00"
             />
-            <p className="text-xs text-muted-foreground mt-1.5 leading-snug">
-              Ex.: corte, barba ou combo.
-            </p>
           </div>
-          <div className="md:col-span-2 rounded-lg border bg-muted/30 p-4 min-h-[7rem] flex flex-col justify-center">
-            <div className="flex items-baseline justify-between gap-3 flex-wrap">
-              <p className="text-sm text-muted-foreground shrink-0">
-                Perda estimada/mês
-              </p>
-              <p className="text-xl md:text-2xl font-bold text-foreground tabular-nums min-w-[8rem] text-right">
-                R$ {formatCurrencyBR(monthlyLoss)}
-              </p>
-            </div>
-            <p className="text-sm text-muted-foreground mt-2 leading-snug">
-              Plano sugerido:{" "}
-              <span className="font-medium text-foreground">
-                {PLAN_LABEL[recommended]}
-              </span>
-            </p>
-            <p className="text-xs text-muted-foreground mt-1.5 leading-snug">
-              Dica: se você recuperar só{" "}
-              <span className="font-medium tabular-nums">
-                {cutsToBreakEven} cortes/mês
-              </span>
-              , o plano Profissional já tende a se pagar.
-            </p>
-          </div>
+
+          <FluidSlider
+            label="Clientes que desistem / semana"
+            value={lostClientsPerWeek}
+            max={20}
+            onChange={setLostClientsPerWeek}
+          />
+          <FluidSlider
+            label="Faltas / semana"
+            value={noShowsPerWeek}
+            max={20}
+            onChange={setNoShowsPerWeek}
+          />
         </div>
 
-        <div className="grid gap-5 md:grid-cols-2">
-          <div className="space-y-2 min-h-[4.5rem]">
-            <div className="flex items-center justify-between gap-2 min-h-5">
-              <Label className="text-sm leading-tight">
-                Clientes perdidos/semana (não respondeu)
-              </Label>
-              <span className="text-sm font-medium tabular-nums shrink-0 w-6 text-right">
-                {lostClientsPerWeek}
-              </span>
-            </div>
-            <Slider
-              value={[lostClientsPerWeek]}
-              onValueChange={(v) => setLostClientsPerWeek(v[0] ?? 0)}
-              min={0}
-              max={20}
-              step={1}
-              className="py-2"
-            />
-          </div>
-          <div className="space-y-2 min-h-[4.5rem]">
-            <div className="flex items-center justify-between gap-2 min-h-5">
-              <Label className="text-sm leading-tight">No-shows/semana</Label>
-              <span className="text-sm font-medium tabular-nums shrink-0 w-6 text-right">
-                {noShowsPerWeek}
-              </span>
-            </div>
-            <Slider
-              value={[noShowsPerWeek]}
-              onValueChange={(v) => setNoShowsPerWeek(v[0] ?? 0)}
-              min={0}
-              max={20}
-              step={1}
-              className="py-2"
-            />
-          </div>
-        </div>
+        <p className="mt-6 flex items-start gap-2 font-display text-sm leading-snug text-white/50">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary/80" aria-hidden />
+          <span>
+            Recupere só{" "}
+            <span className="font-mono tabular-nums text-white">{cutsToBreakEven}</span>{" "}
+            cortes no mês e o Profissional já se paga.
+          </span>
+        </p>
 
-        <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between pt-1 min-h-[3.5rem]">
-          <div className="text-sm text-muted-foreground leading-snug">
-            Checkout seguro Stripe • Sem fidelidade
-          </div>
-          <Button
-            onClick={onCtaClick}
-            className="sm:min-w-[220px] h-10 shrink-0"
-          >
-            Quero parar de perder cliente
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
+        <button
+          type="button"
+          onClick={onCtaClick}
+          className="lp-shimmer mt-6 w-full rounded-xl bg-primary py-3.5 font-display text-sm font-semibold text-white shadow-[0_0_24px_hsl(239_84%_62%/0.4)] transition-all hover:shadow-[0_0_36px_hsl(239_84%_62%/0.55)]"
+        >
+          <span className="relative z-10">Quero parar de perder cliente</span>
+        </button>
+      </div>
+    </TooltipProvider>
   );
 }

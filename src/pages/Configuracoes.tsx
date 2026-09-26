@@ -125,6 +125,8 @@ const barbershopSchema = z.object({
   latitude: z.string().optional(),
   longitude: z.string().optional(),
   pix_key: z.string().max(150).optional(),
+  pix_holder_name: z.string().max(120).optional(),
+  pix_key_type: z.enum(["cpf", "cnpj", "telefone", "email", "aleatoria", ""]).optional(),
 });
 
 type BarbershopFormValues = z.infer<typeof barbershopSchema>;
@@ -508,6 +510,9 @@ export default function Configuracoes() {
       address: "",
       latitude: "",
       longitude: "",
+      pix_key: "",
+      pix_holder_name: "",
+      pix_key_type: "" as const,
     },
   });
 
@@ -526,7 +531,9 @@ export default function Configuracoes() {
           barbershop.longitude != null && !Number.isNaN(barbershop.longitude)
             ? String(barbershop.longitude)
             : "",
-        pix_key: (barbershop as Record<string, unknown>).pix_key as string ?? "",
+        pix_key: barbershop.pix_key ?? "",
+        pix_holder_name: barbershop.pix_holder_name ?? "",
+        pix_key_type: (barbershop.pix_key_type ?? "") as "" | "cpf" | "cnpj" | "telefone" | "email" | "aleatoria",
       });
     }
   }, [businessOpen, barbershop, form]);
@@ -569,6 +576,8 @@ export default function Configuracoes() {
       address: values.address,
       ...(latitude !== undefined ? { latitude, longitude } : {}),
       pix_key: values.pix_key?.trim() || null,
+      pix_holder_name: values.pix_holder_name?.trim() || null,
+      pix_key_type: values.pix_key_type || null,
     };
     await withToast(patchMutation.mutateAsync(body), {
       successMessage: "Dados salvos.",
@@ -1064,6 +1073,49 @@ export default function Configuracoes() {
                   </FormItem>
                 )}
               />
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="pix_holder_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Nome do recebedor PIX</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="text"
+                          placeholder="Ex: João Silva"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="pix_key_type"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Tipo de chave PIX</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione o tipo" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="cpf">CPF</SelectItem>
+                          <SelectItem value="cnpj">CNPJ</SelectItem>
+                          <SelectItem value="telefone">Telefone</SelectItem>
+                          <SelectItem value="email">E-mail</SelectItem>
+                          <SelectItem value="aleatoria">Chave aleatória</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </form>
           </Form>
         )}

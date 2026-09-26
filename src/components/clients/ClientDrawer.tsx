@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -25,9 +26,9 @@ import {
   Brain,
   Scissors,
 } from "lucide-react";
-import { clientsApi, type Client, type ClientMemory } from "@/lib/api";
+import { clientsApi, whatsappApi, type Client, type ClientMemory } from "@/lib/api";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 import { toastSuccess, toastError } from "@/lib/toast-helpers";
 
 const STATUS_LABELS: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
@@ -299,6 +300,115 @@ interface ClientDrawerProps {
   onEdit: (client: Client) => void;
 }
 
+function ClientIdentity({ client }: { client: Client }) {
+  const queryClient = useQueryClient();
+  const [photoUrl, setPhotoUrl] = useState(client.photo_url ?? "");
+  const [confirmed, setConfirmed] = useState(client.name_confirmed !== false);
+
+  useEffect(() => {
+    setPhotoUrl(client.photo_url ?? "");
+    setConfirmed(client.name_confirmed !== false);
+  }, [client.id, client.photo_url, client.name_confirmed]);
+
+  const displayName =
+    !confirmed && client.whatsapp_contact_name ? client.whatsapp_contact_name : client.name;
+
+  const syncPhoto = useMutation({
+    mutationFn: () => whatsappApi.syncContactPhoto(client.phone),
+    onSuccess: (data) => {
+      setPhotoUrl(data.photo_url);
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      toastSuccess("Foto do WhatsApp atualizada.");
+    },
+    onError: () => toastError("Não foi possível buscar a foto do WhatsApp."),
+  });
+
+  const savePhoto = useMutation({
+    mutationFn: () => clientsApi.update(client.id, { photo_url: photoUrl.trim() || null }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      toastSuccess("Foto salva.");
+    },
+    onError: () => toastError("Erro ao salvar a foto."),
+  });
+
+  const confirmName = useMutation({
+    mutationFn: () => clientsApi.update(client.id, { name_confirmed: true }),
+    onSuccess: () => {
+      setConfirmed(true);
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      toastSuccess("Nome confirmado.");
+    },
+    onError: () => toastError("Erro ao confirmar o nome."),
+  });
+
+  return (
+    <div className="flex items-start gap-3 min-w-0">
+      <div className="w-16 h-16 rounded-full bg-primary/10 overflow-hidden flex items-center justify-center shrink-0">
+        {photoUrl ? (
+          <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <User className="w-7 h-7 text-primary" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <SheetTitle className="text-base">{displayName}</SheetTitle>
+            {!confirmed && <Badge variant="secondary">NOVO</Badge>}
+          </div>
+          <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
+            <Phone className="w-3 h-3" />
+            {client.phone}
+          </p>
+          {!confirmed && client.whatsapp_contact_name && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Nome no WhatsApp: {client.whatsapp_contact_name}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={syncPhoto.isPending}
+            onClick={() => syncPhoto.mutate()}
+          >
+            Sincronizar foto WA
+          </Button>
+          {!confirmed && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={confirmName.isPending}
+              onClick={() => confirmName.mutate()}
+            >
+              Confirmar nome
+            </Button>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <Input
+            value={photoUrl}
+            onChange={(e) => setPhotoUrl(e.target.value)}
+            placeholder="URL da foto"
+            className="h-8 text-xs"
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            className="shrink-0"
+            disabled={savePhoto.isPending}
+            onClick={() => savePhoto.mutate()}
+          >
+            Salvar
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ClientDrawer({ client, onClose, onEdit }: ClientDrawerProps) {
   const { data: appointments = [], isLoading: loadingAppointments } = useQuery({
     queryKey: ["client-appointments", client?.id],
@@ -318,20 +428,9 @@ export function ClientDrawer({ client, onClose, onEdit }: ClientDrawerProps) {
         {client && (
           <>
             <SheetHeader className="pb-4 border-b border-border">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                    <User className="w-6 h-6 text-primary" />
-                  </div>
-                  <div>
-                    <SheetTitle className="text-base">{client.name}</SheetTitle>
-                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <Phone className="w-3 h-3" />
-                      {client.phone}
-                    </p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => onEdit(client)}>
+              <div className="flex items-start justify-between gap-2">
+                <ClientIdentity client={client} />
+                <Button variant="outline" size="sm" className="shrink-0" onClick={() => onEdit(client)}>
                   <Pencil className="w-3.5 h-3.5 mr-1.5" /> Editar
                 </Button>
               </div>

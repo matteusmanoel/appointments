@@ -11,22 +11,22 @@ export const BILLING_PLANS: {
   {
     id: "essential",
     label: "Essencial",
-    price: "R$ 97/mês",
-    priceValue: 97,
+    price: "R$ 147/mês",
+    priceValue: 147,
     desc: "Painel de Gestão + Link Público",
   },
   {
     id: "pro",
     label: "Profissional",
-    price: "R$ 197/mês",
-    priceValue: 197,
+    price: "R$ 297/mês",
+    priceValue: 297,
     desc: "Assistente de IA, lembretes e follow-ups",
   },
   {
     id: "premium",
     label: "Premium",
-    price: "R$ 349/mês",
-    priceValue: 349,
+    price: "R$ 449/mês",
+    priceValue: 449,
     desc: "NavalhIA escalável",
   },
 ];

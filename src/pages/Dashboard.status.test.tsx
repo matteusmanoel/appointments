@@ -45,6 +45,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
           followUps: { sent: 0, failed: 0, skipped: 0 },
         })
       ),
+      agendaActivity: vi.fn(() => Promise.resolve({ events: [] })),
     },
   };
 });

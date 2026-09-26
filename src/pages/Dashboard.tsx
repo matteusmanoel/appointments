@@ -24,7 +24,7 @@ const TopServices = lazy(() =>
     default: m.TopServices,
   })),
 );
-import { startOfMonth, format, differenceInDays } from "date-fns";
+import { startOfMonth, endOfMonth, format, differenceInDays } from "date-fns";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
 import {
   appointmentsApi,
@@ -66,7 +66,7 @@ export default function Dashboard() {
     to: Date | null;
   } | null>(() => {
     const now = new Date();
-    return { from: startOfMonth(now), to: now };
+    return { from: startOfMonth(now), to: endOfMonth(now) };
   });
 
   const fromStr =
@@ -81,6 +81,7 @@ export default function Dashboard() {
       fromStr && toStr
         ? appointmentsApi.list({ from: fromStr, to: toStr })
         : appointmentsApi.list({ date: today }),
+    refetchInterval: 5000,
   });
   const { data: whatsapp } = useQuery({
     queryKey: ["whatsapp"],
@@ -312,7 +313,7 @@ export default function Dashboard() {
       </Suspense>
 
       {/* Appointments + Ranking */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <AppointmentsList range={range} />
         <RankingCard range={range} />
       </div>

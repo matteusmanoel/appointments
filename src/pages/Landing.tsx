@@ -1,46 +1,99 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Link, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import {
-  MessageCircle,
-  Calendar,
-  CreditCard,
-  Timer,
-  Users,
-  CheckCircle2,
-  Shield,
-} from "lucide-react";
+import { CheckCircle2, XCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import type { BillingPlan } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
 import { CheckoutModal } from "@/components/CheckoutModal";
-import { AiSchedulingDemoChat } from "@/components/ai-demo/AiSchedulingDemoChat";
 import { WhatsAppFloatingButton } from "@/components/WhatsAppFloatingButton";
 import { RoiCalculator } from "@/components/landing/RoiCalculator";
 import { StickyCtaBar } from "@/components/landing/StickyCtaBar";
+import { LpDemoSection } from "@/components/landing/LpDemoSection";
+import { LpMarquee } from "@/components/landing/LpMarquee";
+import { LpCounters } from "@/components/landing/LpCounters";
+import { LpPlatformCarousel } from "@/components/landing/LpPlatformCarousel";
+import { cn } from "@/lib/utils";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function useFadeInOnScroll(threshold = 0.12) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setVisible(true); obs.disconnect(); } },
+      { threshold },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [threshold]);
+  return { ref, visible };
+}
+
+function FadeSection({ children }: { children: React.ReactNode }) {
+  const { ref, visible } = useFadeInOnScroll();
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "transition-all duration-700",
+        visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+function GlassCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={cn("rounded-2xl border border-white/8 bg-white/[0.03] backdrop-blur-sm", className)}>
+      {children}
+    </div>
+  );
+}
+
+// Floating hero particles
+const PARTICLES = [
+  { size: 3, top: "18%", left: "12%", anim: "animate-float-slow", delay: "0s", opacity: 0.08 },
+  { size: 5, top: "55%", left: "8%", anim: "animate-float-mid", delay: "1.2s", opacity: 0.06 },
+  { size: 2, top: "30%", left: "88%", anim: "animate-float-fast", delay: "0.4s", opacity: 0.1 },
+  { size: 4, top: "72%", left: "85%", anim: "animate-float-slow", delay: "2s", opacity: 0.07 },
+  { size: 3, top: "82%", left: "22%", anim: "animate-float-mid", delay: "0.8s", opacity: 0.06 },
+  { size: 5, top: "15%", left: "60%", anim: "animate-float-fast", delay: "1.6s", opacity: 0.05 },
+];
+
+// ---------------------------------------------------------------------------
+// Landing
+// ---------------------------------------------------------------------------
 
 export default function Landing() {
   const { profile, loading } = useAuth();
+
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutInitialPlan, setCheckoutInitialPlan] = useState<BillingPlan>("pro");
-  const [chatOpen, setChatOpen] = useState(false);
+
   const headerRef = useRef<HTMLElement | null>(null);
-  const provaSectionRef = useRef<HTMLElement | null>(null);
-  const provaBgImgRef = useRef<HTMLImageElement | null>(null);
+  const heroRef = useRef<HTMLElement | null>(null);
+  const heroBgRef = useRef<HTMLDivElement | null>(null);
+  const glowRef = useRef<HTMLDivElement | null>(null);
+  const mouseRafRef = useRef(0);
 
   const openCheckout = (plan: BillingPlan = "pro") => {
     setCheckoutInitialPlan(plan);
@@ -59,9 +112,7 @@ export default function Landing() {
   useEffect(() => {
     const prev = document.documentElement.style.scrollBehavior;
     document.documentElement.style.scrollBehavior = "smooth";
-    return () => {
-      document.documentElement.style.scrollBehavior = prev;
-    };
+    return () => { document.documentElement.style.scrollBehavior = prev; };
   }, []);
 
   useEffect(() => {
@@ -71,853 +122,705 @@ export default function Landing() {
     return () => window.clearTimeout(t);
   }, [scrollToSection]);
 
+  // Hero parallax
   useEffect(() => {
-    const section = provaSectionRef.current;
-    const img = provaBgImgRef.current;
-    if (!section || !img) return;
-
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (media?.matches) return;
-
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const bg = heroBgRef.current;
+    if (!bg) return;
     let raf = 0;
     const update = () => {
       raf = 0;
-      const rect = section.getBoundingClientRect();
-      const viewportH = window.innerHeight || 0;
-      if (!viewportH) return;
-
-      const sectionCenter = rect.top + rect.height / 2;
-      const viewportCenter = viewportH / 2;
-      const delta = (sectionCenter - viewportCenter) / viewportH; // ~[-1..1]
-      const translate = Math.max(-80, Math.min(80, delta * -70));
-      img.style.transform = `translate3d(0, ${translate}px, 0) scale(1.12)`;
+      const rect = heroRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const delta = rect.top / window.innerHeight;
+      const translate = Math.max(-60, Math.min(60, delta * -50));
+      bg.style.transform = `translate3d(0, ${translate}px, 0) scale(1.1)`;
     };
-
-    const onScroll = () => {
-      if (raf) return;
-      raf = window.requestAnimationFrame(update);
-    };
-
+    const onScroll = () => { if (raf) return; raf = requestAnimationFrame(update); };
     update();
     window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      if (raf) window.cancelAnimationFrame(raf);
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
+    return () => { if (raf) cancelAnimationFrame(raf); window.removeEventListener("scroll", onScroll); };
+  }, []);
+
+  // Mouse-tracking glow
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const hero = heroRef.current;
+    const glow = glowRef.current;
+    if (!hero || !glow) return;
+    const onMouseMove = (e: MouseEvent) => {
+      if (mouseRafRef.current) return;
+      mouseRafRef.current = requestAnimationFrame(() => {
+        mouseRafRef.current = 0;
+        const rect = hero.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        glow.style.background = `radial-gradient(600px circle at ${x}% ${y}%, hsl(239 84% 62% / 0.13), transparent 60%)`;
+      });
     };
+    hero.addEventListener("mousemove", onMouseMove);
+    return () => hero.removeEventListener("mousemove", onMouseMove);
   }, []);
 
   if (loading) return <LoadingState fullPage />;
   if (profile) return <Navigate to="/app" replace />;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/30 flex flex-col">
-      <header ref={headerRef} className="sticky top-0 z-40 border-b border-border/80 bg-background/90 backdrop-blur">
-        <div className="px-4 py-4 max-w-6xl mx-auto w-full flex items-center justify-between gap-4">
+    <div className="min-h-screen bg-background text-foreground flex flex-col overflow-x-hidden">
+
+      {/* ================================================================ NAV */}
+      <header
+        ref={headerRef}
+        className="sticky top-0 z-40 border-b border-white/8 bg-background/80 backdrop-blur-xl"
+      >
+        <div className="px-4 py-3 max-w-6xl mx-auto w-full flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2">
-            <img
-              src="/logo-named-white.svg"
-              alt="NavalhIA"
-              className="h-16 w-auto dark:block hidden object-contain"
-            />
-            <img
-              src="/logo-named-transparent.svg"
-              alt="NavalhIA"
-              className="h-8 w-auto block dark:hidden object-contain"
-            />
+            <img src="/navalhia-logo-header.png" alt="NavalhIA" className="h-10 w-auto object-contain" />
           </Link>
 
-          <nav className="hidden md:flex items-center gap-1">
-            <a
-              className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-              href="#como-funciona"
-              onClick={(e) => {
-                e.preventDefault();
-                scrollToSection("como-funciona");
-              }}
-            >
-              Como funciona
-            </a>
-            <a
-              className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-              href="#calculadora"
-              onClick={(e) => {
-                e.preventDefault();
-                scrollToSection("calculadora");
-              }}
-            >
-              Calculadora
-            </a>
-            <a
-              className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-              href="#comparativo"
-              onClick={(e) => {
-                e.preventDefault();
-                scrollToSection("comparativo");
-              }}
-            >
-              Comparativo
-            </a>
-            <a
-              className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-              href="#planos"
-              onClick={(e) => {
-                e.preventDefault();
-                scrollToSection("planos");
-              }}
-            >
-              Planos
-            </a>
-            <a
-              className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
-              href="#faq"
-              onClick={(e) => {
-                e.preventDefault();
-                scrollToSection("faq");
-              }}
-            >
-              FAQ
-            </a>
+          <nav className="hidden md:flex items-center gap-0.5">
+            {[
+              ["Como funciona", "como-funciona"],
+              ["Demo", "demo"],
+              ["Calculadora", "calculadora"],
+              ["Planos", "planos"],
+              ["FAQ", "faq"],
+            ].map(([label, id]) => (
+              <a
+                key={id}
+                href={`#${id}`}
+                className="px-3 py-1.5 text-sm text-white/50 hover:text-white transition-colors rounded-lg hover:bg-white/5"
+                onClick={(e) => { e.preventDefault(); scrollToSection(id); }}
+              >
+                {label}
+              </a>
+            ))}
           </nav>
 
           <div className="flex items-center gap-2">
             <Link to="/login">
-              <Button variant="ghost">Entrar</Button>
+              <Button variant="ghost" size="sm" className="text-white/60 hover:text-white">Entrar</Button>
             </Link>
-            <Button onClick={() => openCheckout()}>
+            <Button
+              size="sm"
+              onClick={() => openCheckout()}
+              className="lp-shimmer bg-primary hover:bg-primary/90 text-white shadow-[0_0_20px_hsl(239_84%_62%/0.4)] hover:shadow-[0_0_28px_hsl(239_84%_62%/0.55)] transition-all"
+            >
               Assinar agora
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 pb-24 md:pb-0">
-        {/* Above-the-fold: value + proof + interactive */}
-        <section className="px-4 py-10 md:py-16">
-          <div className="max-w-6xl mx-auto grid lg:grid-cols-2 gap-8 items-start">
+      <main className="flex-1 pb-20 md:pb-0">
+
+        {/* ============================================================== HERO */}
+        <section
+          ref={heroRef}
+          className="relative min-h-[88vh] flex items-center overflow-hidden px-4 py-16 md:py-20"
+        >
+          {/* Parallax background */}
+          <div className="absolute inset-0 overflow-hidden" aria-hidden>
+            <div ref={heroBgRef} className="absolute inset-0 w-full h-full will-change-transform" style={{ transform: "translate3d(0,0,0) scale(1.1)" }}>
+              <img src="/lp-hero-bg.jpg" alt="" className="w-full h-full object-cover opacity-40" loading="eager" fetchPriority="high" />
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/40 to-background" />
+            <div className="absolute inset-0 bg-gradient-to-r from-background/80 via-transparent to-background/30" />
+          </div>
+
+          {/* Mouse glow */}
+          <div ref={glowRef} className="pointer-events-none absolute inset-0 transition-none" aria-hidden />
+
+          {/* Ambient radial */}
+          <div className="pointer-events-none absolute top-1/2 left-1/4 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] rounded-full" style={{ background: "radial-gradient(circle, hsl(239 84% 62% / 0.08) 0%, transparent 70%)" }} aria-hidden />
+
+          {/* Floating particles */}
+          {PARTICLES.map((p, i) => (
+            <div
+              key={i}
+              aria-hidden
+              className={cn("absolute rounded-full bg-primary pointer-events-none", p.anim)}
+              style={{
+                width: p.size,
+                height: p.size,
+                top: p.top,
+                left: p.left,
+                opacity: p.opacity,
+                animationDelay: p.delay,
+              }}
+            />
+          ))}
+
+          <div className="relative max-w-6xl mx-auto w-full grid lg:grid-cols-[1fr_420px] gap-10 lg:gap-16 items-center">
+            {/* Copy */}
             <div>
-              <div className="flex flex-wrap items-center gap-2 mb-4">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/30 bg-primary/10 text-[12px] font-mono text-primary mb-6">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                Secretária virtual · agenda enquanto você corta
+              </div>
+
+              <h1 className="font-display text-4xl md:text-5xl lg:text-[60px] font-bold leading-[1.06] text-white mb-5">
+                Pare de agendar.{" "}
+                <br className="hidden md:block" />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400 [filter:drop-shadow(0_0_20px_hsl(239_84%_62%/0.4))]">
+                  Comece a atender.
+                </span>
+              </h1>
+
+              <p className="text-lg md:text-xl text-white/75 mb-8 max-w-xl leading-relaxed">
+                Sua barbearia precisa girar. Você só precisa aparecer.
+                Nossa secretária virtual cuida do WhatsApp, agenda horários
+                e lembra seus clientes — 24 horas por dia, sem você parar a tesoura.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-3 mb-8">
+                <button
+                  onClick={() => scrollToSection("demo")}
+                  className="lp-shimmer group relative px-8 py-4 rounded-xl bg-primary text-white font-semibold text-base overflow-hidden shadow-[0_0_28px_hsl(239_84%_62%/0.45)] hover:shadow-[0_0_44px_hsl(239_84%_62%/0.6)] transition-all duration-300 hover:scale-[1.03]"
+                >
+                  <span className="absolute inset-0 rounded-xl ring-2 ring-primary/50 animate-ping opacity-0 group-hover:opacity-60" />
+                  <span className="relative z-10 flex items-center gap-2">
+                    Ver funcionando →
+                  </span>
+                  <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
+                </button>
+
+                <button
+                  onClick={() => openCheckout()}
+                  className="lp-shimmer cursor-pointer px-8 py-4 rounded-xl border border-white/15 text-white/80 hover:text-white hover:border-white/30 hover:bg-white/5 font-medium text-base transition-all duration-200"
+                >
+                  Quero minha secretária
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-white/35 font-mono">
+                {["Pronto em 30 minutos", "Sem fidelidade", "Cancele quando quiser"].map((t) => (
+                  <span key={t} className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-primary/70" />
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Phone mockup */}
+            <div className="flex justify-center lg:justify-end">
+              <div className="relative">
+                <div className="absolute -inset-10 rounded-full bg-primary/8 blur-3xl pointer-events-none" />
                 <img
-                  src="/logo-app.svg"
-                  alt=""
-                  className="h-10 w-10 shrink-0 object-contain"
+                  src="/lp-phone-mockup.png"
+                  alt="NavalhIA no WhatsApp"
+                  className="relative w-full max-w-[320px] lg:max-w-full drop-shadow-[0_32px_64px_rgba(99,102,241,0.28)] animate-float-slow"
+                  loading="eager"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Scroll cue */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 animate-bounce opacity-30" aria-hidden>
+            <div className="w-5 h-8 rounded-full border border-white/30 flex items-start justify-center pt-1.5">
+              <div className="w-1 h-1.5 bg-white/60 rounded-full" />
+            </div>
+          </div>
+        </section>
+
+        {/* ============================================================ MARQUEE */}
+        <LpMarquee />
+
+        {/* ============================================================== DOR */}
+        <FadeSection>
+          <section className="px-4 py-16 md:py-24">
+            <div className="max-w-6xl mx-auto">
+              <div className="text-center mb-12">
+                <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">O problema real</p>
+                <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">
+                  Você é barbeiro.{" "}
+                  <span className="text-white/40">Não secretário.</span>
+                </h2>
+                <p className="text-white/55 max-w-md mx-auto">
+                  Mas está sendo forçado a ser os dois. E isso tem um custo real, toda semana.
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-5">
+                {[
+                  {
+                    icon: "✂️",
+                    title: "Perdendo cliente enquanto tem a tesoura na mão",
+                    desc: "Você não pode parar um corte pra responder mensagem. O cliente espera 20 minutos, desiste e vai para a concorrência — sem você nem perceber.",
+                    stat: "−3h/dia no celular",
+                    gradient: "bg-gradient-to-br from-red-950/50 to-[#0e0e0e]",
+                    statColor: "text-red-400/80 bg-red-500/10",
+                    hoverBorder: "hover:border-red-500/25",
+                  },
+                  {
+                    icon: "💺",
+                    title: "Cadeira vazia. Barbeiro esperando. Você pagando.",
+                    desc: "Sem confirmação, ele simplesmente não aparece. A cadeira fica parada, o barbeiro fica ocioso e o prejuízo é seu. Todo dia.",
+                    stat: "−R$ 400/mês em média",
+                    gradient: "bg-gradient-to-br from-orange-950/40 to-[#0e0e0e]",
+                    statColor: "text-orange-400/80 bg-orange-500/10",
+                    hoverBorder: "hover:border-orange-500/20",
+                  },
+                  {
+                    icon: "👻",
+                    title: "Ele foi embora. E não voltou mais.",
+                    desc: "Clientes que somem voltam quando alguém chama. Mas você não tem tempo de mandar mensagem para 50 pessoas. Então eles vão para outro lugar.",
+                    stat: "−60% retenção perdida",
+                    gradient: "bg-gradient-to-br from-zinc-900/80 to-[#0e0e0e]",
+                    statColor: "text-zinc-400/70 bg-zinc-500/10",
+                    hoverBorder: "hover:border-zinc-500/20",
+                  },
+                ].map((card, i) => (
+                  <div
+                    key={i}
+                    className={cn(
+                      "p-6 rounded-2xl border border-white/8 transition-all duration-300 group",
+                      card.gradient,
+                      card.hoverBorder,
+                      "hover:shadow-[0_0_30px_rgba(0,0,0,0.4)] hover:scale-[1.02]",
+                    )}
+                  >
+                    <div className="text-3xl mb-4">{card.icon}</div>
+                    <h3 className="font-display font-semibold text-white mb-2">{card.title}</h3>
+                    <p className="text-sm text-white/50 leading-relaxed mb-4">{card.desc}</p>
+                    <span className={cn("text-xs font-mono px-2 py-1 rounded-md", card.statColor)}>
+                      {card.stat}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-10 text-center">
+                <p className="text-white/40 text-sm mb-5">
+                  Se isso acontece toda semana, você está pagando caro por não ter sistema — só que paga em cadeira vazia.
+                </p>
+                <button
+                  onClick={() => openCheckout()}
+                  className="lp-shimmer cursor-pointer px-6 py-3 rounded-xl bg-white/8 border border-white/15 text-white hover:bg-white/12 hover:border-white/25 text-sm font-medium transition-all"
+                >
+                  Quero cadeiras cheias →
+                </button>
+              </div>
+            </div>
+          </section>
+        </FadeSection>
+
+        {/* ========================================================= ANTÍDOTO */}
+        <FadeSection>
+          <section className="relative px-4 py-16 md:py-24 overflow-hidden">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_80%_at_50%_50%,hsl(239_84%_62%/0.05),transparent)]" />
+            <div className="max-w-6xl mx-auto">
+              <div className="text-center mb-12">
+                <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">A solução</p>
+                <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">
+                Tecnologia não é estética.{" "}
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400">
+                  É ferramenta que gera resultado.
+                  </span>
+                </h2>
+                <p className="text-white/50 max-w-lg mx-auto mt-3">
+                  Não oferecemos logo bonita num app — entregamos uma barbearia que funciona enquanto você trabalha.
+                </p>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-5 max-w-4xl mx-auto">
+                <div className="p-6 rounded-2xl border border-red-500/15 bg-gradient-to-br from-red-950/30 to-[#0e0e0e]">
+                  <div className="flex items-center gap-2 mb-5">
+                    <XCircle className="w-4 h-4 text-red-400" />
+                    <span className="text-sm font-mono text-red-400/70 uppercase tracking-widest">Antes</span>
+                  </div>
+                  <ul className="space-y-3 text-sm text-white/55">
+                    {[
+                      "Respondendo WhatsApp enquanto corta",
+                      "Cadeira vazia por cliente que não avisou",
+                      "Ligação no meio do serviço, sem poder atender",
+                      "Cliente sumiu — sem tempo pra chamar de volta",
+                      "Agenda no papel ou só na cabeça",
+                      "Esquece de lembrar quem tem horário amanhã",
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2.5">
+                        <span className="w-1 h-1 rounded-full bg-red-400/40 mt-2 shrink-0" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="p-6 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 to-[#0e0e0e] shadow-[0_0_40px_hsl(239_84%_62%/0.08)]">
+                  <div className="flex items-center gap-2 mb-5">
+                    <CheckCircle2 className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-mono text-primary/70 uppercase tracking-widest">Com a NavalhIA</span>
+                  </div>
+                  <ul className="space-y-3 text-sm text-white/75">
+                    {[
+                      "Secretária virtual atende no WhatsApp 24h",
+                      "Lembrete automático antes do horário → cliente não falta",
+                      "Cliente agenda sozinho, a qualquer hora",
+                      "Quem sumiu recebe uma mensagem de volta",
+                      "Painel mostra tudo: agenda, clientes, movimento",
+                      "Você foca só no corte. O sistema cuida do resto.",
+                    ].map((item, i) => (
+                      <li key={i} className="flex items-start gap-2.5">
+                        <CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+        </FadeSection>
+
+        {/* =========================================================== COUNTERS */}
+        <LpCounters />
+
+        {/* ============================================================= DEMO */}
+        <LpDemoSection onAssinarClick={() => openCheckout()} />
+
+        {/* =========================================================== PAINEL (carousel) */}
+        <FadeSection>
+          <LpPlatformCarousel />
+        </FadeSection>
+
+        {/* =========================================================== MÉTODO */}
+        <FadeSection>
+          <section id="como-funciona" className="px-4 py-16 md:py-24 scroll-mt-20">
+            <div className="max-w-5xl mx-auto">
+              <div className="text-center mb-14">
+                <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">Como funciona</p>
+                <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">
+                  Pronto em 15 minutos.{" "}
+                  <span className="text-white/40">Funciona 24/7 no seu whatsapp</span>
+                </h2>
+              </div>
+
+              <div className="grid md:grid-cols-4 gap-4 relative">
+                {/* Connector line */}
+                <div
+                  className="hidden md:block absolute top-[44px] left-[calc(12.5%+24px)] right-[calc(12.5%+24px)] h-px"
+                  style={{ background: "linear-gradient(90deg, transparent 0%, hsl(239 84% 62% / 0.5) 20%, hsl(239 84% 62% / 0.5) 80%, transparent 100%)" }}
                   aria-hidden
                 />
-                <Badge variant="secondary">
-                  Feito para donos de estabelecimentos
-                </Badge>
-                <Badge variant="outline">Checkout seguro Stripe</Badge>
-                <Badge variant="outline">Sem fidelidade</Badge>
+
+                {[
+                  { n: "01", title: "Configure", sub: "Serviços & horários", desc: "Adicione seus serviços, barbeiros e horários disponíveis. Tudo guiado, passo a passo." },
+                  { n: "02", title: "Conecte", sub: "QR no WhatsApp", desc: "Leia o QR code no seu WhatsApp. Em minutos sua secretária virtual está ativa no número." },
+                  { n: "03", title: "Compartilhe", sub: "Seu link de agendamento", desc: "Manda o link pro seu cliente. Ele agenda sozinho. Você nem precisa olhar o celular." },
+                  { n: "04", title: "Apareça", sub: "Só para dar o corte", desc: "A agenda fica cheia. Os clientes são lembrados. Você só aparece para trabalhar." },
+                ].map((step, i) => (
+                  <GlassCard key={i} className="p-5 relative z-10 group hover:border-primary/30 hover:shadow-[0_0_24px_hsl(239_84%_62%/0.1)] hover:scale-[1.02] transition-all duration-300 bg-gradient-to-b from-white/[0.04] to-[#0e0e0e]">
+                    <div className="w-12 h-12 rounded-full border border-primary/40 bg-primary/10 flex items-center justify-center mb-5 group-hover:bg-primary/20 group-hover:border-primary/60 transition-all">
+                      <span className="font-mono text-sm font-bold text-primary">{step.n}</span>
+                    </div>
+                    <p className="font-display font-semibold text-white mb-0.5">{step.title}</p>
+                    <p className="text-xs font-mono text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400 mb-3">{step.sub}</p>
+                    <p className="text-sm text-white/45 leading-relaxed">{step.desc}</p>
+                  </GlassCard>
+                ))}
               </div>
-              <p className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-3">
-                Agende. Automatize. Cresça.
-              </p>
-              <h1 className="text-4xl md:text-5xl font-bold text-foreground leading-tight">
-                Sua recepcionista 24h no WhatsApp —{" "}
-                <span className="text-primary">agenda e reduz no-show</span>{" "}
-                automaticamente
-              </h1>
-              <p className="text-lg text-muted-foreground mt-4">
-                Pare de perder cliente por demora, acabe com cadeira vazia:
-                agendamento automático, lembretes e reagendamento fácil, sem
-                contratar recepcionista.
-              </p>
-
-              <div className="mt-6 flex flex-col sm:flex-row gap-3">
-                <Button
-                  size="lg"
-                  className="text-base"
-                  onClick={() => openCheckout()}
-                >
-                  Assinar e começar hoje
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="text-base"
-                  onClick={() => setChatOpen(true)}
-                >
-                  Testar demo agora
-                </Button>
-              </div>
-
-              <div className="mt-5 grid sm:grid-cols-3 gap-3">
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Timer className="h-4 w-4 text-primary" />
-                    <p className="text-sm font-medium">Resposta imediata</p>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Cliente agenda sem “esperar você ver”.
-                  </p>
-                </div>
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <CreditCard className="h-4 w-4 text-primary" />
-                    <p className="text-sm font-medium">Menos no-show</p>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Confirmação e lembretes para reduzir faltas.
-                  </p>
-                </div>
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Users className="h-4 w-4 text-primary" />
-                    <p className="text-sm font-medium">Cliente volta</p>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Follow-up automático de quem sumiu.
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-xs text-muted-foreground mt-4">
-                Setup 100% self-serve • Cancele quando quiser • Checkout seguro
-              </p>
             </div>
+          </section>
+        </FadeSection>
 
-            <div id="calculadora" className="scroll-mt-28">
-              <RoiCalculator onCtaClick={() => openCheckout()} />
-            </div>
-          </div>
-        </section>
-
-        {/* Dor / Aversão à perda */}
-        <section className="px-4 py-10 md:py-14 bg-muted/30 border-y border-border/50">
-          <div className="max-w-6xl mx-auto">
-            <div className="max-w-2xl">
-              <h2 className="text-2xl md:text-3xl font-bold">
-                Os problemas reais do dia a dia
-              </h2>
-              <p className="text-muted-foreground mt-3">
-                Você não precisa de “mais um sistema”. Você precisa parar de
-                perder dinheiro no automático.
-              </p>
-            </div>
-            <ul className="space-y-4">
-              <li className="flex items-start gap-3 p-4 rounded-lg bg-background border">
-                <MessageCircle className="h-6 w-6 text-destructive shrink-0 mt-0.5" />
-                <div>
-                  <strong>Você responde WhatsApp o dia inteiro</strong> — e
-                  ainda assim perde cliente por demora
-                </div>
-              </li>
-              <li className="flex items-start gap-3 p-4 rounded-lg bg-background border">
-                <Timer className="h-6 w-6 text-destructive shrink-0 mt-0.5" />
-                <div>
-                  <strong>Horário vazio por falha de agenda</strong> = barbeiro
-                  ocioso = prejuízo
-                </div>
-              </li>
-              <li className="flex items-start gap-3 p-4 rounded-lg bg-background border">
-                <Calendar className="h-6 w-6 text-destructive shrink-0 mt-0.5" />
-                <div>
-                  <strong>No-show sem confirmação</strong> = cadeira parada =
-                  caixa menor
-                </div>
-              </li>
-              <li className="flex items-start gap-3 p-4 rounded-lg bg-background border">
-                <Users className="h-6 w-6 text-destructive shrink-0 mt-0.5" />
-                <div>
-                  <strong>Sem follow-up</strong> = cliente some e não volta
-                </div>
-              </li>
-            </ul>
-            <p className="mt-6 text-muted-foreground">
-              Se isso acontece toda semana, você já paga um sistema — só que
-              paga em perda.
-            </p>
-            <div className="mt-6">
-              <Button onClick={() => openCheckout()}>
-                Quero resolver isso agora
-              </Button>
-            </div>
-          </div>
-        </section>
-
-        {/* Prova de produto: copy + visual (background + notebook-phone) */}
-        <section
-          ref={provaSectionRef}
-          id="prova-visual"
-          className="relative px-4 py-10 md:py-14 overflow-hidden"
-        >
-          <div className="absolute inset-0 overflow-hidden" aria-hidden>
-            <img
-              ref={provaBgImgRef}
-              src="/background.png"
-              alt=""
-              className="absolute inset-0 w-full h-full object-cover opacity-35 dark:opacity-25 will-change-transform"
-              style={{ transform: "translate3d(0, 0, 0) scale(1.12)" }}
-              aria-hidden
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-background/10 via-background/55 to-background/90" />
-            <div className="absolute inset-0 bg-[radial-gradient(900px_circle_at_20%_20%,hsl(var(--primary))_0%,transparent_60%)] opacity-10" />
-          </div>
-          <div className="relative max-w-6xl mx-auto">
-            <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-center">
-              <div className="order-2 lg:order-1 text-center lg:text-left">
-                <div className="inline-flex items-center justify-center lg:justify-start rounded-full border border-border/60 bg-background/50 backdrop-blur px-3 py-1 text-xs text-muted-foreground mb-4">
-                  Produto em ação
-                </div>
-                <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-foreground mb-3">
-                  Sua barbearia automatizada. Sem WhatsApp manual.
+        {/* =========================================================== FILTRO */}
+        <FadeSection>
+          <section className="px-4 py-16 md:py-20">
+            <div className="max-w-4xl mx-auto">
+              <div className="text-center mb-10">
+                <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">Para quem é</p>
+                <h2 className="font-display text-2xl md:text-3xl font-bold text-white">
+                  Você adiciona inteligência.{" "}
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400">Foca em manter a qualidade.</span>
                 </h2>
-                <p className="text-base md:text-lg text-muted-foreground mb-6 max-w-xl mx-auto lg:mx-0">
-                  Agenda lotada e controle total com IA: mobile e desktop trabalhando juntos para sua barbearia bombar.
-                </p>
-                <ul className="space-y-4 text-sm text-muted-foreground list-none mb-7">
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-foreground/90">Agendamento automático 24h</p>
-                      <p className="text-xs md:text-sm text-muted-foreground">Quem agenda é o cliente — sem ficar preso no celular.</p>
-                    </div>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-foreground/90">Lembretes e confirmações automáticas</p>
-                      <p className="text-xs md:text-sm text-muted-foreground">Reduz faltas e evita buracos na agenda.</p>
-                    </div>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-medium text-foreground/90">Recupere clientes inativos</p>
-                      <p className="text-xs md:text-sm text-muted-foreground">Follow-up sem esforço (com créditos) pra trazer quem sumiu.</p>
-                    </div>
-                  </li>
-                </ul>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
-                  <Button onClick={() => setChatOpen(true)} size="lg" className="font-medium">
-                    Simular minha barbearia
-                  </Button>
-                  <Button onClick={() => openCheckout()} variant="outline" size="lg">
-                    Assinar agora
-                  </Button>
-                </div>
-                <p className="mt-4 text-xs text-muted-foreground">
-                  + 1.200 agendamentos automáticos toda semana
+                <p className="text-white/45 mt-3 max-w-md mx-auto">
+                  A praticidade do sistema garante que seus clientes voltem.
                 </p>
               </div>
-              <div className="order-1 lg:order-2 relative rounded-3xl overflow-hidden border border-border/70 shadow-2xl bg-background/35 backdrop-blur min-h-[320px] md:min-h-[380px] flex items-center justify-center p-4 md:p-8">
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent" aria-hidden />
-                <div className="pointer-events-none absolute -inset-24 bg-[radial-gradient(closest-side,hsl(var(--primary))_0%,transparent_65%)] opacity-10" aria-hidden />
-                <div className="relative z-10 w-full max-w-xl">
-                  <div className="relative rounded-2xl border border-border/70 bg-background/55 backdrop-blur overflow-hidden shadow-2xl">
-                    <div className="relative aspect-[4/3] bg-muted/30">
-                      <img
-                        src="/note+phone.png"
-                        alt="NavalhIA: painel no notebook e simulação no WhatsApp no celular"
-                        loading="eager"
-                        fetchPriority="high"
-                        decoding="async"
-                        className="absolute inset-0 w-full h-full object-contain object-center data-[loaded]:opacity-100 opacity-0 transition-opacity duration-300 p-2 md:p-3"
-                        onLoad={(e) => e.currentTarget.setAttribute("data-loaded", "true")}
-                        onError={(e) => {
-                          e.currentTarget.style.display = "none";
-                          e.currentTarget.parentElement?.querySelector("[data-mock-fallback]")?.classList.remove("hidden");
-                        }}
-                      />
-                      <div
-                        data-mock-fallback
-                        className="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 text-center text-muted-foreground p-6"
-                      >
-                        <div className="flex flex-wrap justify-center gap-6">
-                          <div className="flex flex-col items-center gap-2">
-                            <Calendar className="h-12 w-12 opacity-60" />
-                            <p className="text-sm font-medium">Painel NavalhIA</p>
-                            <p className="text-xs">Agenda, barbeiros, relatórios</p>
-                          </div>
-                          <div className="flex flex-col items-center gap-2">
-                            <MessageCircle className="h-12 w-12 opacity-60" />
-                            <p className="text-sm font-medium">Simulação IA</p>
-                            <p className="text-xs">Fluxo de atendimento e agendamento</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+              <div className="grid md:grid-cols-2 gap-5">
+                <div className="p-6 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 to-[#0e0e0e]">
+                  <p className="text-sm font-mono text-primary/70 uppercase tracking-widest mb-4">✅ É para você se…</p>
+                  <ul className="space-y-2.5 text-sm text-white/70">
+                    {[
+                      "Seus clientes já usam WhatsApp para marcar horário",
+                      "Você perde tempo respondendo mensagem enquanto trabalha",
+                      "Quer que a agenda se organize sozinha, sem depender de você",
+                      "Sente que perde cliente por demora na resposta",
+                      "Quer saber o que acontece na barbearia sem precisar estar lá",
+                    ].map((t, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
-                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="rounded-2xl border border-border/70 bg-background/55 backdrop-blur p-4">
-                      <div className="flex items-start gap-3">
-                        <MessageCircle className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-sm font-medium">Experiência do cliente</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Resposta na hora, lembrete antes do horário e link para reagendar ou cancelar.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-border/70 bg-background/55 backdrop-blur p-4">
-                      <div className="flex items-start gap-3">
-                        <Calendar className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-sm font-medium">Seu controle</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Agenda, clientes, link público e WhatsApp em um só lugar.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                <div className="p-6 rounded-2xl border border-white/8 bg-gradient-to-br from-zinc-900/40 to-[#0e0e0e]">
+                  <p className="text-sm font-mono text-white/30 uppercase tracking-widest mb-4">❌ Não é para você se…</p>
+                  <ul className="space-y-2.5 text-sm text-white/35">
+                    {[
+                      "Seus clientes só marcam por ligação",
+                      "Você não usa WhatsApp com a clientela",
+                      "Procura um software de gestão completo tipo ERP",
+                      "Quer disparar promoções para desconhecidos em massa",
+                    ].map((t, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <XCircle className="w-4 h-4 text-white/25 shrink-0 mt-0.5" />
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </FadeSection>
 
-        {/* Comparativo */}
-        <section id="comparativo" className="px-4 py-10 md:py-14 scroll-mt-28">
-          <div className="max-w-5xl mx-auto">
-            <h2 className="text-2xl md:text-3xl font-bold text-center mb-2">
-              NavalhIA x Manual x Outros
-            </h2>
-            <p className="text-muted-foreground text-center max-w-xl mx-auto mb-8">
-              Veja o que muda quando você automatiza agenda e recuperação.
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b">
-                    <th className="text-left p-3 font-medium">Recurso</th>
-                    <th className="p-3 font-medium text-primary">NavalhIA</th>
-                    <th className="p-3 font-medium text-muted-foreground">Só WhatsApp manual</th>
-                    <th className="p-3 font-medium text-muted-foreground">Outros sistemas</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-border/50">
-                    <td className="p-3">Resposta 24h</td>
-                    <td className="p-3"><CheckCircle2 className="h-4 w-4 text-primary inline" /></td>
-                    <td className="p-3 text-muted-foreground">—</td>
-                    <td className="p-3 text-muted-foreground">Depende</td>
-                  </tr>
-                  <tr className="border-b border-border/50">
-                    <td className="p-3">Lembrete antes do horário</td>
-                    <td className="p-3"><CheckCircle2 className="h-4 w-4 text-primary inline" /></td>
-                    <td className="p-3 text-muted-foreground">Manual</td>
-                    <td className="p-3 text-muted-foreground">Depende</td>
-                  </tr>
-                  <tr className="border-b border-border/50">
-                    <td className="p-3">Reagendar/cancelar por link</td>
-                    <td className="p-3"><CheckCircle2 className="h-4 w-4 text-primary inline" /></td>
-                    <td className="p-3 text-muted-foreground">—</td>
-                    <td className="p-3 text-muted-foreground">Depende</td>
-                  </tr>
-                  <tr className="border-b border-border/50">
-                    <td className="p-3">Follow-up de quem sumiu</td>
-                    <td className="p-3"><CheckCircle2 className="h-4 w-4 text-primary inline" /></td>
-                    <td className="p-3 text-muted-foreground">—</td>
-                    <td className="p-3 text-muted-foreground">Depende</td>
-                  </tr>
-                  <tr className="border-b border-border/50">
-                    <td className="p-3">Setup self-serve</td>
-                    <td className="p-3"><CheckCircle2 className="h-4 w-4 text-primary inline" /></td>
-                    <td className="p-3 text-muted-foreground">—</td>
-                    <td className="p-3 text-muted-foreground">Depende</td>
-                  </tr>
-                </tbody>
-              </table>
+        {/* ===================================================== CALCULADORA */}
+        <FadeSection>
+          <section id="calculadora" className="px-4 py-16 md:py-24 scroll-mt-20">
+            <div className="max-w-6xl mx-auto">
+              <div className="text-center mb-10">
+                <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">Calculadora de ROI</p>
+                <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">
+                  Quanto você está perdendo{" "}
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400">por mês?</span>
+                </h2>
+                <p className="text-white/50 max-w-md mx-auto">Arraste os sliders e descubra qual plano se paga mais rápido.</p>
+              </div>
+              <div className="max-w-2xl mx-auto">
+                <RoiCalculator onCtaClick={() => openCheckout()} />
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </FadeSection>
 
-        {/* Como funciona */}
-        <section id="como-funciona" className="px-4 py-10 md:py-14 scroll-mt-28">
-          <div className="max-w-6xl mx-auto">
-            <div className="max-w-2xl">
-              <h2 className="text-2xl md:text-3xl font-bold">
-                Como funciona (sem blá-blá-blá)
+        {/* ============================================================ PLANOS */}
+        <FadeSection>
+          <section id="planos" className="px-4 py-16 md:py-24 scroll-mt-20">
+            <div className="max-w-5xl mx-auto">
+              <div className="text-center mb-12">
+                <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">Planos</p>
+                <h2 className="font-display text-3xl md:text-4xl font-bold text-white mb-4">Escolha e comece em 2 minutos</h2>
+                <p className="text-white/50 max-w-md mx-auto">Comece pequeno. Suba quando precisar. Sem fidelidade.</p>
+              </div>
+
+              <div className="grid items-stretch gap-5 md:grid-cols-3">
+                <div className="flex h-full flex-col rounded-2xl border border-white/8 bg-gradient-to-b from-white/[0.03] to-[#0e0e0e] p-6 transition-all duration-300 hover:scale-[1.02] hover:border-white/15">
+                  <p className="mb-1 font-display text-lg font-bold text-white">Essencial</p>
+                  <p className="mb-5 text-sm text-white/40">Setup + link + agenda online</p>
+                  <div className="mb-5">
+                    <span className="font-display text-4xl font-bold text-white">R$ 147</span>
+                    <span className="text-sm text-white/40">/mês</span>
+                  </div>
+                  <ul className="flex-1 space-y-2 text-sm text-white/55">
+                    {["Painel e link de agendamento", "Serviços, barbeiros, horários", "Cliente agenda online 24h"].map((f) => (
+                      <li key={f} className="flex items-center gap-2">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary/70" />{f}
+                      </li>
+                    ))}
+                  </ul>
+                  <button type="button" onClick={() => openCheckout("essential")} className="lp-shimmer mt-6 w-full rounded-xl border border-white/15 py-2.5 text-sm font-medium text-white/70 transition-all hover:border-white/30 hover:bg-white/5 hover:text-white">
+                    <span className="relative z-10">Assinar</span>
+                  </button>
+                </div>
+
+                <div className="relative flex h-full rounded-2xl bg-gradient-to-b from-primary/60 to-violet-500/30 p-px shadow-[0_0_56px_hsl(239_84%_62%/0.22)] transition-all duration-300 hover:scale-[1.02]">
+                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 rounded-full bg-primary px-4 py-1 text-[11px] font-semibold text-white shadow-[0_0_16px_hsl(239_84%_62%/0.5)]">
+                    Mais escolhido
+                  </div>
+                  <div className="flex h-full w-full flex-col rounded-2xl bg-gradient-to-b from-[#12122a] to-[#0e0e0e] p-6">
+                    <p className="mb-1 font-display text-lg font-bold text-white">Profissional</p>
+                    <p className="mb-5 text-sm text-white/40">WhatsApp + lembretes + recuperação</p>
+                    <div className="mb-5">
+                      <span className="font-display text-4xl font-bold text-white">R$ 297</span>
+                      <span className="text-sm text-white/40">/mês</span>
+                    </div>
+                    <ul className="flex-1 space-y-2 text-sm text-white/75">
+                      {["Tudo do Essencial", "Secretária no WhatsApp", "Lembrete antes do horário", "Reagendar e cancelar pelo WhatsApp", "1 número incluso"].map((f) => (
+                        <li key={f} className="flex items-center gap-2">
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary" />{f}
+                        </li>
+                      ))}
+                    </ul>
+                    <button type="button" onClick={() => openCheckout("pro")} className="lp-shimmer mt-6 w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-white shadow-[0_0_20px_hsl(239_84%_62%/0.4)] transition-all hover:bg-primary/90 hover:shadow-[0_0_32px_hsl(239_84%_62%/0.55)]">
+                      <span className="relative z-10">Assinar o Profissional</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex h-full flex-col rounded-2xl border border-white/8 bg-gradient-to-b from-violet-950/20 to-[#0e0e0e] p-6 transition-all duration-300 hover:scale-[1.02] hover:border-violet-500/20 hover:shadow-[0_0_24px_hsl(250_84%_62%/0.1)]">
+                  <p className="mb-1 font-display text-lg font-bold text-white">Premium</p>
+                  <p className="mb-5 text-sm text-white/40">Escala + marca + multi-filial</p>
+                  <div className="mb-5">
+                    <span className="font-display text-4xl font-bold text-white">R$ 449</span>
+                    <span className="text-sm text-white/40">/mês</span>
+                  </div>
+                  <ul className="flex-1 space-y-2 text-sm text-white/55">
+                    {["Tudo do Profissional", "Tom da sua barbearia", "Várias unidades", "Prioridade no suporte", "1 número incluso"].map((f) => (
+                      <li key={f} className="flex items-center gap-2">
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-violet-400/70" />{f}
+                      </li>
+                    ))}
+                  </ul>
+                  <button type="button" onClick={() => openCheckout("premium")} className="lp-shimmer mt-6 w-full rounded-xl border border-white/15 py-2.5 text-sm font-medium text-white/70 transition-all hover:border-violet-500/30 hover:bg-violet-500/5 hover:text-white">
+                    <span className="relative z-10">Assinar</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-8 grid md:grid-cols-3 gap-3 max-w-3xl mx-auto text-center">
+                {[["Sem fidelidade", "Cancele quando quiser, sem multa."], ["Pronto em 30 minutos", "Configuração guiada, sem complicação."], ["Pagamento seguro", "Assinatura mensal, simples assim."]].map(([title, desc], i) => (
+                  <div key={i} className="p-4 rounded-xl border border-white/6 bg-white/[0.02]">
+                    <p className="text-sm font-medium text-white/70">{title}</p>
+                    <p className="text-xs text-white/30 mt-1">{desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        </FadeSection>
+
+        {/* ============================================================== FAQ */}
+        <FadeSection>
+          <section id="faq" className="px-4 py-16 md:py-24 scroll-mt-20">
+            <div className="max-w-3xl mx-auto">
+              <div className="grid md:grid-cols-[280px_1fr] gap-12 items-start">
+                {/* Left label */}
+                <div className="md:sticky md:top-28">
+                  <p className="text-xs font-mono text-primary/80 tracking-widest uppercase mb-3">Perguntas diretas</p>
+                  <h2 className="font-display text-3xl md:text-4xl font-bold text-white leading-tight mb-4">
+                    O que você{" "}
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400">
+                      ainda quer saber.
+                    </span>
+                  </h2>
+                  <p className="text-white/40 text-sm">
+                    As cinco respostas que costumam decidir.
+                  </p>
+                </div>
+
+                {/* Accordion */}
+                <Accordion type="single" collapsible className="space-y-2.5">
+                  {[
+                    ["whatsapp", "Funciona com meu WhatsApp atual?", "Sim. Você conecta escaneando um QR code — funciona igual ao WhatsApp Web. A secretária virtual passa a atender no seu número. Quando quiser, você assume a conversa manualmente. Recomendamos usar um número exclusivo para a barbearia."],
+                    ["setup", "Quanto tempo para ficar pronto?", "A maioria dos barbeiros configura em 15 a 30 minutos: adiciona os serviços, os horários e os barbeiros, gera o link e conecta o WhatsApp. Se travar em alguma etapa, o suporte te ajuda."],
+                    ["contract", "Tem contrato ou fidelidade?", "Nenhum. É assinatura mensal. Se um dia não fizer sentido, você cancela sem multa, sem burocracia."],
+                    ["extra-number", "Posso ter mais de um número de WhatsApp?", "Sim. Cada plano inclui 1 número por unidade. Se precisar de um segundo número, é R$ 39/mês — basta entrar em contato com o suporte."],
+                    ["multi-unit", "E se eu tiver mais de uma barbearia?", "Funciona. Cada unidade tem sua própria configuração e seu próprio WhatsApp. Tudo gerenciado numa conta só."],
+                  ].map(([value, question, answer], idx) => (
+                    <AccordionItem key={value} value={value} className="rounded-xl border border-white/8 bg-white/[0.02] data-[state=open]:bg-white/[0.04] data-[state=open]:border-primary/20 transition-all">
+                      <AccordionTrigger className="px-5 py-4 text-left hover:no-underline">
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-[11px] text-primary/50 shrink-0 w-5">
+                            0{idx + 1}
+                          </span>
+                          <span className="font-medium text-white/85 hover:text-white text-sm">{question}</span>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="px-5 pb-5 text-sm leading-relaxed text-white/50 pl-14">
+                        {answer}
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              </div>
+            </div>
+          </section>
+        </FadeSection>
+
+        {/* ============================================================ FECHO */}
+        <FadeSection>
+          <section className="relative px-4 py-24 md:py-32 overflow-hidden">
+            {/* Mesh radial glow */}
+            <div
+              className="pointer-events-none absolute inset-0"
+              aria-hidden
+              style={{
+                background:
+                  "radial-gradient(ellipse 100% 80% at 50% 100%, hsl(239 84% 62% / 0.14), transparent 70%)",
+              }}
+            />
+            {/* Subtle grid */}
+            <div
+              className="pointer-events-none absolute inset-0 opacity-[0.025]"
+              aria-hidden
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(0deg, hsl(239 84% 62%) 0px, transparent 1px, transparent 60px), repeating-linear-gradient(90deg, hsl(239 84% 62%) 0px, transparent 1px, transparent 60px)",
+              }}
+            />
+            {/* Floating particles in fecho */}
+            {[
+              { size: 3, top: "20%", left: "10%", anim: "animate-float-slow", delay: "0s", opacity: 0.07 },
+              { size: 4, top: "70%", left: "88%", anim: "animate-float-mid", delay: "1s", opacity: 0.06 },
+              { size: 2, top: "55%", left: "5%", anim: "animate-float-fast", delay: "0.5s", opacity: 0.08 },
+            ].map((p, i) => (
+              <div key={i} aria-hidden className={cn("absolute rounded-full bg-primary pointer-events-none", p.anim)} style={{ width: p.size, height: p.size, top: p.top, left: p.left, opacity: p.opacity, animationDelay: p.delay }} />
+            ))}
+
+            <div className="max-w-3xl mx-auto text-center relative">
+              {/* Urgency badge */}
+              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-green-500/30 bg-green-500/10 text-[12px] font-mono text-green-400 mb-8">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                Vagas abertas esta semana
+              </div>
+
+              <h2 className="font-display text-4xl md:text-6xl font-bold text-white mb-6 leading-[1.04]">
+                Sua barbearia precisa girar.{" "}
+                <br className="hidden md:block" />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-violet-400 [filter:drop-shadow(0_0_24px_hsl(239_84%_62%/0.4))]">
+                  Você só precisa atender.
+                </span>
               </h2>
-              <p className="text-muted-foreground mt-3">
-                Você configura serviços e horários uma vez. Depois, a NavalhIA
-                faz o repetitivo por você.
-              </p>
-            </div>
-            <div className="mt-8 grid md:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">1) Cliente chama</CardTitle>
-                  <CardDescription>WhatsApp</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">
-                  A conversa anda sozinha: pergunta, sugere e conduz ao
-                  agendamento.
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">2) Escolhe</CardTitle>
-                  <CardDescription>Serviço e horário</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">
-                  O cliente escolhe sem precisar “falar com ninguém”.
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">3) Confirma</CardTitle>
-                  <CardDescription>Lembretes</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">
-                  Confirma e lembra automaticamente para reduzir faltas.
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-lg">4) Você só vê</CardTitle>
-                  <CardDescription>Painel</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">
-                  Agenda organizada e visão do que mais dá dinheiro.
-                </CardContent>
-              </Card>
-            </div>
-            <div className="mt-6">
-              <Button onClick={() => setChatOpen(true)} variant="outline">
-                Ver demo do WhatsApp
-              </Button>
-            </div>
-          </div>
-        </section>
 
-        {/* Demo */}
-        <section id="demo" className="px-4 py-10 md:py-14 bg-muted/40">
-          <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-8 items-center">
-            <div>
-              <h2 className="text-2xl md:text-3xl font-bold">
-                Teste a experiência que seu cliente vai ter
-              </h2>
-              <p className="text-muted-foreground mt-3">
-                Demonstração interativa (simulada) do agendamento: serviço →
-                barbeiro → horário → confirmação.
+              <p className="text-white/60 text-lg md:text-xl mb-12 max-w-lg mx-auto leading-relaxed">
+                Terceirize a gestão da agenda. Tenha suas cadeiras sempre cheias.
+                Concentre-se no que você faz de melhor.
               </p>
-              <div className="mt-5 flex flex-col sm:flex-row gap-3">
-                <Button size="lg" onClick={() => setChatOpen(true)}>
-                  Abrir demo
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
+
+              {/* BIG CTA */}
+              <div className="flex flex-col items-center gap-4">
+                <button
                   onClick={() => openCheckout()}
+                  className="lp-shimmer group relative w-full max-w-lg py-5 px-14 rounded-2xl bg-primary text-white font-bold text-xl overflow-hidden shadow-[0_0_60px_hsl(239_84%_62%/0.55)] hover:shadow-[0_0_80px_hsl(239_84%_62%/0.7)] transition-all duration-300 hover:scale-[1.03]"
                 >
-                  Assinar agora
-                </Button>
+                  <span className="absolute inset-0 rounded-2xl bg-gradient-to-r from-primary to-violet-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  <span className="relative z-10 flex items-center justify-center gap-3">
+                    Quero minhas cadeiras cheias
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="group-hover:translate-x-1.5 transition-transform duration-300">
+                      <path d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </span>
+                </button>
+
+                <p className="text-white/30 text-sm font-mono">
+                  Pronto em 30 minutos · Sem fidelidade · Cancele quando quiser
+                </p>
+
+                <button
+                  onClick={() => scrollToSection("demo")}
+                  className="cursor-pointer text-white/35 hover:text-white/60 text-sm underline underline-offset-4 transition-colors"
+                >
+                  Ver funcionando primeiro
+                </button>
               </div>
-              <p className="text-sm text-muted-foreground mt-4">
-                Se você perder só 2 cortes/mês por demora no WhatsApp, o sistema
-                já tende a se pagar.
+
+              <p className="text-sm text-white/25 mt-10">
+                Já tem conta?{" "}
+                <Link to="/login" className="text-primary hover:underline">Fazer login</Link>
               </p>
             </div>
-            <div className="rounded-xl border bg-background p-6">
-              <h3 className="font-semibold">
-                O que a NavalhIA faz no automático
-              </h3>
-              <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
-                <li className="flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary mt-0.5" />
-                  Atendimento 24h e resposta imediata
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary mt-0.5" />
-                  Confirmação e lembretes para reduzir faltas
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary mt-0.5" />
-                  Reagendamento fácil (link e WhatsApp)
-                </li>
-                <li className="flex items-start gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-primary mt-0.5" />
-                  Recuperação de clientes (follow-up automático)
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          <AiSchedulingDemoChat
-            open={chatOpen}
-            onOpenChange={setChatOpen}
-            onAssinarClick={() => openCheckout()}
-          />
-        </section>
-
-        {/* Confiança e risco controlado */}
-        <section className="px-4 py-10 md:py-14 bg-muted/30 border-y border-border/50">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex items-center justify-center gap-2 mb-6">
-              <Shield className="h-6 w-6 text-primary" aria-hidden />
-              <h2 className="text-xl md:text-2xl font-bold text-center">
-                Confiança e risco controlado
-              </h2>
-            </div>
-            <ul className="space-y-3 text-sm text-muted-foreground">
-              <li className="flex items-start gap-2">
-                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                <span><strong className="text-foreground">Checkout Stripe</strong> — pagamento seguro, sem fidelidade; cancele quando quiser.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                <span><strong className="text-foreground">WhatsApp</strong> — conexão por QR; sujeito às políticas do WhatsApp. Recomendamos número dedicado para automação. Foco em conversas iniciadas pelo cliente e reativação de clientes que já passaram pela sua barbearia.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckCircle2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-                <span>Se o WhatsApp ficar indisponível, você continua operando pelo <strong className="text-foreground">link público de agendamento</strong> e atendimento humano.</span>
-              </li>
-            </ul>
-          </div>
-        </section>
-
-        {/* Planos */}
-        <section id="planos" className="px-4 py-10 md:py-14 scroll-mt-28">
-          <div className="max-w-4xl mx-auto">
-            <div className="text-center max-w-2xl mx-auto">
-              <h2 className="text-2xl md:text-3xl font-bold">
-                Escolha o plano e finalize em 2 minutos
-              </h2>
-              <p className="text-muted-foreground mt-3">
-                Comece pequeno e suba quando precisar. O objetivo é simples: não
-                deixar cliente sem resposta.
-              </p>
-            </div>
-            <div className="grid md:grid-cols-3 gap-6 mt-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Essencial</CardTitle>
-                  <CardDescription>Setup + link + agenda</CardDescription>
-                  <p className="text-2xl font-bold mt-2">
-                    R$ 97
-                    <span className="text-sm font-normal text-muted-foreground">
-                      /mês
-                    </span>
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <p>• Painel e link público de agendamento</p>
-                  <p>• Serviços, barbeiros, horários</p>
-                  <p>• Cliente agenda online 24h</p>
-                </CardContent>
-                <div className="p-6 pt-0">
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => openCheckout("essential")}
-                  >
-                    Assinar
-                  </Button>
-                </div>
-              </Card>
-              <Card className="border-primary ring-2 ring-primary/20 relative">
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-primary text-primary-foreground text-xs font-medium">
-                  Mais escolhido
-                </div>
-                <CardHeader>
-                  <CardTitle>Profissional</CardTitle>
-                  <CardDescription>WhatsApp IA + lembretes + recuperação</CardDescription>
-                  <p className="text-2xl font-bold mt-2">
-                    R$ 197
-                    <span className="text-sm font-normal text-muted-foreground">
-                      /mês
-                    </span>
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <p>• Tudo do Essencial</p>
-                  <p>• WhatsApp com IA (agenda na conversa)</p>
-                  <p>• Lembrete 24h e follow-up automático</p>
-                  <p>• Reagendar/cancelar por link e WhatsApp</p>
-                  <p>• 1 número incluso (extra: R$ 39/número/mês)</p>
-                </CardContent>
-                <div className="p-6 pt-0">
-                  <Button
-                    className="w-full"
-                    onClick={() => openCheckout("pro")}
-                  >
-                    Assinar
-                  </Button>
-                </div>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Premium</CardTitle>
-                  <CardDescription>Padronização + qualidade + escala</CardDescription>
-                  <p className="text-2xl font-bold mt-2">
-                    R$ 349
-                    <span className="text-sm font-normal text-muted-foreground">
-                      /mês
-                    </span>
-                  </p>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <p>• Tudo do Profissional</p>
-                  <p>• IA com tom da marca e modelo escalonável</p>
-                  <p>• Multi-filial (várias unidades)</p>
-                  <p>• Prioridade no suporte</p>
-                  <p>• 1 número incluso (extra: R$ 39/número/mês)</p>
-                </CardContent>
-                <div className="p-6 pt-0">
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => openCheckout("premium")}
-                  >
-                    Assinar
-                  </Button>
-                </div>
-              </Card>
-            </div>
-            <div className="mt-8 max-w-3xl mx-auto grid md:grid-cols-3 gap-3 text-center">
-              <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-sm font-medium">Sem fidelidade</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Cancele quando quiser.
-                </p>
-              </div>
-              <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-sm font-medium">Setup 100% self-serve</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Configuração guiada no painel.
-                </p>
-              </div>
-              <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-sm font-medium">1 número incluso</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Número extra: R$ 39/mês (via suporte).
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* FAQ */}
-        <section id="faq" className="px-4 py-10 md:py-14 bg-muted/40 scroll-mt-28">
-          <div className="max-w-2xl mx-auto">
-            <h2 className="text-2xl md:text-3xl font-bold text-center mb-8">
-              Perguntas frequentes
-            </h2>
-            <Accordion type="single" collapsible className="w-full space-y-3">
-              <AccordionItem value="whatsapp" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">
-                  Funciona com meu WhatsApp atual?
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Sim. A conexão é feita por QR (pareamento com o seu número). O uso está sujeito às políticas do WhatsApp; recomendamos número dedicado para automação. A NavalhIA cuida do repetitivo (agenda, confirmar, lembrar, reativação de clientes existentes). Quando quiser, você assume como humano.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="whatsapp-policy" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">
-                  A conexão WhatsApp é oficial?
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  A conexão é por QR (como WhatsApp Web), sujeita às políticas do WhatsApp. Focamos em atendimento a quem já te procurou e reativação de clientes que já passaram pelo seu estabelecimento — não em disparos promocionais em massa.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="setup" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">
-                  Quanto tempo para ficar pronto?
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Em geral 15 a 30 minutos: checklist guiado com serviços, horários,
-                  barbeiros e link de agendamento. Se precisar, o suporte te acompanha.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="contract" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">Tem contrato ou fidelidade?</AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Não. Assinatura mensal, cancele quando quiser. Sem multas.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="security" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">O pagamento é seguro?</AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Sim. O checkout da assinatura é processado pela Stripe.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="human" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">
-                  E se o cliente quiser falar com humano?
-                </AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Você pode assumir manualmente no painel ou a IA pausa sozinha quando
-                  você envia uma mensagem do seu número. Depois retoma quando quiser.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="extra-number" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">Posso ter mais de um número de WhatsApp?</AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Sim. O plano inclui 1 número por unidade. Número extra: R$ 39/mês
-                  (contrate via suporte).
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="multi-unit" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">E se eu tiver mais de uma unidade?</AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Cada unidade tem sua própria assinatura (e seu número de WhatsApp, se for Pro/Premium).
-                  Multi-unidade é suportado: uma conta, várias barbearias.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="change-plan" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">Posso mudar de plano depois?</AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Sim. Você pode assinar o Essencial e depois subir para Profissional ou Premium
-                  quando quiser; ou começar no Pro e ajustar conforme a necessidade.
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="support" className="rounded-xl border bg-background/60 backdrop-blur data-[state=open]:bg-background/80">
-                <AccordionTrigger className="px-4 py-4 text-left hover:no-underline">Como é o suporte?</AccordionTrigger>
-                <AccordionContent className="px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
-                  Por e-mail e WhatsApp. O setup é self-serve com checklist guiado; se travar em algo,
-                  a gente te ajuda. Plano Premium tem prioridade nas respostas.
-                </AccordionContent>
-              </AccordionItem>
-            </Accordion>
-          </div>
-        </section>
-
-        {/* CTA final */}
-        <section className="px-4 py-14 md:py-20">
-          <div className="max-w-2xl mx-auto text-center">
-            <h2 className="text-2xl md:text-3xl font-bold mb-4">
-              Pronto para tirar o WhatsApp das suas costas?
-            </h2>
-            <p className="text-muted-foreground mb-6">
-              Assine e comece a agendar automaticamente. Se não fizer sentido,
-              cancele.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Button size="lg" onClick={() => openCheckout()}>
-                Assinar agora
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                onClick={() => setChatOpen(true)}
-              >
-                Testar demo
-              </Button>
-            </div>
-            <p className="text-sm text-muted-foreground mt-6">
-              Já tem conta?{" "}
-              <Link
-                to="/login"
-                className="text-primary font-medium hover:underline"
-              >
-                Fazer login
-              </Link>
-            </p>
-          </div>
-        </section>
+          </section>
+        </FadeSection>
       </main>
 
       <CheckoutModal open={showCheckout} onOpenChange={setShowCheckout} initialPlan={checkoutInitialPlan} />
       <WhatsAppFloatingButton />
-      <StickyCtaBar
-        className="md:hidden"
-        onCtaClick={() => openCheckout()}
-      />
+      <StickyCtaBar className="md:hidden" onCtaClick={() => openCheckout()} />
     </div>
   );
 }

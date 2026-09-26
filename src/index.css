@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -9,6 +9,11 @@
 */
 
 @layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
   /* Default = dark (NavalhIA brand) */
   :root,
   .dark {
@@ -252,6 +257,29 @@
 }
 
 @layer utilities {
+  @keyframes liveLine {
+    0% {
+      transform: translateX(-130%);
+    }
+    100% {
+      transform: translateX(430%);
+    }
+  }
+
+  .live-line {
+    height: 100%;
+    width: 22%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--primary) / 0.15),
+      hsl(var(--primary) / 0.7),
+      hsl(var(--primary) / 0.15),
+      transparent
+    );
+    animation: liveLine 3.2s linear infinite;
+  }
+
   .animate-fade-in {
     animation: fadeIn 0.3s ease-out;
   }
@@ -292,6 +320,147 @@
     to {
       opacity: 1;
       transform: scale(1);
+    }
+  }
+
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-18px);
+    }
+  }
+
+  @keyframes progress-bar {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  @keyframes count-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-marquee {
+    animation: marquee 30s linear infinite;
+  }
+
+  .animate-marquee:hover {
+    animation-play-state: paused;
+  }
+
+  @keyframes lp-shimmer {
+    0% {
+      transform: translateX(-180%) skewX(-18deg);
+    }
+    55%,
+    100% {
+      transform: translateX(420%) skewX(-18deg);
+    }
+  }
+
+  .lp-shimmer {
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .lp-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 42%;
+    background: linear-gradient(
+      100deg,
+      transparent 0%,
+      hsl(0 0% 100% / 0.08) 35%,
+      hsl(0 0% 100% / 0.42) 50%,
+      hsl(0 0% 100% / 0.08) 65%,
+      transparent 100%
+    );
+    transform: translateX(-180%) skewX(-18deg);
+    animation: lp-shimmer 2.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .lp-range {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      hsl(var(--primary)) var(--fill, 0%),
+      hsl(0 0% 100% / 0.12) var(--fill, 0%)
+    );
+    cursor: pointer;
+    outline: none;
+  }
+
+  .lp-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #fff;
+    border: 2px solid hsl(var(--primary));
+    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.18), 0 0 16px hsl(var(--primary) / 0.55);
+    cursor: pointer;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .lp-range::-webkit-slider-thumb:hover,
+  .lp-range:active::-webkit-slider-thumb {
+    transform: scale(1.18);
+    box-shadow: 0 0 0 6px hsl(var(--primary) / 0.22), 0 0 22px hsl(var(--primary) / 0.7);
+  }
+
+  .lp-range::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    background: #fff;
+    border: 2px solid hsl(var(--primary));
+    box-shadow: 0 0 16px hsl(var(--primary) / 0.55);
+    cursor: pointer;
+  }
+
+  .lp-range::-moz-range-track {
+    height: 4px;
+    border-radius: 999px;
+    background: hsl(0 0% 100% / 0.12);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .lp-shimmer::after {
+      animation: none;
+    }
+
+    .lp-range::-webkit-slider-thumb {
+      transition: none;
     }
   }
 

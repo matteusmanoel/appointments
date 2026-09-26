@@ -20,6 +20,25 @@ export function formatPhoneBR(digits: string): string {
 }
 
 /**
+ * Máscara de edição que preserva o DDI.
+ * +55 (45) 98823-0845, outro país como +54911..., ou (45) 98823-0845 enquanto só há o nacional.
+ */
+export function formatPhoneEditable(digits: string): string {
+  const d = digits.replace(/\D/g, "").slice(0, 15);
+  if (!d) return "";
+  if (d.startsWith("55")) {
+    const n = d.slice(2);
+    if (!n) return "+55 ";
+    if (n.length <= 2) return `+55 (${n}`;
+    if (n.length <= 6) return `+55 (${n.slice(0, 2)}) ${n.slice(2)}`;
+    if (n.length <= 10) return `+55 (${n.slice(0, 2)}) ${n.slice(2, 6)}-${n.slice(6)}`;
+    return `+55 (${n.slice(0, 2)}) ${n.slice(2, 7)}-${n.slice(7, 11)}`;
+  }
+  if (d.length > 11) return `+${d}`;
+  return formatPhoneBR(d);
+}
+
+/**
  * Retorna só os dígitos do telefone (para salvar/validar)
  */
 export function parsePhoneBR(value: string): string {

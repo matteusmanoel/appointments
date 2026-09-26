@@ -20,6 +20,9 @@ export default {
     extend: {
       fontFamily: {
         sans: ["Montserrat", "system-ui", "-apple-system", "sans-serif"],
+        display: ['"Space Grotesk"', "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', "monospace"],
+        inter: ["Inter", "system-ui", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -133,6 +136,22 @@ export default {
           "0%, 100%": { opacity: "1" },
           "50%": { opacity: "0.7" },
         },
+        marquee: {
+          from: { transform: "translateX(0)" },
+          to: { transform: "translateX(-50%)" },
+        },
+        float: {
+          "0%, 100%": { transform: "translateY(0px)" },
+          "50%": { transform: "translateY(-18px)" },
+        },
+        "progress-fill": {
+          from: { transform: "scaleX(0)" },
+          to: { transform: "scaleX(1)" },
+        },
+        "count-in": {
+          from: { opacity: "0", transform: "translateY(12px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -143,6 +162,12 @@ export default {
         "slide-out-right": "slide-out-right 0.3s ease-out",
         "scale-in": "scale-in 0.2s ease-out",
         "pulse-subtle": "pulse-subtle 2s ease-in-out infinite",
+        marquee: "marquee 30s linear infinite",
+        "float-slow": "float 6s ease-in-out infinite",
+        "float-mid": "float 8s ease-in-out infinite",
+        "float-fast": "float 4.5s ease-in-out infinite",
+        "progress-fill": "progress-fill linear forwards",
+        "count-in": "count-in 0.4s ease-out both",
       },
       spacing: {
         "18": "4.5rem",

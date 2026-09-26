@@ -35,7 +35,7 @@ import {
 import { toastError, withToast } from "@/lib/toast-helpers";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import { formatPhoneDisplay, parsePhoneBR } from "@/lib/input-masks";
+import { formatPhoneDisplay, formatPhoneEditable, parsePhoneBR } from "@/lib/input-masks";
 import {
   Form,
   FormControl,
@@ -62,6 +62,7 @@ const clientSchema = z.object({
   phone: z
     .string()
     .min(10, "Telefone deve ter pelo menos 10 dígitos")
+    .max(15, "Telefone deve ter no máximo 15 dígitos")
     .refine((v) => /^\d+$/.test(v), "Use apenas números"),
   email: z
     .string()
@@ -71,6 +72,7 @@ const clientSchema = z.object({
       "E-mail inválido",
     ),
   notes: z.string().optional(),
+  photo_url: z.string().optional(),
   barbershop_id: z.union([z.string().uuid(), z.literal("")]).optional(),
 });
 
@@ -145,6 +147,7 @@ export default function Clientes() {
         phone: body.phone,
         email: body.email || undefined,
         notes: body.notes || undefined,
+        photo_url: body.photo_url?.trim() || undefined,
         ...(selectedScope === "__all__" && body.barbershop_id
           ? { barbershop_id: body.barbershop_id }
           : {}),
@@ -175,12 +178,12 @@ export default function Clientes() {
 
   const form = useForm<ClientFormValues>({
     resolver: zodResolver(clientSchema),
-    defaultValues: { name: "", phone: "", email: "", notes: "", barbershop_id: "" },
+    defaultValues: { name: "", phone: "", email: "", notes: "", photo_url: "", barbershop_id: "" },
   });
 
   const openCreate = () => {
     setEditingClient(null);
-    form.reset({ name: "", phone: "", email: "", notes: "", barbershop_id: "" });
+    form.reset({ name: "", phone: "", email: "", notes: "", photo_url: "", barbershop_id: "" });
     setFormOpen(true);
   };
 
@@ -191,6 +194,7 @@ export default function Clientes() {
       phone: parsePhoneBR(client.phone ?? ""),
       email: client.email ?? "",
       notes: client.notes ?? "",
+      photo_url: client.photo_url ?? "",
     });
     setFormOpen(true);
   };
@@ -209,6 +213,7 @@ export default function Clientes() {
             phone: values.phone,
             email: values.email || undefined,
             notes: values.notes || undefined,
+            photo_url: values.photo_url?.trim() || null,
           },
         }),
         { successMessage: "Cliente atualizado.", errorMessage: "Erro ao atualizar cliente." },
@@ -551,11 +556,12 @@ export default function Clientes() {
                   <FormControl>
                     <Input
                       type="tel"
-                      placeholder="(11) 99999-9999"
-                      value={formatPhoneDisplay(field.value)}
-                      onChange={(e) => field.onChange(parsePhoneBR(e.target.value).slice(0, 11))}
+                      placeholder="+55 (45) 99999-9999"
+                      value={formatPhoneEditable(field.value)}
+                      onChange={(e) => field.onChange(parsePhoneBR(e.target.value).slice(0, 15))}
                     />
                   </FormControl>
+                  <p className="text-xs text-muted-foreground">DDI + DDD. Ex.: +55 45 99999-9999</p>
                   <FormMessage />
                 </FormItem>
               )}
@@ -567,6 +573,19 @@ export default function Clientes() {
                 <FormItem>
                   <FormLabel>E-mail</FormLabel>
                   <FormControl><Input type="email" placeholder="email@exemplo.com" {...field} /></FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="photo_url"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Foto (URL)</FormLabel>
+                  <FormControl>
+                    <Input placeholder="https://..." {...field} />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

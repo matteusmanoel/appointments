@@ -32,6 +32,7 @@ const Docs = lazy(() => import("./pages/Docs"));
 const AjudaWhatsApp = lazy(() => import("./pages/AjudaWhatsApp"));
 const WhatsAppInterno = lazy(() => import("./pages/WhatsAppInterno"));
 const Planos = lazy(() => import("./pages/Planos"));
+const Inteligencia = lazy(() => import("./pages/Inteligencia"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,9 +52,17 @@ const AppLayout = () => (
   </ProtectedRoute>
 );
 
+const RootLayout = () => (
+  <AuthProvider>
+    <Outlet />
+  </AuthProvider>
+);
+
 const appChildren = [
-  { index: true, element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
+  { index: true, element: <Navigate to="/app/inteligencia" replace /> },
   { path: "link", element: <Navigate to="/app/configuracoes?open=booking" replace /> },
+  { path: "dashboard", element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
+  { path: "inteligencia", element: <Suspense fallback={<LoadingState fullPage />}><Inteligencia /></Suspense> },
   { path: "agendamentos", element: <Suspense fallback={<LoadingState fullPage />}><Agendamentos /></Suspense> },
   { path: "barbeiros", element: <Suspense fallback={<LoadingState fullPage />}><Barbeiros /></Suspense> },
   { path: "servicos", element: <Suspense fallback={<LoadingState fullPage />}><Servicos /></Suspense> },
@@ -87,19 +96,24 @@ const appChildren = [
 
 const router = createBrowserRouter(
   [
-    { path: "/", element: <Landing /> },
-    { path: "/login", element: <Login /> },
-    { path: "/onboarding", element: <Onboarding /> },
-    { path: "/docs", element: <Suspense fallback={<LoadingState fullPage />}><Docs /></Suspense> },
-    { path: "/b/:slug", element: <PublicBooking /> },
-    { path: "/reagendar/:token", element: <RescheduleOrCancel /> },
-    { path: "/cancelar/:token", element: <RescheduleOrCancel /> },
     {
-      path: "/app",
-      element: <AppLayout />,
-      children: [...appChildren],
+      element: <RootLayout />,
+      children: [
+        { path: "/", element: <Landing /> },
+        { path: "/login", element: <Login /> },
+        { path: "/onboarding", element: <Onboarding /> },
+        { path: "/docs", element: <Suspense fallback={<LoadingState fullPage />}><Docs /></Suspense> },
+        { path: "/b/:slug", element: <PublicBooking /> },
+        { path: "/reagendar/:token", element: <RescheduleOrCancel /> },
+        { path: "/cancelar/:token", element: <RescheduleOrCancel /> },
+        {
+          path: "/app",
+          element: <AppLayout />,
+          children: [...appChildren],
+        },
+        { path: "*", element: <NotFound /> },
+      ],
     },
-    { path: "*", element: <NotFound /> },
   ],
   {
     future: {
@@ -112,13 +126,11 @@ const router = createBrowserRouter(
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider attribute="class" defaultTheme="dark" storageKey="navalhia-theme" enableSystem>
-      <AuthProvider>
-        <TooltipProvider delayDuration={0}>
-          <Toaster />
-          <Sonner />
-          <RouterProvider router={router} />
-        </TooltipProvider>
-      </AuthProvider>
+      <TooltipProvider delayDuration={0}>
+        <Toaster />
+        <Sonner />
+        <RouterProvider router={router} />
+      </TooltipProvider>
     </ThemeProvider>
   </QueryClientProvider>
 );

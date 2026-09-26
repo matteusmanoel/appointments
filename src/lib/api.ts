@@ -70,10 +70,15 @@ export async function api<T>(
   clearTimeout(timeoutId);
 
   if (res.status === 401) {
-    clearToken();
-    localStorage.removeItem("profile");
-    window.location.href = "/login";
-    throw new AuthError("Sessão expirada");
+    const isCredentialRequest = /\/api\/auth\/(login|register)\b/.test(path);
+    if (!isCredentialRequest) {
+      clearToken();
+      localStorage.removeItem("profile");
+      window.location.href = "/login";
+      throw new AuthError("Sessão expirada");
+    }
+    const data = await res.json().catch(() => ({}));
+    throw new Error(typeof data?.error === "string" ? data.error : "E-mail ou senha incorretos");
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
@@ -224,6 +229,7 @@ export const barbershopsApi = {
       address?: string;
       latitude?: number | null;
       longitude?: number | null;
+      pix_key?: string | null;
       business_hours?: BusinessHours;
       slug?: string;
     }>("/api/barbershops"),
@@ -239,6 +245,7 @@ export const barbershopsApi = {
     address?: string;
     latitude?: number | null;
     longitude?: number | null;
+    pix_key?: string | null;
     business_hours?: BusinessHours;
     slug?: string;
   }) => api("/api/barbershops", { method: "PATCH", body: JSON.stringify(body) }),
@@ -411,6 +418,9 @@ export type Client = {
   phone: string;
   email?: string;
   notes?: string;
+  photo_url?: string | null;
+  whatsapp_contact_name?: string | null;
+  name_confirmed?: boolean;
   total_visits: number;
   total_spent: number;
   loyalty_points: number;
@@ -450,7 +460,7 @@ export const clientsApi = {
     return api<Client[]>(qs ? `/api/clients?${qs}` : "/api/clients");
   },
   get: (id: string) => api<Client>(`/api/clients/${id}`),
-  create: (body: { name: string; phone: string; email?: string; notes?: string; barbershop_id?: string }) =>
+  create: (body: { name: string; phone: string; email?: string; notes?: string; photo_url?: string | null; barbershop_id?: string }) =>
     api<Client>("/api/clients", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: Record<string, unknown>) =>
     api<Client>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
@@ -483,9 +493,12 @@ export const integrationsApi = {
   revokeApiKey: (id: string) => api<void>(`/api/integrations/api-keys/${id}`, { method: "DELETE" }),
   getScheduledMessagesSummary: () =>
     api<ScheduledMessagesSummary>("/api/integrations/automations/scheduled-messages/summary"),
-  listScheduledMessages: (params?: { type?: string; status?: string; limit?: number }) => {
+  listScheduledMessages: (params?: { type?: string | string[]; status?: string; limit?: number }) => {
     const q = new URLSearchParams();
-    if (params?.type) q.set("type", params.type);
+    if (params?.type) {
+      const types = Array.isArray(params.type) ? params.type : [params.type];
+      types.forEach((t) => q.append("type", t));
+    }
     if (params?.status) q.set("status", params.status);
     if (params?.limit != null) q.set("limit", String(params.limit));
     const qs = q.toString();
@@ -497,8 +510,20 @@ export const integrationsApi = {
       run_after: string;
       last_error?: string;
       created_at: string;
+      client_name?: string;
+      service_names?: string;
+      appt_date?: string;
+      appt_time?: string;
     }>>(`/api/integrations/automations/scheduled-messages${qs ? `?${qs}` : ""}`);
   },
+  skipScheduledMessage: (id: string) =>
+    api<{ ok: boolean; id: string }>(`/api/integrations/automations/scheduled-messages/${id}/skip`, {
+      method: "PATCH",
+    }),
+  dispatchNowScheduledMessage: (id: string) =>
+    api<{ ok: boolean; id: string }>(`/api/integrations/automations/scheduled-messages/${id}/dispatch-now`, {
+      method: "POST",
+    }),
   followup: {
     getEligible: (params?: { days?: number; limit?: number; search?: string; all?: boolean }) => {
       const q = new URLSearchParams();
@@ -625,6 +650,11 @@ export type WhatsAppInboxMessage = {
 };
 
 export const whatsappApi = {
+  syncContactPhoto: (phone: string) =>
+    api<{ photo_url: string }>("/api/integrations/whatsapp/contact-photo/sync", {
+      method: "POST",
+      body: JSON.stringify({ phone }),
+    }),
   get: () => api<WhatsAppConnection>("/api/integrations/whatsapp"),
   getNumberMode: () =>
     api<{
@@ -663,22 +693,25 @@ export const whatsappApi = {
       pairingCode?: string;
       webhook_set?: boolean;
       webhook_warning?: string;
-    }>("/api/integrations/whatsapp/uazapi/start", {
+    }>("/api/integrations/whatsapp/connect", {
       method: "POST",
       body: JSON.stringify(phone != null ? { phone } : {}),
     }),
   status: () =>
     api<{ status: string; connected: boolean; qr?: string; pairingCode?: string }>(
-      "/api/integrations/whatsapp/uazapi/status"
+      "/api/integrations/whatsapp/status"
     ),
   getConnectivity: () =>
-    api<{ api: string; uazapi: { ok: boolean; error?: string } }>(
-      "/api/integrations/whatsapp/uazapi/connectivity"
-    ),
+    api<{
+      api: string;
+      provider?: string;
+      reachable?: { ok: boolean; error?: string };
+      uazapi?: { ok: boolean; error?: string };
+    }>("/api/integrations/whatsapp/connectivity"),
   disconnect: () =>
-    api<{ status: string }>("/api/integrations/whatsapp/uazapi/disconnect", { method: "POST" }),
+    api<{ status: string }>("/api/integrations/whatsapp/disconnect", { method: "POST" }),
   sendTest: (params?: { number?: string; text?: string }) =>
-    api<{ sent: boolean }>("/api/integrations/whatsapp/uazapi/send-test", {
+    api<{ sent: boolean }>("/api/integrations/whatsapp/send-test", {
       method: "POST",
       body: JSON.stringify(params ?? {}),
     }),
@@ -973,6 +1006,30 @@ export const reportsApi = {
       followUps: { sent: number; failed: number; skipped: number };
     }>(qs ? `/api/reports/mvp-metrics?${qs}` : "/api/reports/mvp-metrics");
   },
+  agendaActivity: (limit = 20) => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
+    return api<{
+      events: Array<{
+        id: string;
+        type: string;
+        actor: string;
+        client_name: string | null;
+        client_phone: string | null;
+        scheduled_date: string | null;
+        scheduled_time: string | null;
+        summary: string | null;
+        created_at: string;
+        conversation_id: string | null;
+        barber_name: string | null;
+        service_names: string | null;
+        last_client_message: string | null;
+        wap_contact_name: string | null;
+        name_confirmed: boolean | null;
+        client_photo_url: string | null;
+      }>;
+    }>(`/api/reports/agenda-activity?${q.toString()}`);
+  },
   commissionsByBarber: (params: { from: string; to: string }) => {
     const q = new URLSearchParams({ from: params.from, to: params.to });
     if (getBarbershopScope() === "__all__") q.set("barbershop_id", "__all__");
@@ -1107,6 +1164,31 @@ export const appointmentsApi = {
     completed_time?: string;
   }) => api<AppointmentListItem>(`/api/appointments/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   cancel: (id: string) => api(`/api/appointments/${id}`, { method: "DELETE" }),
+};
+
+export type WaitlistEntry = {
+  id: string;
+  client_name: string | null;
+  client_phone: string;
+  desired_date: string;
+  desired_time: string | null;
+  service_id: string | null;
+  barber_id: string | null;
+  status: "active" | "notified";
+  notes: string | null;
+  created_at: string;
+  service_name: string | null;
+  duration_minutes: number | null;
+  barber_name: string | null;
+};
+
+export const waitlistApi = {
+  list: () => api<WaitlistEntry[]>("/api/waitlist"),
+  dispatch: (id: string, barberId: string) =>
+    api<{ ok: boolean; message: string; next_slot_in_use: string | null }>(
+      `/api/waitlist/${id}/dispatch`,
+      { method: "POST", body: JSON.stringify({ barber_id: barberId }) },
+    ),
 };
 
 // ─── Plans API ────────────────────────────────────────────────────────────────
