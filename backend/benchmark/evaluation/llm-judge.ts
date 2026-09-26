@@ -1,18 +1,20 @@
 /**
- * LLM-as-judge evaluation layer.
+ * LLM-as-judge evaluation layer — v2.0.0
  *
- * Uses a fixed, versionable prompt to score agent conversations on qualitative dimensions.
- * The prompt is part of the codebase and must be updated deliberately — any change
- * should increment JUDGE_VERSION to ensure result comparability.
+ * Foca em resultado operacional: o agente executou as ações certas, usou as ferramentas corretas,
+ * devolveu resposta com contexto real da situação, e não criou loops ou violações de estado.
  *
- * This module is skipped when running in mock mode (no OpenAI key).
+ * Métricas de tom e naturalidade foram removidas — essas são qualidades do LLM base, não do sistema.
+ * O que testamos aqui é se o SISTEMA funcionou corretamente como orquestrador de ações.
+ *
+ * Qualquer mudança neste prompt deve incrementar JUDGE_VERSION para invalidar comparações antigas.
  */
 
 import OpenAI from "openai";
 import type { JudgeMetric, JudgeResult, TurnResult } from "../types.js";
 
 /** Increment this whenever the judge prompt changes. Used to invalidate stale comparisons. */
-export const JUDGE_VERSION = "v1.0.0";
+export const JUDGE_VERSION = "v2.0.0";
 
 /** Model used for judging. Deliberately pinned and not tenant-configurable. */
 const JUDGE_MODEL = "gpt-4o-mini";
@@ -21,77 +23,46 @@ const JUDGE_MODEL = "gpt-4o-mini";
 // Fixed rubric prompt — NEVER change without bumping JUDGE_VERSION
 // ---------------------------------------------------------------------------
 
-const JUDGE_SYSTEM_PROMPT = `Você é um avaliador especialista em qualidade de atendimento conversacional via WhatsApp para barbearias.
-
-Sua tarefa é avaliar a qualidade do atendimento do AGENTE em uma conversa com um CLIENTE.
+const JUDGE_SYSTEM_PROMPT = `Você é um avaliador de sistemas de atendimento conversacional para barbearias.
+Seu papel é avaliar se o AGENTE operou corretamente do ponto de vista funcional, não estilístico.
 
 IMPORTANTE:
-- Avalie apenas o comportamento do AGENTE, nunca o CLIENTE.
-- Use critérios objetivos com base nas métricas definidas abaixo.
-- Seja criterioso: notas 4-5 devem ser merecidas, não o padrão.
-- Ignore erros do cliente ou mensagens ambíguas do cliente ao avaliar.
+- Avalie apenas o comportamento operacional do AGENTE, nunca o CLIENTE.
+- Não avalie tom, naturalidade, simpatia ou estilo de escrita — isso não é medido aqui.
+- Seja criterioso: notas 4-5 devem ser merecidas.
+- Avalie com base nas AÇÕES tomadas e no RESULTADO entregue, não nas palavras usadas.
 
-## Métricas de avaliação (escala 1-5):
+## Métricas operacionais (escala 1-5):
 
-1. **naturalness** — A conversa soa natural, como um atendente humano, ou parece robótica/engessada?
-   - 1: Claramente robótico, com frases formulaicas ou padrões artificiais
-   - 3: Aceitável, mas com marcadores artificiais
-   - 5: Totalmente natural, indistinguível de um humano educado
+1. **tool_correctness** — O agente chamou as ferramentas corretas para a situação?
+   - 1: Chamou ferramentas erradas, não chamou ferramentas necessárias, ou chamou sem necessidade
+   - 3: Chamou as ferramentas principais, mas faltou alguma ou chamou extra sem justificativa
+   - 5: Conjunto de ferramentas exatamente correto para a situação
 
-2. **human_feel** — O agente cria sensação de atenção real ao cliente?
-   - 1: Genérico, impessoal, poderia ser qualquer bot
-   - 3: Alguma personalização ou atenção
-   - 5: O cliente se sente verdadeiramente atendido
+2. **operational_accuracy** — O resultado entregue ao cliente está correto com base no estado do sistema?
+   - 1: Respondeu com informação incorreta (horário errado, serviço errado, status errado, cliente não encontrado)
+   - 3: Parcialmente correto — acertou o principal mas errou detalhe
+   - 5: 100% correto: data, horário, serviço, barbeiro, status, valor, nome — todos batendo com o estado real
 
-3. **tone_fit** — O tom é adequado ao perfil do cliente?
-   - 1: Tom completamente inadequado (formal demais, informal demais, frio, agressivo)
-   - 3: Tom ok mas não personalizado
-   - 5: Tom perfeitamente calibrado ao estilo do cliente
+3. **context_use** — O agente usou o contexto da conversa e do estado do sistema corretamente?
+   - 1: Ignorou informações que já estavam disponíveis (horário ativo, serviço já dito, nome já capturado)
+   - 3: Usou parte do contexto, perdeu algo relevante
+   - 5: Aproveitou todo o contexto disponível sem perguntar nada redundante
 
-4. **objectivity** — O agente vai ao ponto sem enrolação?
-   - 1: Respostas longas, divagação, respostas irrelevantes
-   - 3: Ok, às vezes prolixo
-   - 5: Direto e eficiente, sem desperdício de palavras
+4. **state_compliance** — O agente respeitou as regras de estado do sistema?
+   - 1: Criou appointment sem confirmação, cancelou sem pedido, mudou status indevidamente
+   - 3: Maioria ok, mas alguma ação prematura ou omitida
+   - 5: Criou / cancelou / confirmou apenas quando devia, com as confirmações corretas
 
-5. **warmth** — O agente transmite calor humano e simpatia?
-   - 1: Frio, mecânico
-   - 3: Cordial mas sem calor
-   - 5: Genuinamente simpático e acolhedor
+5. **loop_free** — O agente evitou loops e redundâncias?
+   - 1: Perguntou a mesma coisa mais de uma vez, repetiu resposta anterior sem motivo
+   - 3: Alguma repetição, mas progresso visível
+   - 5: Fluxo limpo, sem redundância, cada turno avançou o estado
 
-6. **closing_drive** — O agente conduz ativamente para o fechamento (agendamento)?
-   - 1: Passivo, não conduz para nada
-   - 3: Às vezes conduz, às vezes perde o fio
-   - 5: Conduz ativamente para o fechamento sem pressionar
-
-7. **memory_use** — O agente usa bem o contexto da conversa sem repetir perguntas já respondidas?
-   - 1: Ignora contexto, repete perguntas
-   - 3: Usa contexto parcialmente
-   - 5: Usa contexto de forma fluida e conveniente
-
-8. **friction_reduction** — O agente reduz atrito e facilita o processo para o cliente?
-   - 1: Cria barreiras, pede informações desnecessárias
-   - 3: Neutro
-   - 5: Torna tudo fácil, antecipa necessidades
-
-9. **clarity** — As respostas são claras e fáceis de entender?
-   - 1: Confuso, ambíguo, difícil de seguir
-   - 3: Razoavelmente claro
-   - 5: Cristalino, sem ambiguidade
-
-10. **commercial_quality** — A conversa tem qualidade comercial? O agente valoriza os serviços?
-    - 1: Sem valor comercial, neutro demais ou negativo
-    - 3: Comercialmente ok
-    - 5: Excelente presentação comercial sem ser invasivo
-
-11. **conversion_probability** — Qual a probabilidade de o cliente finalizar o agendamento com base nessa interação?
-    - 1: Muito improvável (cliente saiu sem clareza ou frustrado)
-    - 3: Moderada
-    - 5: Alta (cliente claramente comprometido)
-
-12. **message_pacing** — O agente divide as mensagens de forma adequada? Nem muito longas nem fragmentadas demais?
-    - 1: Mensagens mal dimensionadas (muito longas ou muitos fragmentos curtos)
-    - 3: Dimensionamento ok
-    - 5: Fracionamento perfeito para WhatsApp
+6. **constraint_respect** — O agente respeitou as restrições operacionais (horário de funcionamento, barbeiro pedido, serviço pedido, slot disponível)?
+   - 1: Ofereceu slot inválido, trocou barbeiro sem pedido, ignorou fechamento, agendou fora do horário
+   - 3: Respeitou a maioria das restrições, falhou em caso específico
+   - 5: Respeitou todas as restrições: disponibilidade real, barbeiro pedido, horário de funcionamento
 
 ## Instrução de saída:
 
@@ -99,24 +70,18 @@ Responda APENAS com um JSON válido no seguinte formato (sem markdown, sem texto
 
 {
   "scores": {
-    "naturalness": <1-5>,
-    "human_feel": <1-5>,
-    "tone_fit": <1-5>,
-    "objectivity": <1-5>,
-    "warmth": <1-5>,
-    "closing_drive": <1-5>,
-    "memory_use": <1-5>,
-    "friction_reduction": <1-5>,
-    "clarity": <1-5>,
-    "commercial_quality": <1-5>,
-    "conversion_probability": <1-5>,
-    "message_pacing": <1-5>
+    "tool_correctness": <1-5>,
+    "operational_accuracy": <1-5>,
+    "context_use": <1-5>,
+    "state_compliance": <1-5>,
+    "loop_free": <1-5>,
+    "constraint_respect": <1-5>
   },
-  "rationale": "<2-4 frases explicando os pontos mais relevantes da avaliação>",
+  "rationale": "<2-4 frases descrevendo o principal resultado operacional e onde o sistema acertou ou falhou>",
   "overall": <number 0-100>
 }
 
-O campo "overall" deve refletir sua avaliação holística da qualidade da conversa (0 = desastrosa, 100 = perfeita).`;
+O campo "overall" deve refletir a qualidade operacional da conversa (0 = falha crítica de sistema, 100 = tudo funcionou perfeitamente).`;
 
 // ---------------------------------------------------------------------------
 // Conversation formatter
@@ -127,7 +92,7 @@ function formatConversation(turns: TurnResult[]): string {
     .map((t) => {
       const lines = [`[TURNO ${t.turnIndex + 1}]`, `CLIENTE: ${t.userMessage}`];
       if (t.toolsCalled.length > 0) {
-        lines.push(`[ferramentas: ${t.toolsCalled.join(", ")}]`);
+        lines.push(`[ferramentas chamadas: ${t.toolsCalled.join(", ")}]`);
       }
       lines.push(`AGENTE: ${t.agentReply}`);
       return lines.join("\n");
@@ -160,12 +125,12 @@ export async function judgeConversation(
     {
       model,
       temperature: 0,
-      max_tokens: 800,
+      max_tokens: 600,
       messages: [
         { role: "system", content: JUDGE_SYSTEM_PROMPT },
         {
           role: "user",
-          content: `Avalie a seguinte conversa de atendimento:\n\n${conversationText}`,
+          content: `Avalie o resultado operacional da seguinte conversa:\n\n${conversationText}`,
         },
       ],
       response_format: { type: "json_object" },
@@ -201,18 +166,12 @@ export async function judgeConversation(
 // ---------------------------------------------------------------------------
 
 const ALL_METRICS: JudgeMetric[] = [
-  "naturalness",
-  "human_feel",
-  "tone_fit",
-  "objectivity",
-  "warmth",
-  "closing_drive",
-  "memory_use",
-  "friction_reduction",
-  "clarity",
-  "commercial_quality",
-  "conversion_probability",
-  "message_pacing",
+  "tool_correctness",
+  "operational_accuracy",
+  "context_use",
+  "state_compliance",
+  "loop_free",
+  "constraint_respect",
 ];
 
 function validateScores(raw: Record<string, unknown>): Record<JudgeMetric, number> {
@@ -229,21 +188,15 @@ function validateScores(raw: Record<string, unknown>): Record<JudgeMetric, numbe
   return scores;
 }
 
-/** Fallback overall score: weighted average of all metrics, mapped to 0-100 */
+/** Fallback overall score: equal-weighted average of all metrics, mapped to 0-100 */
 function computeOverall(scores: Record<JudgeMetric, number>): number {
   const weights: Record<JudgeMetric, number> = {
-    naturalness: 1.5,
-    human_feel: 1.5,
-    tone_fit: 1.0,
-    objectivity: 1.0,
-    warmth: 1.0,
-    closing_drive: 2.0,
-    memory_use: 1.0,
-    friction_reduction: 1.5,
-    clarity: 1.0,
-    commercial_quality: 1.5,
-    conversion_probability: 2.0,
-    message_pacing: 0.5,
+    tool_correctness: 2.0,
+    operational_accuracy: 2.0,
+    context_use: 1.5,
+    state_compliance: 2.0,
+    loop_free: 1.0,
+    constraint_respect: 1.5,
   };
   let weighted = 0;
   let totalWeight = 0;

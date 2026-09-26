@@ -4,39 +4,16 @@
  *
  * Usage:
  *   npx tsx benchmark/cli.ts <command> [options]
- *
- * Commands:
- *   run       Run benchmark scenarios and save result
- *   compare   Compare baseline vs candidate
- *   promote   Promote a candidate run to production
- *   report    (Re)generate report from existing run file
- *   refine    Analyze a run and generate refinement suggestions
- *   replay    Replay real conversations through the agent
- *   list      List saved runs
- *
- * Options:
- *   --mock            Run without OpenAI (for CI, deterministic checks only)
- *   --live            Run with real OpenAI + DB (default)
- *   --tags <t,t,...>  Filter scenarios by tags
- *   --scenario <id>   Run a single scenario by ID
- *   --no-judge        Skip LLM judge even in live mode
- *   --baseline <id>   Baseline run ID for comparison
- *   --candidate <id>  Candidate run ID for comparison
- *   --run <id|path>   Run ID or file path for report/refine commands
- *   --limit <n>       Max conversations for replay command
- *   --since <date>    ISO date for replay command (replay since this date)
- *   --commit <sha>    Git commit SHA to tag this run
- *   --prompt <ver>    Prompt version to tag this run
  */
 
+import "../src/load-env.js";
 import dotenv from "dotenv";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-// Load env from repo root
 dotenv.config({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = "postgres://navalhia:navalhia_secret@localhost:5432/navalhia";
+  process.env.DATABASE_URL = "postgres://navalhia:navalhia_secret@localhost:5433/navalhia";
 }
 
 import { filterScenarios, getScenario, ALL_SCENARIOS } from "./scenarios/index.js";
@@ -89,7 +66,7 @@ async function cmdRun(args: Record<string, string | boolean>): Promise<void> {
   const promptVersion = args["prompt"] ? String(args["prompt"]) : undefined;
 
   let scenarios = scenarioId
-    ? [getScenario(scenarioId)]
+    ? scenarioId.split(",").map((id) => getScenario(id.trim()))
     : filterScenarios(filterTags);
 
   if (scenarios.length === 0) {

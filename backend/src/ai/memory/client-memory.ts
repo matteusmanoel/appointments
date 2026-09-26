@@ -188,6 +188,32 @@ async function getClientIdByPhone(
   }
 }
 
+/** Explicit “só com o Lucas” — conf 1.0. Null clears the explicit pin. */
+export async function setExplicitPreferredBarberByPhone(
+  barbershopId: string,
+  clientPhone: string,
+  barberId: string | null,
+): Promise<void> {
+  const clientId = await getClientIdByPhone(barbershopId, clientPhone);
+  if (!clientId) return;
+  await ensureClientMemory(barbershopId, clientId);
+  if (!barberId) {
+    await pool.query(
+      `UPDATE public.client_ai_memory
+       SET preferred_barber_id = NULL, preferred_barber_conf = 0, updated_at = now()
+       WHERE client_id = $1 AND barbershop_id = $2 AND preferred_barber_conf >= 0.99`,
+      [clientId, barbershopId],
+    );
+    return;
+  }
+  await pool.query(
+    `UPDATE public.client_ai_memory
+     SET preferred_barber_id = $1, preferred_barber_conf = 1, updated_at = now()
+     WHERE client_id = $2 AND barbershop_id = $3`,
+    [barberId, clientId, barbershopId],
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Prompt block generation
 // ---------------------------------------------------------------------------
@@ -580,6 +606,49 @@ export async function setPaymentPending(
     );
   } catch (e) {
     console.warn("[client-memory] setPaymentPending failed:", (e as Error).message);
+  }
+}
+
+/**
+ * Convenience wrapper: mark payment_pending = true for the given client.
+ * Called fire-and-forget from billing sweeps after dispatching a charge.
+ */
+export async function setPaymentPendingFlag(
+  barbershopId: string,
+  clientPhone: string,
+  amount: number
+): Promise<void> {
+  return setPaymentPending(barbershopId, clientPhone, true, amount);
+}
+
+/**
+ * Append a short observation to client notes_safe (max 400 chars total, 120 per call).
+ * Observations are separated by "; " and older ones are trimmed when the cap is reached.
+ * Call fire-and-forget.
+ */
+export async function appendClientNote(
+  barbershopId: string,
+  clientPhone: string,
+  note: string
+): Promise<void> {
+  const trimmed = note.trim().slice(0, 120);
+  if (!trimmed) return;
+  try {
+    const clientId = await getClientIdByPhone(barbershopId, clientPhone);
+    if (!clientId) return;
+    await ensureClientMemory(barbershopId, clientId);
+    await pool.query(
+      `UPDATE public.client_ai_memory
+       SET notes_safe = CASE
+         WHEN notes_safe IS NULL OR notes_safe = '' THEN $1
+         ELSE left(notes_safe || '; ' || $1, 400)
+       END,
+       updated_at = now()
+       WHERE client_id = $2 AND barbershop_id = $3`,
+      [trimmed, clientId, barbershopId]
+    );
+  } catch (e) {
+    console.warn("[client-memory] appendClientNote failed:", (e as Error).message);
   }
 }
 

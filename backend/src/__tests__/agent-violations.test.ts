@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectViolations, sanitizeClientFacingReply, composeAvailableSlotConfirm, looksLikeBookingConfirmationAsk, containsAiExposure, assistantMessageAskedForName, isUsableClientName, withBarberSubstitutionDisclosure } from "../ai/agent.js";
+import { detectViolations, sanitizeClientFacingReply, composeAvailableSlotConfirm, looksLikeBookingConfirmationAsk, containsAiExposure, assistantMessageAskedForName, isUsableClientName, withBarberSubstitutionDisclosure, allowedConfirmAppointmentIds, guardClientReply, resolveServiceForTurn, composePresenceConfirmed, resolveToolClientPhone, confirmedPersonName, bookingDraftBlocksPresence, replyDeniesUpcoming, replyWithoutPixEcho, composeBookingCreated, composeRemarcarFromLast } from "../ai/agent.js";
 
 describe("detectViolations", () => {
   it("returns empty when reply is clean", () => {
@@ -158,6 +158,8 @@ describe("withBarberSubstitutionDisclosure", () => {
 describe("isUsableClientName", () => {
   it("rejects the default 'cliente' placeholder", () => {
     expect(isUsableClientName("cliente")).toBe(false);
+    expect(isUsableClientName("Por gentileza")).toBe(false);
+    expect(isUsableClientName("Por favor")).toBe(false);
     expect(isUsableClientName("Cliente")).toBe(false);
   });
 
@@ -178,5 +180,141 @@ describe("isUsableClientName", () => {
     expect(isUsableClientName("")).toBe(false);
     expect(isUsableClientName("A")).toBe(false);
     expect(isUsableClientName(undefined)).toBe(false);
+    expect(isUsableClientName("undefined")).toBe(false);
+    expect(isUsableClientName("null")).toBe(false);
+  });
+});
+
+describe("booking accept is not presence", () => {
+  it("keeps the inbound phone when the model passes undefined", () => {
+    expect(resolveToolClientPhone("undefined", "5545988230845")).toBe("5545988230845");
+    expect(resolveToolClientPhone("", "5545988230845")).toBe("5545988230845");
+  });
+
+  it("does not treat the WhatsApp push name as the person", () => {
+    expect(
+      confirmedPersonName({
+        storedName: "Oficina",
+        nameConfirmed: false,
+        pushName: "Oficina",
+      }),
+    ).toBe("");
+    expect(
+      confirmedPersonName({
+        statedThisTurn: "Mateus",
+        storedName: "Oficina",
+        nameConfirmed: false,
+        pushName: "Oficina",
+      }),
+    ).toBe("Mateus");
+  });
+
+  it("blocks presence while a booking draft is open", () => {
+    expect(bookingDraftBlocksPresence({ draftStatus: "offered", lastAssistantWasReminder: false })).toBe(true);
+    expect(bookingDraftBlocksPresence({ draftStatus: "awaiting_name", lastAssistantWasReminder: false })).toBe(true);
+    expect(bookingDraftBlocksPresence({ draftStatus: "offered", lastAssistantWasReminder: true })).toBe(false);
+    expect(bookingDraftBlocksPresence({ draftStatus: "collecting", lastAssistantWasReminder: false })).toBe(false);
+  });
+
+  it("asks to move the existing slot instead of saying there is none", () => {
+    expect(replyDeniesUpcoming("Parece que não há agendamentos futuros registrados no sistema.")).toBe(true);
+  });
+
+  it("does not repeat a PIX key already sent", () => {
+    const echoed = "Aqui está a chave PIX da Cavalier: 45988432998";
+    expect(replyWithoutPixEcho(echoed, "45988432998")).toBe("Te mandei a chave PIX aqui.");
+    expect(replyWithoutPixEcho("Te mandei a chave PIX aqui.", "45988432998")).toBe("Te mandei a chave PIX aqui.");
+  });
+
+  it("closes a booking with the person's name", () => {
+    expect(
+      composeBookingCreated({
+        firstName: "Mateus",
+        serviceName: "Corte e Barba",
+        when: "amanhã, 25/09 às 17h",
+        barberName: "Eduardo Gustavo",
+      }),
+    ).toMatch(/Agendado, Mateus/);
+    expect(
+      composeRemarcarFromLast({
+        firstName: "Mateus",
+        serviceName: "Corte e Barba",
+        barberName: "Lucas Lima",
+        timeHHmm: "13:00",
+      }),
+    ).toMatch(/Mateus/);
+    expect(
+      composeRemarcarFromLast({
+        firstName: "Mateus",
+        serviceName: "Corte e Barba",
+        barberName: "Lucas Lima",
+        timeHHmm: "13:00",
+      }),
+    ).not.toMatch(/qual serviço/i);
+  });
+});
+
+describe("allowedConfirmAppointmentIds", () => {
+  it("accepts pending ids from upcoming and listed this turn", () => {
+    const allowed = allowedConfirmAppointmentIds(
+      [{ id: "6a4c8a8a-0c3b-4b7e-8b9f-2e5f3d8c3c1e", status: "pending" }],
+      [],
+    );
+    expect(allowed.has("6a4c8a8a-0c3b-4b7e-8b9f-2e5f3d8c3c1e")).toBe(true);
+    expect(allowed.has("00000000-0000-0000-0000-000000000000")).toBe(false);
+  });
+
+  it("rejects invented ids that were never listed", () => {
+    const allowed = allowedConfirmAppointmentIds([], ["not-a-uuid"]);
+    expect(allowed.size).toBe(0);
+  });
+});
+
+describe("output guard", () => {
+  const base = {
+    previousAssistant: "",
+    userText: "Quero agendar com o Lucas amanha as 6",
+    opensAt: "09:00",
+    closesAt: "19:00",
+    composed: false,
+  };
+
+  it("silences error leaks instead of sending them", () => {
+    expect(containsAiExposure("Parece que houve um erro ao tentar acessar seus agendamentos. Um momento, por favor.")).toBe(true);
+    expect(containsAiExposure("Parece que o serviço que você deseja não está disponível para agendamento.")).toBe(true);
+    expect(containsAiExposure("Posso não ter entendido. Quer agendar?")).toBe(true);
+    expect(guardClientReply({ ...base, reply: "Parece que houve um erro ao tentar acessar seus agendamentos." })).toBe("");
+  });
+
+  it("silences a clock the shop window would shift", () => {
+    expect(guardClientReply({ ...base, reply: "Qual deles você prefere para amanhã às 6h?" })).toBe("");
+    expect(guardClientReply({ ...base, reply: "Tenho às 18h com o Lucas." })).toBe("Tenho às 18h com o Lucas.");
+  });
+
+  it("silences a repeat of the previous assistant bubble", () => {
+    const same = "Neste horário o Lucas estará atendendo. Posso te encaixar com o Eduardo às 18h.";
+    expect(guardClientReply({ ...base, reply: same, previousAssistant: same, composed: true })).toBe("");
+  });
+
+  it("keeps the presence sentence", () => {
+    expect(composePresenceConfirmed({ firstName: "Mateus", when: "amanhã, 23/09 às 18h", barberName: "Lucas Lima" })).toBe(
+      "Presença confirmada, Mateus! Te esperamos amanhã, 23/09 às 18h com o Lucas Lima.",
+    );
+  });
+});
+
+describe("resolveServiceForTurn", () => {
+  const catalog = [
+    { id: "combo", name: "Corte e Barba", category: "combo" },
+    { id: "corte", name: "Corte masculino", category: "corte" },
+    { id: "barba", name: "Barba completa", category: "barba" },
+  ];
+
+  it("binds the habitual combo when the turn has no service", () => {
+    expect(resolveServiceForTurn("Quero agendar com o Lucas amanha as 6", ["Corte e Barba"], catalog).match?.id).toBe("combo");
+  });
+
+  it("keeps an explicit corte e barba on the combo", () => {
+    expect(resolveServiceForTurn("Corte e barba", [], catalog).match?.id).toBe("combo");
   });
 });

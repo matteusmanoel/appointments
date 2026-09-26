@@ -23,6 +23,14 @@ import { getAiPauseState, setAiPaused, clearAiPause, setConversationPaused, clea
 import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { knowledgeRouter } from "./knowledge.js";
 import { brPhoneMatchKeys, brPhonesMatch, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
+import {
+  defaultWhatsAppProvider,
+  ensureWhatsAppSession,
+  getWhatsApp,
+  loadConnection,
+  pingDefaultProvider,
+  WhatsAppNotConnectedError,
+} from "../integrations/whatsapp/index.js";
 
 export const whatsappRouter = Router();
 whatsappRouter.use("/knowledge", knowledgeRouter);
@@ -127,20 +135,13 @@ function extractConnectedPhone(raw: InstanceStatusResult | undefined): string | 
 whatsappRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   try {
     const barbershopId = getBarbershopId(req);
-    const r = await pool.query<ConnectionRow>(
-      `SELECT id, barbershop_id, provider, whatsapp_phone, uazapi_instance_name, uazapi_instance_id,
-              uazapi_instance_token_encrypted, status, connected_at, disconnected_at, last_error, created_at, updated_at
-       FROM public.barbershop_whatsapp_connections
-       WHERE barbershop_id = $1 AND provider = 'uazapi'`,
-      [barbershopId]
-    );
-    const row = r.rows[0];
+    const row = await loadConnection(barbershopId);
     if (!row) {
       const pauseState = await getAiPauseState(barbershopId);
       res.json({
         connected: false,
         status: "disconnected",
-        provider: "uazapi",
+        provider: defaultWhatsAppProvider(),
         ai_paused_until: pauseState?.paused_until?.toISOString() ?? undefined,
         ai_paused_by: pauseState?.paused_by ?? undefined,
       });
@@ -160,6 +161,112 @@ whatsappRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   } catch (e) {
     console.error("whatsapp get:", e);
     res.status(500).json({ error: "Failed to get WhatsApp connection" });
+  }
+});
+
+/** GET /api/integrations/whatsapp/connectivity — provider default (Evolution ou Uazapi) */
+whatsappRouter.get("/connectivity", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const ping = await pingDefaultProvider();
+    res.json({
+      api: ping.api,
+      provider: ping.provider,
+      reachable: ping.reachable,
+      uazapi: ping.provider === "uazapi" ? ping.reachable : undefined,
+    });
+  } catch (e) {
+    res.status(500).json({
+      api: "ok",
+      provider: defaultWhatsAppProvider(),
+      reachable: { ok: false, error: e instanceof Error ? e.message : "Unknown error" },
+    });
+  }
+});
+
+/** POST /api/integrations/whatsapp/connect — QR/pairing; setWebhook interno na sessão */
+whatsappRouter.post("/connect", async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    const barbershopId = getBarbershopId(req);
+    const body = z.object({ phone: z.string().optional() }).safeParse(req.body);
+    const phone = body.success ? body.data.phone : undefined;
+    const session = await ensureWhatsAppSession(barbershopId);
+    const result = await session.connect({ phone });
+    res.json(result);
+  } catch (e) {
+    console.error("whatsapp connect:", e);
+    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to start connection" });
+  }
+});
+
+/** GET /api/integrations/whatsapp/status */
+whatsappRouter.get("/status", async (req: Request, res: Response): Promise<void> => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    const barbershopId = getBarbershopId(req);
+    try {
+      const session = await getWhatsApp(barbershopId);
+      const result = await session.status();
+      res.json(result);
+    } catch (e) {
+      if (e instanceof WhatsAppNotConnectedError) {
+        res.status(404).json({ error: "No WhatsApp connection found" });
+        return;
+      }
+      throw e;
+    }
+  } catch (e) {
+    console.error("whatsapp status:", e);
+    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to get status" });
+  }
+});
+
+/** POST /api/integrations/whatsapp/disconnect */
+whatsappRouter.post("/disconnect", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    try {
+      const session = await getWhatsApp(barbershopId);
+      await session.disconnect();
+      res.json({ status: "disconnected" });
+    } catch (e) {
+      if (e instanceof WhatsAppNotConnectedError) {
+        res.status(404).json({ error: "No WhatsApp connection found" });
+        return;
+      }
+      throw e;
+    }
+  } catch (e) {
+    console.error("whatsapp disconnect:", e);
+    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to disconnect" });
+  }
+});
+
+const sendTestGenericBody = z.object({ number: z.string().optional(), text: z.string().optional() });
+
+/** POST /api/integrations/whatsapp/send-test */
+whatsappRouter.post("/send-test", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = sendTestGenericBody.safeParse(req.body);
+    const number = parsed.success ? parsed.data.number : undefined;
+    const text = (parsed.success ? parsed.data.text : undefined) ?? "Teste NavalhIA — integração WhatsApp ativa.";
+    const session = await getWhatsApp(barbershopId);
+    const row = await loadConnection(barbershopId);
+    const to = number ?? row?.whatsapp_phone ?? undefined;
+    if (!to) {
+      res.status(400).json({ error: "Provide number or ensure connection has whatsapp_phone" });
+      return;
+    }
+    await session.sendText(to, text);
+    res.json({ sent: true });
+  } catch (e) {
+    if (e instanceof WhatsAppNotConnectedError) {
+      res.status(404).json({ error: "No connected WhatsApp found" });
+      return;
+    }
+    console.error("whatsapp send-test:", e);
+    res.status(500).json({ error: e instanceof Error ? e.message : "Failed to send test" });
   }
 });
 
@@ -629,16 +736,12 @@ whatsappRouter.post("/conversations/:id/sync", async (req: Request, res: Respons
       res.status(404).json({ error: "Conversa não encontrada" });
       return;
     }
-    const conn = await pool.query<{ uazapi_instance_token_encrypted: string | null }>(
-      `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
-       WHERE barbershop_id = $1 AND provider = 'uazapi'`,
-      [barbershopId]
-    );
-    const enc = conn.rows[0]?.uazapi_instance_token_encrypted ?? null;
-    if (!enc) {
-      res.status(409).json({ error: "WhatsApp não conectado para sincronizar." });
+    const rowConn = await loadConnection(barbershopId);
+    if (!rowConn || rowConn.provider !== "uazapi" || !rowConn.uazapi_instance_token_encrypted) {
+      res.json({ ok: true, synced: 0, from_db: true });
       return;
     }
+    const enc = rowConn.uazapi_instance_token_encrypted;
     const token = decrypt(enc, getEncryptionKey());
     const threadId = conv.rows[0].external_thread_id.replace(/\D/g, "") || conv.rows[0].external_thread_id;
     const chatid = `${threadId}@s.whatsapp.net`;
@@ -706,31 +809,17 @@ whatsappRouter.post("/conversations/:id/send-manual", async (req: Request, res: 
       res.status(404).json({ error: "Conversa não encontrada" });
       return;
     }
-    const conn = await pool.query<{ uazapi_instance_token_encrypted: string | null }>(
-      `SELECT uazapi_instance_token_encrypted
-       FROM public.barbershop_whatsapp_connections
-       WHERE barbershop_id = $1 AND provider = 'uazapi'`,
-      [barbershopId]
-    );
-    const enc = conn.rows[0]?.uazapi_instance_token_encrypted ?? null;
-    if (!enc) {
+    const session = await getWhatsApp(barbershopId).catch((e) => {
+      if (e instanceof WhatsAppNotConnectedError) return null;
+      throw e;
+    });
+    if (!session) {
       res.status(409).json({ error: "WhatsApp não conectado para envio manual." });
       return;
     }
-    const token = decrypt(enc, getEncryptionKey());
     const text = parsed.data.text.trim();
-    const sent = await sendText({ token, number: row.external_thread_id, text });
-    const any = sent as Record<string, unknown> | null;
-    const providerMessageId =
-      any && typeof any === "object"
-        ? (typeof any.messageId === "string" && any.messageId.trim()
-            ? any.messageId.trim()
-            : typeof any.id === "string" && any.id.trim()
-            ? any.id.trim()
-            : typeof any.message_id === "string" && any.message_id.trim()
-            ? any.message_id.trim()
-            : null)
-        : null;
+    const sent = await session.sendText(row.external_thread_id, text);
+    const providerMessageId = sent.providerMessageId || null;
 
     const inserted = await pool.query<{ id: string }>(
       `INSERT INTO public.ai_messages (conversation_id, role, content, provider_message_id, delivery_status)

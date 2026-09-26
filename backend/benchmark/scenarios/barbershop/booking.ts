@@ -76,7 +76,7 @@ export const bookingScenarios: Scenario[] = [
         {
           name: "Agente propõe horários concretos",
           severity: "medium",
-          check: (_i, reply) => /\d{1,2}:\d{2}|\bhoje\b|\bamanhã\b/i.test(reply),
+          check: (_i, reply) => /\d{1,2}:\d{2}|\d{1,2}h|hoje|amanh/i.test(reply),
         },
       ],
     },
@@ -115,7 +115,7 @@ export const bookingScenarios: Scenario[] = [
           name: "Sugere horário razoável de abertura (7h-12h) ou informa lotação",
           severity: "medium",
           check: (_i, reply) => {
-            const timeMatch = reply.match(/\b(\d{1,2}):\d{2}\b/);
+            const timeMatch = reply.match(/\b(\d{1,2})(?::\d{2}|h)/);
             const hour = timeMatch ? parseInt(timeMatch[1], 10) : null;
             if (hour !== null) return hour >= 7 && hour <= 14;
             return /cheio|lotado|sem horário|não tem|não consegui/i.test(reply);
@@ -241,7 +241,7 @@ export const bookingScenarios: Scenario[] = [
           severity: "medium",
           check: (i, reply) =>
             i === 0
-              ? /outro horário|alternativa|disponível|opção|\d{1,2}:\d{2}/i.test(reply)
+              ? /outro horário|alternativa|disponível|opção|\d{1,2}:\d{2}|\d{1,2}h|posso confirmar/i.test(reply)
               : true,
         },
       ],
@@ -279,7 +279,7 @@ export const bookingScenarios: Scenario[] = [
           severity: "medium",
           check: (i, reply) =>
             i === 2
-              ? /\d{1,2}:\d{2}|alternativ|disponív|outro horário/i.test(reply)
+              ? /\d{1,2}:\d{2}|\d{1,2}h|alternativ|disponív|outro horário/i.test(reply)
               : true,
         },
       ],

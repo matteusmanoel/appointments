@@ -61,6 +61,38 @@ export interface Scenario {
   expected: ScenarioExpected;
   /** Vertical this scenario belongs to — future-proofing for multi-niche */
   vertical: "barbershop" | "clinic" | "beauty" | "generic";
+  /**
+   * When set, the agent runs as if "now" were this instant (ISO datetime) instead of the
+   * real clock. Lets a scenario test time-of-day-dependent behavior (e.g. "are you open
+   * right now?") deterministically, at any hour the suite happens to run.
+   */
+  simulatedNow?: string;
+  /**
+   * Live runs wipe this phone's appointments before every scenario. Use setup to insert
+   * the base appointment the scenario needs (reschedule, cancel, RSVP) without relying
+   * on leftovers from earlier scenarios.
+   */
+  setup?: (ctx: { barbershopId: string; clientPhone: string; simulatedNow?: string }) => Promise<void>;
+  /**
+   * Contrato de revisão humana. Não altera o runner: descreve o estado anterior,
+   * o que o modelo pode saber, o que a resposta deve fazer e o efeito no banco.
+   */
+  golden?: GoldenContract;
+}
+
+export interface GoldenContract {
+  /** Janela do export real que originou o caso. */
+  source: string;
+  /** Cadastro, agenda e relógio antes da primeira fala. */
+  priorState: string;
+  /** Fatos que o contexto do modelo deve conter. Não é o prompt inteiro. */
+  modelKnows: string[];
+  /** O que a resposta e o sistema devem fazer. */
+  expect: string[];
+  /** O que não pode acontecer. */
+  forbid: string[];
+  /** Linha de appointments / atividade ao final. */
+  dbAfter: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,25 +166,28 @@ export interface TurnResult {
   /** Tokens used in this turn (undefined in mock mode) */
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
   elapsedMs: number;
+  /**
+   * "llm" when the reply came from a real model call; "deterministic" when a hardcoded
+   * fast-path answered without calling the model. Lets a transcript review tell the two
+   * apart without inferring it from token counts.
+   */
+  origin?: "llm" | "deterministic";
+  /** The operational context block the agent saw this turn (only captured in benchmark runs). */
+  debugContext?: string;
 }
 
 // ---------------------------------------------------------------------------
 // Judge output
 // ---------------------------------------------------------------------------
 
+/** v2.0.0 — métricas operacionais (substituem as métricas de tom da v1) */
 export type JudgeMetric =
-  | "naturalness"
-  | "human_feel"
-  | "tone_fit"
-  | "objectivity"
-  | "warmth"
-  | "closing_drive"
-  | "memory_use"
-  | "friction_reduction"
-  | "clarity"
-  | "commercial_quality"
-  | "conversion_probability"
-  | "message_pacing";
+  | "tool_correctness"
+  | "operational_accuracy"
+  | "context_use"
+  | "state_compliance"
+  | "loop_free"
+  | "constraint_respect";
 
 export interface JudgeResult {
   /** Score per metric, 1-5 */

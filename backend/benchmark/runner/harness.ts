@@ -165,6 +165,21 @@ export async function runScenario(
   try {
     if (mode === "live") {
       conversationId = await createSandboxConversation(barbershopId, config.harnessConversationPrefix);
+      const { wipeTestAppointments } = await import("../../src/ai/wipe-test-context.js");
+      const { HARNESS_BLOCKER_PHONE } = await import("../scenarios/barbershop/seed-appointment.js");
+      await wipeTestAppointments({
+        barbershopId,
+        phones: [config.harnessFromPhone, HARNESS_BLOCKER_PHONE],
+      }).catch((e: unknown) => {
+        console.warn("  Appointment wipe warning:", e instanceof Error ? e.message : e);
+      });
+      if (scenario.setup) {
+        await scenario.setup({
+          barbershopId,
+          clientPhone: config.harnessFromPhone,
+          simulatedNow: scenario.simulatedNow,
+        });
+      }
     }
 
     for (let i = 0; i < scenario.turns.length; i++) {
@@ -176,6 +191,7 @@ export async function runScenario(
       let agentState: string | undefined;
       let usage: TurnResult["usage"] | undefined;
       let toolsCalled: string[] = [];
+      let debugContext: string | undefined;
 
       if (mode === "live" && conversationId && openai) {
         await insertUserMessage(conversationId, turn.content);
@@ -183,7 +199,10 @@ export async function runScenario(
         const { runAgent } = await import("../../src/ai/agent.js");
         let result: Awaited<ReturnType<typeof runAgent>>;
         try {
-          result = await runAgent(barbershopId, conversationId, config.harnessFromPhone, openai);
+          result = await runAgent(barbershopId, conversationId, config.harnessFromPhone, openai, {
+            simulatedNow: scenario.simulatedNow,
+            includeDebugContext: true,
+          });
         } catch (err) {
           // OpenAI / DB error on this turn — record as error and stop
           const errMsg = (err as Error).message ?? String(err);
@@ -193,6 +212,7 @@ export async function runScenario(
 
         agentReply = result.reply ?? "";
         agentState = result.state;
+        debugContext = result.debugContext;
 
         if (result.usage) {
           usage = {
@@ -240,6 +260,10 @@ export async function runScenario(
         violations: singleViolations,
         usage,
         elapsedMs: elapsed,
+        // A real model call is the only path that reports token usage; every deterministic
+        // fast-path returns without it. Mock mode has no origin.
+        origin: mode === "live" ? (usage ? "llm" : "deterministic") : undefined,
+        debugContext,
       });
 
       if (turn.delay_ms && mode === "live") {
@@ -336,7 +360,13 @@ export async function runScenario(
 
 function checkTaskCompletion(scenario: Scenario, lastState?: string): boolean {
   const expectedState = scenario.expected.finalState;
-  if (!expectedState || expectedState === "none") return true;
+  // No finalState defined → no specific completion requirement, neutral (no bonus, no penalty)
+  if (!expectedState) return false;
+  // "none" means the scenario explicitly expects NO terminal action (booking, cancel, etc.)
+  // Task is "complete" only if the agent didn't reach a terminal state
+  if (expectedState === "none") {
+    return !lastState || !["appointment_created", "appointment_rescheduled", "appointment_cancelled", "handoff_requested"].includes(lastState);
+  }
   return lastState === expectedState;
 }
 

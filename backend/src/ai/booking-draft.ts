@@ -5,6 +5,13 @@ import type { UnavailableReason } from "./slot-fit.js";
 
 export type BookingDraftStatus = "collecting" | "offered" | "awaiting_name" | "closed";
 
+export type BookingDraftPhase = "idle" | "collecting" | "rebook_eligible" | "confirming";
+
+export type PendingProposal = {
+  service_ids: string[];
+  service_name: string;
+};
+
 export type BookingDraft = {
   service_ids?: string[];
   service_name?: string;
@@ -17,6 +24,12 @@ export type BookingDraft = {
   total_price?: number;
   status: BookingDraftStatus;
   appointment_id?: string;
+  /** Conversation phase — drives rebook and affirmation resolution without keyword guards. */
+  phase?: BookingDraftPhase;
+  /** Last service/barber the agent suggested to the client. Resolved when client affirms. */
+  pendingProposal?: PendingProposal | null;
+  /** What the agent asked in its last turn. Used to resolve bare affirmations. */
+  lastAgentQuestion?: "service" | "datetime" | "confirm" | null;
 };
 
 export type CatalogService = {
@@ -53,6 +66,29 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
   const appointmentId =
     typeof r.appointment_id === "string" && isValidUuid(r.appointment_id) ? r.appointment_id : undefined;
   const total = Number(r.total_price);
+  const PHASES = new Set<BookingDraftPhase>(["idle", "collecting", "rebook_eligible", "confirming"]);
+  const phase = PHASES.has(r.phase as BookingDraftPhase) ? (r.phase as BookingDraftPhase) : undefined;
+  const QUESTIONS = new Set(["service", "datetime", "confirm"]);
+  const lastAgentQuestion = QUESTIONS.has(r.lastAgentQuestion as string)
+    ? (r.lastAgentQuestion as BookingDraft["lastAgentQuestion"])
+    : undefined;
+  const pendingProposalRaw = r.pendingProposal;
+  const pendingProposal: PendingProposal | null | undefined =
+    pendingProposalRaw === null
+      ? null
+      : pendingProposalRaw &&
+        typeof pendingProposalRaw === "object" &&
+        Array.isArray((pendingProposalRaw as Record<string, unknown>).service_ids)
+        ? {
+            service_ids: ((pendingProposalRaw as Record<string, unknown>).service_ids as unknown[])
+              .map(String)
+              .filter(isValidUuid),
+            service_name:
+              typeof (pendingProposalRaw as Record<string, unknown>).service_name === "string"
+                ? ((pendingProposalRaw as Record<string, unknown>).service_name as string).trim()
+                : "",
+          }
+        : undefined;
   return {
     status,
     ...(serviceIds?.length ? { service_ids: serviceIds } : {}),
@@ -66,6 +102,9 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
     ...(afterTime ? { after_time: afterTime } : {}),
     ...(Number.isFinite(total) ? { total_price: total } : {}),
     ...(appointmentId ? { appointment_id: appointmentId } : {}),
+    ...(phase ? { phase } : {}),
+    ...(lastAgentQuestion ? { lastAgentQuestion } : {}),
+    ...(pendingProposal !== undefined ? { pendingProposal } : {}),
   };
 }
 
@@ -88,6 +127,9 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     "after_time",
     "total_price",
     "appointment_id",
+    "phase",
+    "pendingProposal",
+    "lastAgentQuestion",
   ];
   let materialChanged = false;
   for (const key of keys) {
@@ -453,11 +495,21 @@ export function composeHoursOverflow(params: {
   lastFitBarberName?: string | null;
   isToday: boolean;
   nextOpenWeekdayPt?: string | null;
+  /** The time the client actually asked for — lets us explain *why* it doesn't fit. */
+  requestedTime?: string | null;
+  /** Opening time of the window, so "before opening" can be named explicitly. */
+  opensAt?: string | null;
 }): string {
   const who = params.lastFitBarberName ? ` com o ${firstNameOf(params.lastFitBarberName)}` : "";
   if (params.lastFitTime) {
     const when = formatTimePt(params.lastFitTime);
     const day = params.isToday ? "hoje" : "nesse dia";
+    const requested = (params.requestedTime ?? "").slice(0, 5);
+    const opens = (params.opensAt ?? "").slice(0, 5);
+    const beforeOpening = Boolean(requested && opens && requested < opens);
+    if (beforeOpening) {
+      return `Abrimos às ${formatTimePt(opens)}, então o primeiro horário ${day} é às ${when}${who}[[MSG]]Fica bom pra você?`;
+    }
     return `Posso te encaixar ${day} às ${when}${who}[[MSG]]Fica bom pra você?`;
   }
   if (params.nextOpenWeekdayPt) {
@@ -471,10 +523,18 @@ export function composeOccupiedSlot(params: {
   timeHHmm: string;
   alternatives: Array<{ time: string; barber_name?: string }>;
   sameTimeOthers?: Array<{ barber_name?: string }>;
+  /** Barbeiro + hora + dia já pinados: não troca de profissional. */
+  holdRequestedBarber?: boolean;
 }): string {
   const timePt = formatTimePt(params.timeHHmm);
   const rawName = params.barberName.trim().replace(/^o\s+/i, "");
   const who = rawName ? `o ${firstNameOf(rawName)}` : "o barbeiro";
+  if (params.holdRequestedBarber) {
+    return (
+      `Nesse horário ${who} está atendendo[[MSG]]` +
+      `Se quiser, te aviso se esse horário das ${timePt} com ele abrir.`
+    );
+  }
   const other = (params.sameTimeOthers ?? []).find((b) => b.barber_name && !sameBarberName(b.barber_name, rawName));
   if (other?.barber_name) {
     const otherFirst = firstNameOf(other.barber_name);
@@ -497,11 +557,13 @@ export function composeUnavailableReply(params: {
   timeHHmm: string;
   alternatives: Array<{ time: string; barber_name?: string }>;
   sameTimeOthers?: Array<{ barber_name?: string }>;
+  holdRequestedBarber?: boolean;
   weekdayPt?: string;
   nextOpenWeekdayPt?: string | null;
   lastFitTime?: string | null;
   lastFitBarberName?: string | null;
   isToday?: boolean;
+  opensAt?: string | null;
 }): string {
   if (params.reason === "closed") {
     return composeClosedDay({
@@ -515,13 +577,16 @@ export function composeUnavailableReply(params: {
       lastFitBarberName: params.lastFitBarberName,
       isToday: Boolean(params.isToday),
       nextOpenWeekdayPt: params.nextOpenWeekdayPt,
+      requestedTime: params.timeHHmm,
+      opensAt: params.opensAt,
     });
   }
   return composeOccupiedSlot({
     barberName: params.barberName,
     timeHHmm: params.timeHHmm,
     alternatives: params.alternatives,
-    sameTimeOthers: params.sameTimeOthers,
+    sameTimeOthers: params.holdRequestedBarber ? [] : params.sameTimeOthers,
+    holdRequestedBarber: params.holdRequestedBarber,
   });
 }
 

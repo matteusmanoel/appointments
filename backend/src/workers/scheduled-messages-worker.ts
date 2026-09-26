@@ -1,20 +1,24 @@
+import "../load-env.js";
 import { pool } from "../db.js";
-import { config } from "../config.js";
-import { decrypt } from "../integrations/encryption.js";
-import { sendLocation, sendText } from "../integrations/uazapi/client.js";
+import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { recordAgendaChange } from "../agenda/record-agenda-change.js";
+import { brPhoneMatchKeys, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
+import { buildReminder24h, buildReminder2hConfirmed, buildReminder2hPending } from "../outbound/templates.js";
 import {
   runBirthdaySweepWithLock,
   runDailyFollowUp30dSweepWithLock,
   runDailyFollowUpNoAppointmentSweepWithLock,
   runDailyOpeningSummarySweepWithLock,
   runDailyPlanBillingSweepWithLock,
+  runNoShowSweepWithLock,
+  runOverduePlanBillingReminderSweepWithLock,
 } from "../outbound/scheduled-messages.js";
 
 const POLL_MS = 30_000;
 const MAX_ATTEMPTS = 5;
 const BACKOFF_MINUTES = 15;
-const SEND_WINDOW_START = 9;
-const SEND_WINDOW_END = 20;
+const SEND_WINDOW_START = parseInt(process.env.SCHEDULED_SEND_WINDOW_START ?? "9", 10);
+const SEND_WINDOW_END = parseInt(process.env.SCHEDULED_SEND_WINDOW_END ?? "20", 10);
 
 function getBarbershopTimezone(rows: { timezone?: string }[]): string {
   return rows[0]?.timezone ?? "America/Sao_Paulo";
@@ -33,6 +37,19 @@ function getHourInTimezone(tz: string): number {
   }
 }
 
+function todayIsoInTimezone(tz: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
 async function nextWindowStart(tz: string): Promise<Date> {
   const hour = getHourInTimezone(tz);
   const dayOffset = hour < SEND_WINDOW_START ? 0 : 1;
@@ -48,17 +65,6 @@ async function nextWindowStart(tz: string): Promise<Date> {
     [tz, dayOffset, SEND_WINDOW_START]
   );
   return r.rows[0]?.run_after ?? new Date(Date.now() + 60 * 60 * 1000);
-}
-
-async function getUazapiToken(barbershopId: string): Promise<string | null> {
-  const r = await pool.query<{ uazapi_instance_token_encrypted: string }>(
-    `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
-     WHERE barbershop_id = $1 AND provider = 'uazapi' AND status = 'connected' AND uazapi_instance_token_encrypted IS NOT NULL`,
-    [barbershopId]
-  );
-  const row = r.rows[0];
-  if (!row?.uazapi_instance_token_encrypted || !config.appEncryptionKey) return null;
-  return decrypt(row.uazapi_instance_token_encrypted, config.appEncryptionKey);
 }
 
 async function fetchNextJobs(): Promise<
@@ -163,29 +169,94 @@ async function processOne(): Promise<boolean> {
       }
 
       const appointmentId = typeof payload.appointment_id === "string" ? payload.appointment_id : null;
+      let sendBody = body;
+      let reminderClientName: string | null = null;
       if (appointmentId) {
-        const appRow = await pool.query<{ status: string }>(
-          `SELECT status FROM public.appointments WHERE id = $1`,
-          [appointmentId]
+        const appRow = await pool.query<{
+          status: string;
+          price: number | null;
+          client_name: string | null;
+          barber_name: string | null;
+          scheduled_date: string;
+          scheduled_time: string;
+          service_names: string | null;
+        }>(
+          `SELECT a.status,
+                  a.price::float8 AS price,
+                  a.scheduled_date::text AS scheduled_date,
+                  a.scheduled_time::text AS scheduled_time,
+                  c.name AS client_name,
+                  b.name AS barber_name,
+                  COALESCE(
+                    (
+                      SELECT string_agg(COALESCE(aps.service_name, s.name), ', ' ORDER BY aps.position)
+                      FROM public.appointment_services aps
+                      LEFT JOIN public.services s ON s.id = aps.service_id
+                      WHERE aps.appointment_id = a.id
+                    ),
+                    (SELECT name FROM public.services WHERE id = a.service_id)
+                  ) AS service_names
+           FROM public.appointments a
+           JOIN public.clients c ON c.id = a.client_id
+           JOIN public.barbers b ON b.id = a.barber_id
+           WHERE a.id = $1`,
+          [appointmentId],
         );
         if (appRow.rows[0]?.status === "cancelled") {
           await markSkipped(id, "Agendamento cancelado");
           continue;
         }
+        if ((type === "reminder_24h" || type === "reminder_2h") && appRow.rows[0]) {
+          const appt = appRow.rows[0];
+          reminderClientName = appt.client_name;
+          const vars = {
+            clientName: appt.client_name ?? undefined,
+            date: String(appt.scheduled_date ?? payload.date ?? "").slice(0, 10),
+            time: String(appt.scheduled_time ?? payload.time ?? "").slice(0, 5),
+            serviceNames:
+              appt.service_names ??
+              (typeof payload.service_names === "string" ? payload.service_names : undefined),
+            barberName: appt.barber_name ?? undefined,
+            totalPrice: appt.price != null && Number.isFinite(Number(appt.price)) ? Number(appt.price) : undefined,
+            todayIso: todayIsoInTimezone(tz),
+            alreadyConfirmed: appt.status === "confirmed",
+          };
+          sendBody =
+            type === "reminder_24h"
+              ? buildReminder24h(vars)
+              : vars.alreadyConfirmed
+                ? buildReminder2hConfirmed(vars)
+                : buildReminder2hPending(vars);
+        }
       }
 
-      const token = await getUazapiToken(barbershopId);
-      if (!token) {
+      const session = await getWhatsAppOrNull(barbershopId);
+      if (!session) {
         await markSkipped(id, "WhatsApp não conectado");
         continue;
       }
 
-      if (!body) {
+      if (!sendBody) {
         await markSkipped(id, "Mensagem vazia");
         continue;
       }
 
-      await sendText({ token, number: to_phone, text: body });
+      await session.sendText(to_phone, sendBody);
+      if (type === "reminder_24h" || type === "reminder_2h") {
+        const keys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(to_phone) ?? to_phone.replace(/\D/g, ""));
+        await pool.query(
+          `INSERT INTO public.ai_messages (conversation_id, role, content)
+           SELECT c.id, 'assistant', $3
+           FROM public.ai_conversations c
+           WHERE c.barbershop_id = $1 AND c.channel = 'whatsapp'
+             AND regexp_replace(c.external_thread_id, '[^0-9]', '', 'g') = ANY($2::text[])
+           ORDER BY c.updated_at DESC
+           LIMIT 1`,
+          [barbershopId, keys, sendBody],
+        ).catch((err) => {
+          console.warn("[scheduled-messages-worker] reminder transcript failed:", err instanceof Error ? err.message : err);
+        });
+      }
 
       const locRow = await pool.query<{
         name: string;
@@ -204,13 +275,11 @@ async function processOne(): Promise<boolean> {
         (lr.address?.trim() || lr.name)
       ) {
         try {
-          await sendLocation({
-            token,
-            number: to_phone,
+          await session.sendLocation(to_phone, {
             name: (lr.name ?? "Barbearia").trim() || "Barbearia",
             address: (lr.address ?? lr.name ?? "").trim() || "Barbearia",
-            latitude: lr.latitude,
-            longitude: lr.longitude,
+            lat: lr.latitude,
+            lng: lr.longitude,
           });
         } catch (locErr) {
           console.warn(
@@ -222,6 +291,18 @@ async function processOne(): Promise<boolean> {
       }
 
       await markSent(id);
+      if (type === "reminder_24h" || type === "reminder_2h") {
+        const appointmentId = typeof payload.appointment_id === "string" ? payload.appointment_id : null;
+        await recordAgendaChange({
+          barbershopId,
+          appointmentId,
+          type: "reminder_sent",
+          actor: "system",
+          clientPhone: to_phone,
+          clientName: reminderClientName,
+          summary: type,
+        }).catch(() => {});
+      }
       console.info("[scheduled-messages-worker] sent id=%s barbershopId=%s type=%s", id, barbershopId, type);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
@@ -241,6 +322,8 @@ export async function runScheduledMessagesCycle(options?: { maxBatches?: number 
     runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
     runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
     runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
+    runOverduePlanBillingReminderSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] overdue plan billing sweep:", e)),
+    runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
   ]);
   let processed = 0;
   while (processed < maxBatches) {
@@ -267,6 +350,8 @@ async function runLoop(): Promise<void> {
       runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
       runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
       runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
+      runOverduePlanBillingReminderSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] overdue plan billing sweep:", e)),
+      runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
     ]);
   }, 60_000);
   setInterval(() => {
@@ -276,6 +361,8 @@ async function runLoop(): Promise<void> {
       runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
       runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
       runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
+      runOverduePlanBillingReminderSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] overdue plan billing sweep:", e)),
+      runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
     ]);
   }, ONE_DAY_MS);
   while (true) {

@@ -25,16 +25,38 @@ const businessHoursSchema = z.object({
 
 const slugSchema = z.string().min(2).max(80).regex(/^[a-z0-9-]+$/, "Slug: apenas letras minúsculas, números e hífens");
 
+const coordNumber = (min: number, max: number) =>
+  z
+    .union([z.number(), z.string()])
+    .nullable()
+    .optional()
+    .transform((v, ctx) => {
+      if (v === undefined) return undefined;
+      if (v === null || v === "") return null;
+      const n = typeof v === "number" ? v : Number(String(v).replace(",", "."));
+      if (!Number.isFinite(n) || n < min || n > max) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `must be between ${min} and ${max}` });
+        return z.NEVER;
+      }
+      return n;
+    });
+
 const updateBody = z.object({
   name: z.string().min(1).optional(),
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   address: z.string().optional(),
-  latitude: z.number().min(-90).max(90).nullable().optional(),
-  longitude: z.number().min(-180).max(180).nullable().optional(),
+  latitude: coordNumber(-90, 90),
+  longitude: coordNumber(-180, 180),
+  pix_key: z.string().max(150).nullable().optional(),
+  pix_holder_name: z.string().max(120).nullable().optional(),
+  pix_key_type: z.enum(["cpf", "cnpj", "telefone", "email", "aleatoria"]).nullable().optional(),
   business_hours: businessHoursSchema.optional(),
   slug: slugSchema.optional(),
 });
+
+const BARBERSHOP_COLS =
+  "id, name, phone, email, address, latitude, longitude, pix_key, pix_holder_name, pix_key_type, business_hours, slug, created_at, updated_at";
 
 const createBranchBody = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
@@ -58,7 +80,7 @@ export const barbershopsRouter = Router();
 barbershopsRouter.get("/", requireJwt, async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const r = await pool.query(
-    "SELECT id, name, phone, email, address, business_hours, slug, created_at, updated_at FROM public.barbershops WHERE id = $1",
+    `SELECT ${BARBERSHOP_COLS} FROM public.barbershops WHERE id = $1`,
     [barbershopId]
   );
   if (r.rows.length === 0) {
@@ -75,7 +97,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const { name, phone, email, address, latitude, longitude, business_hours, slug } = parsed.data;
+  const { name, phone, email, address, latitude, longitude, pix_key, pix_holder_name, pix_key_type, business_hours, slug } = parsed.data;
   const updates: string[] = [];
   const values: unknown[] = [];
   let i = 1;
@@ -103,6 +125,18 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
     updates.push(`longitude = $${i++}`);
     values.push(longitude);
   }
+  if (pix_key !== undefined) {
+    updates.push(`pix_key = $${i++}`);
+    values.push(pix_key === "" ? null : pix_key);
+  }
+  if (pix_holder_name !== undefined) {
+    updates.push(`pix_holder_name = $${i++}`);
+    values.push(pix_holder_name === "" ? null : pix_holder_name);
+  }
+  if (pix_key_type !== undefined) {
+    updates.push(`pix_key_type = $${i++}`);
+    values.push(pix_key_type ?? null);
+  }
   if (business_hours !== undefined) {
     updates.push(`business_hours = $${i++}`);
     values.push(JSON.stringify(business_hours));
@@ -113,7 +147,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
   }
   if (updates.length === 0) {
     const r = await pool.query(
-      "SELECT id, name, phone, email, address, latitude, longitude, business_hours, slug FROM public.barbershops WHERE id = $1",
+      `SELECT ${BARBERSHOP_COLS} FROM public.barbershops WHERE id = $1`,
       [barbershopId]
     );
     res.json(r.rows[0] ?? { error: "Not found" });
@@ -121,7 +155,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
   }
   values.push(barbershopId);
   const r = await pool.query(
-    `UPDATE public.barbershops SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING id, name, phone, email, address, latitude, longitude, business_hours, slug, created_at, updated_at`,
+    `UPDATE public.barbershops SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} RETURNING ${BARBERSHOP_COLS}`,
     values
   );
   if (r.rows.length === 0) {

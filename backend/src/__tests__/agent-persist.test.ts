@@ -54,7 +54,16 @@ describe("runAgent persistAssistantMessages", () => {
       [conversationId]
     );
     const beforeCount = parseInt(before.rows[0]?.count ?? "0", 10);
-    const openai = {} as OpenAI;
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: "Olá!", tool_calls: undefined }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+          }),
+        },
+      },
+    } as unknown as OpenAI;
     await runAgent(barbershopId, conversationId, testPhone, openai, {
       persistAssistantMessages: false,
     });

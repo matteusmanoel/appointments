@@ -6,6 +6,10 @@ import { config } from "../config.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
 import { whatsappRouter } from "./whatsapp.js";
 import { buildFollowUp30d } from "../outbound/templates.js";
+import { getWhatsAppOrNull, loadConnection } from "../integrations/whatsapp/index.js";
+import { fetchProfilePictureUrl } from "../integrations/whatsapp/evolution-client.js";
+import { recordAgendaChange } from "../agenda/record-agenda-change.js";
+import { brPhoneMatchKeys, phoneForStorage } from "../lib/phone-match.js";
 
 function isUndefinedTable(e: unknown): boolean {
   return (e as { code?: string })?.code === "42P01";
@@ -17,6 +21,52 @@ function isUndefinedColumn(e: unknown): boolean {
 
 export const integrationsRouter = Router();
 integrationsRouter.use(requireJwt);
+
+const contactPhotoBody = z.object({ phone: z.string().min(8).max(20) });
+
+/** POST /api/integrations/whatsapp/contact-photo/sync — store the WhatsApp profile photo on the client. */
+integrationsRouter.post("/whatsapp/contact-photo/sync", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const parsed = contactPhotoBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Telefone inválido" });
+    return;
+  }
+  const phone = phoneForStorage(parsed.data.phone);
+  const matchKeys = brPhoneMatchKeys(phone);
+  const conn = await loadConnection(barbershopId, "evolution");
+  const instanceName = conn?.evolution_instance_name;
+  if (!instanceName || conn.status !== "connected") {
+    res.status(409).json({ error: "WhatsApp Evolution não está conectado." });
+    return;
+  }
+  let photoUrl: string | null;
+  try {
+    photoUrl = await fetchProfilePictureUrl(instanceName, phone);
+  } catch (e) {
+    console.error("contact-photo sync:", e);
+    res.status(502).json({ error: "Não foi possível buscar a foto no WhatsApp." });
+    return;
+  }
+  if (!photoUrl) {
+    res.status(404).json({ error: "Este contato não tem foto de perfil pública." });
+    return;
+  }
+  const upd = await pool.query<{ photo_url: string }>(
+    `UPDATE public.clients
+     SET photo_url = $3, updated_at = now()
+     WHERE barbershop_id = $1
+       AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     RETURNING photo_url`,
+    [barbershopId, matchKeys, photoUrl],
+  );
+  if (upd.rows.length === 0) {
+    res.status(404).json({ error: "Cliente não encontrado para este telefone." });
+    return;
+  }
+  res.json({ photo_url: upd.rows[0].photo_url });
+});
+
 integrationsRouter.use("/whatsapp", whatsappRouter);
 
 integrationsRouter.get("/api-keys", async (req: Request, res: Response): Promise<void> => {
@@ -187,17 +237,26 @@ integrationsRouter.get("/automations/scheduled-messages/summary", async (req: Re
   res.json(counts);
 });
 
+function queryStringList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+  if (typeof raw === "string" && raw.trim()) return [raw.trim()];
+  return [];
+}
+
 /** GET /api/integrations/automations/scheduled-messages — list with type/status/limit for diagnostics */
 integrationsRouter.get("/automations/scheduled-messages", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
-  const type = (req.query.type as string) || undefined;
+  const types = queryStringList(req.query.type);
   const status = (req.query.status as string) || undefined;
   const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10) || 50, 200);
   const conditions = ["barbershop_id = $1"];
-  const params: (string | number)[] = [barbershopId];
-  if (type) {
-    params.push(type);
+  const params: unknown[] = [barbershopId];
+  if (types.length === 1) {
+    params.push(types[0]);
     conditions.push(`type = $${params.length}`);
+  } else if (types.length > 1) {
+    params.push(types);
+    conditions.push(`type = ANY($${params.length}::text[])`);
   }
   if (status) {
     params.push(status);
@@ -212,8 +271,16 @@ integrationsRouter.get("/automations/scheduled-messages", async (req: Request, r
     run_after: string;
     last_error: string | null;
     created_at: string;
+    client_name: string | null;
+    service_names: string | null;
+    appt_date: string | null;
+    appt_time: string | null;
   }>(
-    `SELECT id, type, to_phone, status, run_after, last_error, created_at
+    `SELECT id, type, to_phone, status, run_after, last_error, created_at,
+            payload_json->>'client_name' AS client_name,
+            payload_json->>'service_names' AS service_names,
+            payload_json->>'date' AS appt_date,
+            payload_json->>'time' AS appt_time
      FROM public.scheduled_messages
      WHERE ${conditions.join(" AND ")}
      ORDER BY created_at DESC
@@ -234,6 +301,10 @@ integrationsRouter.get("/automations/scheduled-messages", async (req: Request, r
       run_after: row.run_after,
       last_error: row.last_error ?? undefined,
       created_at: row.created_at,
+      client_name: row.client_name ?? undefined,
+      service_names: row.service_names ?? undefined,
+      appt_date: row.appt_date ?? undefined,
+      appt_time: row.appt_time ? String(row.appt_time).slice(0, 5) : undefined,
     }))
   );
 });
@@ -552,6 +623,91 @@ const manualScheduleBody = z.object({
   body: z.string().min(1).max(4096),
   run_after: z.string().datetime().optional(),
 });
+
+/** PATCH /api/integrations/automations/scheduled-messages/:id/skip — cancel a queued reminder manually */
+integrationsRouter.patch("/automations/scheduled-messages/:id/skip", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const { id } = req.params;
+  const r = await pool.query(
+    `UPDATE public.scheduled_messages
+     SET status = 'skipped', last_error = 'Cancelado manualmente pelo gestor', updated_at = now()
+     WHERE id = $1 AND barbershop_id = $2 AND status = 'queued'
+     RETURNING id`,
+    [id, barbershopId],
+  );
+  if (r.rowCount === 0) {
+    res.status(404).json({ error: "Lembrete não encontrado ou não está na fila." });
+    return;
+  }
+  res.json({ ok: true, id });
+});
+
+function reminderSendError(e: unknown, phone: string): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  const tail = phone.replace(/\D/g, "").slice(-4);
+  if (/"exists"\s*:\s*false/.test(msg)) {
+    return tail
+      ? `O número terminado em ${tail} não está no WhatsApp.`
+      : "Este número não está no WhatsApp.";
+  }
+  return "Falha ao enviar o lembrete agora.";
+}
+
+/** POST /api/integrations/automations/scheduled-messages/:id/dispatch-now — send a queued reminder immediately */
+integrationsRouter.post("/automations/scheduled-messages/:id/dispatch-now", async (req: Request, res: Response): Promise<void> => {
+  const barbershopId = getBarbershopId(req);
+  const { id } = req.params;
+  const row = await pool.query<{
+    to_phone: string;
+    type: string;
+    payload_json: { body?: string; appointment_id?: string } | null;
+  }>(
+    `SELECT to_phone, type, payload_json
+     FROM public.scheduled_messages
+     WHERE id = $1 AND barbershop_id = $2 AND status = 'queued'`,
+    [id, barbershopId],
+  );
+  const job = row.rows[0];
+  const body = typeof job?.payload_json?.body === "string" ? job.payload_json.body.trim() : "";
+  if (!job || !body) {
+    res.status(404).json({ error: "Lembrete não encontrado ou não está na fila." });
+    return;
+  }
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (!session) {
+    res.status(409).json({ error: "WhatsApp não conectado." });
+    return;
+  }
+  try {
+    await session.sendText(job.to_phone, body);
+  } catch (e) {
+    console.error("scheduled-messages dispatch-now:", e);
+    res.status(502).json({ error: reminderSendError(e, job.to_phone) });
+    return;
+  }
+  await pool.query(
+    `UPDATE public.scheduled_messages
+     SET status = 'sent', last_error = NULL, updated_at = now()
+     WHERE id = $1 AND barbershop_id = $2 AND status = 'queued'`,
+    [id, barbershopId],
+  );
+  const appointmentId =
+    typeof job.payload_json?.appointment_id === "string" ? job.payload_json.appointment_id : null;
+  if (job.type === "reminder_24h" || job.type === "reminder_2h") {
+    await recordAgendaChange({
+      barbershopId,
+      appointmentId,
+      type: "reminder_sent",
+      actor: "owner",
+      clientPhone: job.to_phone,
+      summary: job.type,
+    }).catch((err) => {
+      console.warn("scheduled-messages dispatch-now activity:", err instanceof Error ? err.message : err);
+    });
+  }
+  res.json({ ok: true, id });
+});
+
 integrationsRouter.post("/automations/scheduled-messages/manual", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const parsed = manualScheduleBody.safeParse(req.body);

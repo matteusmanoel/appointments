@@ -1,3 +1,4 @@
+import "../load-env.js";
 import { createRequire } from "node:module";
 import { pool } from "../db.js";
 import { config } from "../config.js";

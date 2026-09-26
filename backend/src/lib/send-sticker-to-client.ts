@@ -1,7 +1,5 @@
 import { pool } from "../db.js";
-import { config } from "../config.js";
-import { decrypt } from "../integrations/encryption.js";
-import { sendSticker } from "../integrations/uazapi/client.js";
+import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 
 /**
  * Sorteia uma figurinha ativa da barbearia e envia ao cliente pelo WhatsApp.
@@ -29,18 +27,11 @@ export async function sendStickerToClient(
     return { error: "Tabela de figurinhas ainda não existe ou sem dados." };
   }
 
-  const tok = await pool.query<{ uazapi_instance_token_encrypted: string | null }>(
-    `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
-     WHERE barbershop_id = $1 AND provider = 'uazapi' AND status = 'connected' AND uazapi_instance_token_encrypted IS NOT NULL`,
-    [barbershopId],
-  );
-  const enc = tok.rows[0]?.uazapi_instance_token_encrypted;
-  if (!enc || !config.appEncryptionKey) {
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (!session?.sendSticker) {
     return { error: "WhatsApp não conectado; não é possível enviar a figurinha." };
   }
-  const token = decrypt(enc, config.appEncryptionKey);
 
-  await sendSticker({ token, number: digits, url: mediaUrl });
-
+  await session.sendSticker(digits, mediaUrl);
   return { ok: true, message: "Figurinha enviada." };
 }

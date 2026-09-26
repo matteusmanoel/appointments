@@ -91,3 +91,17 @@ export function canonicalizeBrPhoneDigits(v: string | null | undefined): string 
   }
   return d.length >= 10 ? "55" + national : null;
 }
+
+/**
+ * Telefone gravado no cadastro.
+ * Número BR (com ou sem 55, 10 ou 11 dígitos nacionais) vira 55 + nacional.
+ * Outro DDI, com 12 ou mais dígitos e sem prefixo 55, fica como foi digitado.
+ */
+export function phoneForStorage(raw: string | null | undefined): string {
+  const digits = normalizeDigits(raw);
+  if (!digits) return "";
+  if (digits.startsWith("55") || digits.length <= 11) {
+    return canonicalizeBrPhoneDigits(digits) ?? digits;
+  }
+  return digits;
+}

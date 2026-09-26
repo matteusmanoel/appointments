@@ -174,3 +174,114 @@ reportsRouter.get("/commissions_by_barber", async (req: Request, res: Response):
     }))
   );
 });
+
+/** GET /api/reports/agenda-activity — feed de ações da agenda (polling 5–8s no dashboard) */
+reportsRouter.get("/agenda-activity", async (req: Request, res: Response): Promise<void> => {
+  let scope: { single: string } | { all: string[] };
+  try {
+    scope = await getBarbershopScope(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+  const ids = "all" in scope ? scope.all : [scope.single];
+  const limit = Math.min(parseInt(String(req.query.limit ?? "20"), 10) || 20, 50);
+  try {
+    const r = await pool.query<{
+      id: string;
+      type: string;
+      actor: string;
+      client_name: string | null;
+      client_phone: string | null;
+      scheduled_date: string | null;
+      scheduled_time: string | null;
+      summary: string | null;
+      created_at: string;
+      conversation_id: string | null;
+      barber_name: string | null;
+      service_names: string | null;
+      last_client_message: string | null;
+      wap_contact_name: string | null;
+      name_confirmed: boolean | null;
+      client_photo_url: string | null;
+    }>(
+      `SELECT aa.id, aa.type, aa.actor,
+              COALESCE(NULLIF(btrim(aa.client_name), ''), cl.name, apt_c.name) AS client_name,
+              aa.client_phone,
+              aa.scheduled_date::text, aa.scheduled_time::text,
+              aa.summary, aa.created_at::text, aa.conversation_id,
+              b.name AS barber_name,
+              COALESCE(
+                (SELECT string_agg(COALESCE(aps.service_name, s.name), ', ' ORDER BY aps.position)
+                 FROM public.appointment_services aps
+                 LEFT JOIN public.services s ON s.id = aps.service_id
+                 WHERE aps.appointment_id = aa.appointment_id),
+                (SELECT sv.name FROM public.appointments apt
+                 JOIN public.services sv ON sv.id = apt.service_id
+                 WHERE apt.id = aa.appointment_id)
+              ) AS service_names,
+              last_msg.content AS last_client_message,
+              cl.whatsapp_contact_name AS wap_contact_name,
+              cl.name_confirmed,
+              cl.photo_url AS client_photo_url
+       FROM public.agenda_activity aa
+       LEFT JOIN public.appointments a ON a.id = aa.appointment_id
+       LEFT JOIN public.clients apt_c ON apt_c.id = a.client_id
+       LEFT JOIN public.barbers b      ON b.id = a.barber_id
+       LEFT JOIN LATERAL (
+         SELECT m.content
+         FROM public.ai_messages m
+         WHERE m.conversation_id = aa.conversation_id AND m.role = 'user'
+         ORDER BY m.created_at DESC
+         LIMIT 1
+       ) last_msg ON true
+       LEFT JOIN LATERAL (
+         SELECT c.name, c.whatsapp_contact_name, c.name_confirmed, c.photo_url
+         FROM public.clients c
+         WHERE c.barbershop_id = aa.barbershop_id
+           AND aa.client_phone IS NOT NULL
+           AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY (ARRAY[
+             regexp_replace(aa.client_phone, '[^0-9]', '', 'g'),
+             CASE
+               WHEN regexp_replace(aa.client_phone, '[^0-9]', '', 'g') LIKE '55%'
+                 THEN substring(regexp_replace(aa.client_phone, '[^0-9]', '', 'g') FROM 3)
+               ELSE '55' || regexp_replace(aa.client_phone, '[^0-9]', '', 'g')
+             END
+           ])
+         LIMIT 1
+       ) cl ON true
+       WHERE aa.barbershop_id = ANY($1::uuid[])
+       ORDER BY aa.created_at DESC
+       LIMIT $2`,
+      [ids, limit]
+    );
+    res.json({
+      events: r.rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        actor: row.actor,
+        client_name: row.client_name,
+        client_phone: row.client_phone,
+        scheduled_date: row.scheduled_date,
+        scheduled_time: row.scheduled_time ? String(row.scheduled_time).slice(0, 8) : null,
+        summary: row.summary,
+        created_at: row.created_at,
+        conversation_id: row.conversation_id,
+        barber_name: row.barber_name,
+        service_names: row.service_names,
+        last_client_message: row.last_client_message,
+        wap_contact_name: row.wap_contact_name,
+        name_confirmed: row.name_confirmed,
+        client_photo_url: row.client_photo_url,
+      })),
+    });
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "42P01") {
+      res.json({ events: [] });
+      return;
+    }
+    console.error("reports agenda-activity:", e);
+    res.status(500).json({ error: "Falha ao carregar feed da agenda" });
+  }
+});

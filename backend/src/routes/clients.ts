@@ -2,6 +2,8 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
+import { brPhoneMatchKeys, phoneForStorage } from "../lib/phone-match.js";
+import { syncClientPhotoIfMissing } from "../clients/sync-contact-photo.js";
 
 const createBody = z.object({
   name: z.string().min(1),
@@ -9,8 +11,12 @@ const createBody = z.object({
   email: z.string().email().optional().or(z.literal("")),
   notes: z.string().optional(),
   barbershop_id: z.string().uuid().optional(),
+  photo_url: z.string().max(2000).nullable().optional(),
 });
-const updateBody = createBody.partial();
+const updateBody = createBody.partial().extend({
+  whatsapp_contact_name: z.string().max(120).nullable().optional(),
+  name_confirmed: z.boolean().optional(),
+});
 
 export const clientsRouter = Router();
 
@@ -31,6 +37,7 @@ clientsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   let query = `
     SELECT
       c.id, c.barbershop_id, c.name, c.phone, c.email, c.notes,
+      c.photo_url, c.whatsapp_contact_name, c.name_confirmed,
       c.total_visits, c.total_spent, c.loyalty_points,
       c.created_at, c.updated_at,
       ${("all" in scope) ? "bs.name AS barbershop_name," : ""}
@@ -102,16 +109,35 @@ clientsRouter.post("/", async (req: Request, res: Response): Promise<void> => {
   } else {
     barbershopId = scope.single;
   }
-  const { name, phone, email, notes } = parsed.data;
-  const normalizedPhone = phone.replace(/\D/g, "");
-  const r = await pool.query(
-    `INSERT INTO public.clients (barbershop_id, name, phone, email, notes)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (barbershop_id, phone) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, notes = EXCLUDED.notes, updated_at = now()
-     RETURNING id, barbershop_id, name, phone, email, notes, total_visits, total_spent, loyalty_points, created_at, updated_at`,
-    [barbershopId, name, normalizedPhone || phone, email === "" ? null : email ?? null, notes ?? null]
+  const { name, phone, email, notes, photo_url } = parsed.data;
+  const normalizedPhone = phoneForStorage(phone);
+  const prior = await pool.query(
+    `SELECT id FROM public.clients
+     WHERE barbershop_id = $1
+       AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     LIMIT 1`,
+    [barbershopId, brPhoneMatchKeys(normalizedPhone)],
   );
-  res.status(201).json(r.rows[0]);
+  const firstRegistration = prior.rowCount === 0 && !photo_url;
+  const r = await pool.query(
+    `INSERT INTO public.clients (barbershop_id, name, phone, email, notes, photo_url, name_confirmed)
+     VALUES ($1, $2, $3, $4, $5, $6, true)
+     ON CONFLICT (barbershop_id, phone) DO UPDATE SET
+       name = EXCLUDED.name,
+       email = EXCLUDED.email,
+       notes = EXCLUDED.notes,
+       photo_url = COALESCE(EXCLUDED.photo_url, clients.photo_url),
+       name_confirmed = true,
+       updated_at = now()
+     RETURNING id, barbershop_id, name, phone, email, notes, photo_url, whatsapp_contact_name, name_confirmed, total_visits, total_spent, loyalty_points, created_at, updated_at`,
+    [barbershopId, name, normalizedPhone || phone, email === "" ? null : email ?? null, notes ?? null, photo_url || null]
+  );
+  const created = r.rows[0];
+  if (firstRegistration && created && !created.photo_url) {
+    const synced = await syncClientPhotoIfMissing(barbershopId, normalizedPhone);
+    if (synced) created.photo_url = synced;
+  }
+  res.status(201).json(created);
 });
 
 clientsRouter.get("/:id", async (req: Request, res: Response): Promise<void> => {
@@ -286,7 +312,15 @@ clientsRouter.patch("/:id", async (req: Request, res: Response): Promise<void> =
   for (const [key, v] of Object.entries(parsed.data)) {
     if (v === undefined) continue;
     updates.push(`${key} = $${i++}`);
-    values.push(v === "" ? null : v);
+    if (key === "phone" && typeof v === "string") {
+      values.push(phoneForStorage(v) || null);
+    } else {
+      values.push(v === "" ? null : v);
+    }
+  }
+  if (parsed.data.name !== undefined && parsed.data.name_confirmed === undefined) {
+    updates.push(`name_confirmed = $${i++}`);
+    values.push(true);
   }
   if (updates.length === 0) {
     const r = await pool.query(

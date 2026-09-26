@@ -1,11 +1,8 @@
 import { pool } from "../db.js";
-import { config } from "../config.js";
-import { decrypt } from "../integrations/encryption.js";
-import { sendLocation } from "../integrations/uazapi/client.js";
+import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 
 /**
- * Envia o pin de localização da barbearia para o cliente no WhatsApp (UAZAPI).
- * Exige latitude, longitude e token de instância conectada.
+ * Envia o pin de localização da barbearia para o cliente no WhatsApp.
  */
 export async function sendBarbershopLocationToClient(
   barbershopId: string,
@@ -34,25 +31,23 @@ export async function sendBarbershopLocationToClient(
   const displayName = (row.name ?? "Barbearia").trim() || "Barbearia";
   const addressText = (row.address ?? "").trim() || displayName;
 
-  const tok = await pool.query<{ uazapi_instance_token_encrypted: string | null }>(
-    `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
-     WHERE barbershop_id = $1 AND provider = 'uazapi' AND status = 'connected' AND uazapi_instance_token_encrypted IS NOT NULL`,
-    [barbershopId],
-  );
-  const enc = tok.rows[0]?.uazapi_instance_token_encrypted;
-  if (!enc || !config.appEncryptionKey) {
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (!session) {
     return { error: "WhatsApp não conectado; não é possível enviar a localização." };
   }
-  const token = decrypt(enc, config.appEncryptionKey);
 
-  await sendLocation({
-    token,
-    number: digits,
-    name: displayName,
-    address: addressText,
-    latitude: row.latitude,
-    longitude: row.longitude,
-  });
+  try {
+    await session.sendLocation(digits, {
+      name: displayName,
+      address: addressText,
+      lat: row.latitude,
+      lng: row.longitude,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[send-barbershop-location] sendLocation failed barbershopId=%s: %s", barbershopId, msg);
+    return { error: "Falha ao enviar a localização no WhatsApp." };
+  }
 
   return { ok: true, message: "Localização enviada pelo WhatsApp." };
 }

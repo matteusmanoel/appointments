@@ -1,7 +1,18 @@
 import { Router, Request, Response } from "express";
-import { pool } from "../db.js";
-import { setConversationPaused } from "../ai/runtime-pause.js";
-import { canonicalizeBrPhoneDigits, brPhoneMatchKeys } from "../lib/phone-match.js";
+import {
+  parseEvolutionConnectionUpdate,
+  parseEvolutionInbound,
+} from "../integrations/whatsapp/parse-evolution.js";
+import {
+  enqueueInboundMessage,
+  handleFromMeHandoff,
+  handleInboundAudio,
+  handleInboundReceipt,
+  applyEditedInboundMessage,
+  resolveBarbershopByInstance,
+} from "../integrations/whatsapp/inbound.js";
+import { persistEvolutionSocketState } from "../integrations/whatsapp/evolution-session.js";
+import { LAB_EVOLUTION_INSTANCE } from "../integrations/whatsapp/inbound-allowlist.js";
 
 const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "";
 const accessToken = process.env.WHATSAPP_ACCESS_TOKEN ?? "";
@@ -10,28 +21,6 @@ const n8nChatTriggerUrl = process.env.N8N_CHAT_TRIGGER_URL ?? "";
 
 export const webhooksRouter = Router();
 
-function normalizeComparableText(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-async function getHandoffPauseHours(barbershopId: string): Promise<number> {
-  try {
-    const r = await pool.query<{ pause_hours: number }>(
-      `SELECT pause_hours FROM public.barbershop_ai_handoff_settings WHERE barbershop_id = $1`,
-      [barbershopId]
-    );
-    const hours = r.rows[0]?.pause_hours;
-    if (typeof hours === "number" && Number.isFinite(hours) && hours > 0 && hours <= 168) {
-      return Math.floor(hours);
-    }
-    return 4;
-  } catch {
-    return 4;
-  }
-}
 
 /** Uazapi inbound webhook payload (minimal contract; adjust after capturing real payloads) */
 type UazapiWebhookBody = {
@@ -311,90 +300,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
 
   if (parsed.skip && parsed.fromMe && parsed.handoffCandidate && parsed.instanceKey) {
     try {
-      const r = await pool.query<{ barbershop_id: string }>(
-        `SELECT barbershop_id FROM public.barbershop_whatsapp_connections
-         WHERE provider = 'uazapi' AND (uazapi_instance_name = $1 OR uazapi_instance_id = $1) LIMIT 1`,
-        [parsed.instanceKey]
-      );
-      const barbershopId = r.rows[0]?.barbershop_id;
-      if (barbershopId) {
-        if (parsed.fromPhone) {
-          const canonicalPhone = canonicalizeBrPhoneDigits(parsed.fromPhone) ?? parsed.fromPhone;
-          const matchKeys = brPhoneMatchKeys(canonicalPhone);
-          const conv = await pool.query<{ id: string }>(
-            `SELECT id FROM public.ai_conversations
-             WHERE barbershop_id = $1 AND channel = 'whatsapp'
-               AND (external_thread_id = $2 OR regexp_replace(external_thread_id, '[^0-9]', '', 'g') = ANY($3::text[]))
-             ORDER BY last_message_at DESC NULLS LAST
-             LIMIT 1`,
-            [barbershopId, canonicalPhone, matchKeys]
-          );
-          const conversationId = conv.rows[0]?.id;
-          if (conversationId) {
-            const latestAssistant = await pool.query<{ content: string | null }>(
-              `SELECT content
-               FROM public.ai_messages
-               WHERE conversation_id = $1 AND role = 'assistant' AND created_at >= now() - interval '10 minutes'
-               ORDER BY created_at DESC
-               LIMIT 1`,
-              [conversationId]
-            );
-            const assistantText = latestAssistant.rows[0]?.content ?? "";
-            const isLikelyAiEcho =
-              !!assistantText &&
-              !!parsed.text &&
-              normalizeComparableText(assistantText) === normalizeComparableText(parsed.text);
-            if (isLikelyAiEcho) {
-              // Treat fromMe echo as "delivered" confirmation for the latest assistant message.
-              try {
-                await pool.query(
-                  `UPDATE public.ai_messages
-                   SET delivery_status = 'delivered',
-                       delivered_at = COALESCE(delivered_at, now()),
-                       provider_message_id = COALESCE(provider_message_id, $2)
-                   WHERE id = (
-                     SELECT m.id
-                     FROM public.ai_messages m
-                     WHERE m.conversation_id = $1
-                       AND m.role = 'assistant'
-                       AND m.created_at >= now() - interval '15 minutes'
-                       AND lower(regexp_replace(coalesce(m.content,''), '\\s+', ' ', 'g')) = lower(regexp_replace($3, '\\s+', ' ', 'g'))
-                     ORDER BY m.created_at DESC
-                     LIMIT 1
-                   )`,
-                  [conversationId, parsed.providerEventId ?? null, parsed.text ?? ""]
-                );
-              } catch {
-                // ignore delivery update errors
-              }
-              console.info(
-                "[uazapi webhook] fromMe ignored as assistant echo conversationId=%s barbershopId=%s",
-                conversationId,
-                barbershopId
-              );
-              res.status(200).send();
-              return;
-            }
-            const pauseHours = await getHandoffPauseHours(barbershopId);
-            await setConversationPaused(conversationId, {
-              pausedBy: "auto",
-              reason: "Mensagem do próprio número (handoff detectado)",
-              hours: pauseHours,
-            });
-            await pool.query(
-              `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
-               VALUES ($1, $2, 'paused', 'auto', $3)`,
-              [barbershopId, conversationId, "Mensagem do próprio número (handoff detectado)"]
-            );
-            console.info("[uazapi webhook] handoff conversation paused conversationId=%s barbershopId=%s", conversationId, barbershopId);
-          } else {
-            // No conversation bound to this phone: don't pause globally to avoid blocking all automation.
-            console.info("[uazapi webhook] fromMe ignored (no conversation found) barbershopId=%s", barbershopId);
-          }
-        } else {
-          console.info("[uazapi webhook] fromMe ignored (no phone) barbershopId=%s", barbershopId);
-        }
-      }
+      await handleFromMeHandoff({ provider: "uazapi", parsed, logPrefix: "uazapi webhook" });
     } catch (e) {
       console.error("[uazapi webhook] handoff auto-pause error:", e);
     }
@@ -425,112 +331,167 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
   }
   console.info("[uazapi webhook] inbound event=%s instanceKey=%s fromPhone=%s providerEventId=%s", event, parsed.instanceKey, parsed.fromPhone, parsed.providerEventId);
 
-  let barbershopId: string | null = null;
   try {
-    if (parsed.instanceKey) {
-      const r = await pool.query<{ barbershop_id: string }>(
-        `SELECT barbershop_id FROM public.barbershop_whatsapp_connections
-         WHERE provider = 'uazapi' AND (uazapi_instance_name = $1 OR uazapi_instance_id = $1) LIMIT 1`,
-        [parsed.instanceKey]
-      );
-      barbershopId = r.rows[0]?.barbershop_id ?? null;
+    const barbershopId = await resolveBarbershopByInstance("uazapi", parsed.instanceKey);
+    if (!barbershopId) {
+      console.warn("uazapi webhook: no barbershop found for instanceKey=", parsed.instanceKey);
+      res.status(200).send();
+      return;
     }
+    await enqueueInboundMessage({
+      provider: "uazapi",
+      barbershopId,
+      fromPhone: parsed.fromPhone,
+      text: parsed.text,
+      providerEventId: parsed.providerEventId,
+      payload: body,
+      eventLabel: typeof event === "string" ? event : undefined,
+      logPrefix: "uazapi webhook",
+    });
   } catch (e) {
-    console.error("uazapi webhook resolve barbershop:", e);
+    console.error("uazapi webhook enqueue:", e);
+  }
+  res.status(200).send();
+});
+
+/** POST /api/webhooks/evolution — Evolution v2 messages.upsert + connection.update. */
+webhooksRouter.post("/evolution", async (req: Request, res: Response): Promise<void> => {
+  const secret = process.env.EVOLUTION_API_KEY ?? "";
+  if (secret) {
+    const headerKey = String(req.headers.apikey ?? req.headers["x-api-key"] ?? "");
+    if (headerKey && headerKey !== secret) {
+      res.status(401).send();
+      return;
+    }
   }
 
-  if (!barbershopId) {
-    console.warn("uazapi webhook: no barbershop found for instanceKey=", parsed.instanceKey, "- ensure connection has uazapi_instance_name or uazapi_instance_id matching webhook payload");
+  const conn = parseEvolutionConnectionUpdate(req.body);
+  if (conn) {
+    try {
+      const barbershopId = conn.instanceKey
+        ? await resolveBarbershopByInstance("evolution", conn.instanceKey)
+        : null;
+      if (barbershopId && conn.state === "connected") {
+        await persistEvolutionSocketState(barbershopId, "connected", { phone: conn.phone });
+      } else if (conn.state === "disconnected") {
+        console.info(
+          "[evolution webhook] socket close instance=%s (keepalive restores if session was paired)",
+          conn.instanceKey,
+        );
+      }
+    } catch (e) {
+      console.error("[evolution webhook] connection.update:", e);
+    }
     res.status(200).send();
     return;
   }
 
-  const canonicalPhone = canonicalizeBrPhoneDigits(parsed.fromPhone) ?? parsed.fromPhone;
-  const text = parsed.text;
-  const providerEventId = parsed.providerEventId;
+  const parsed = parseEvolutionInbound(req.body);
+
+  if (parsed.fromMe && parsed.handoffCandidate && parsed.instanceKey) {
+    try {
+      await handleFromMeHandoff({ provider: "evolution", parsed, logPrefix: "evolution webhook" });
+    } catch (e) {
+      console.error("[evolution webhook] handoff error:", e);
+    }
+    res.status(200).send();
+    return;
+  }
+
+  if (parsed.skip || !parsed.fromPhone || !parsed.providerEventId) {
+    console.info(
+      "[evolution webhook] skip instanceKey=%s fromMe=%s fromPhone=%s hasText=%s providerEventId=%s media=%s edit=%s",
+      parsed.instanceKey,
+      parsed.fromMe,
+      parsed.fromPhone ?? "(null)",
+      !!parsed.text,
+      parsed.providerEventId ?? "(null)",
+      parsed.mediaKind ?? "—",
+      parsed.editOfProviderEventId ?? "—",
+    );
+    res.status(200).send();
+    return;
+  }
 
   try {
-    const inserted = await pool.query<{ id: string }>(
-      `INSERT INTO public.whatsapp_inbound_events (barbershop_id, provider, provider_event_id, from_phone, payload, received_at)
-       VALUES ($1, 'uazapi', $2, $3, $4, now())
-       ON CONFLICT (provider, provider_event_id) DO NOTHING RETURNING id`,
-      [barbershopId, providerEventId, canonicalPhone, JSON.stringify(body)]
-    );
-    if (inserted.rows.length === 0) {
-      console.info("[uazapi webhook] duplicate providerEventId=%s skipped", providerEventId);
-      res.status(200).send();
-      return;
-    }
-
-    const optOutMatchKeys = brPhoneMatchKeys(canonicalPhone);
-    const optOutPattern = /^(parar|n[aã]o\s*quero\s*receber|cancelar\s*inscri[cç][aã]o|opt\s*out|remover|n[aã]o\s*receber\s*mais|sair\s*da\s*lista)$/i;
-    const trimmed = (text || "").trim().toLowerCase();
-    if (optOutPattern.test(trimmed) || (trimmed.includes("parar") && trimmed.length < 50)) {
-      if (canonicalPhone) {
-        const updated = await pool.query(
-          `UPDATE public.clients SET marketing_opt_out = true, updated_at = now()
-           WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])`,
-          [barbershopId, optOutMatchKeys]
-        );
-        if (updated.rowCount === 0) {
-          await pool.query(
-            `INSERT INTO public.clients (barbershop_id, name, phone, marketing_opt_out, updated_at)
-             VALUES ($1, 'Cliente', $2, true, now())
-             ON CONFLICT (barbershop_id, phone) DO UPDATE SET marketing_opt_out = true, updated_at = now()`,
-            [barbershopId, canonicalPhone]
-          );
-        }
-      }
-    }
-
-    const conv = await pool.query<{ id: string }>(
-      `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, last_message_at, updated_at)
-       VALUES ($1, 'whatsapp', $2, now(), now())
-       ON CONFLICT (barbershop_id, channel, external_thread_id)
-       DO UPDATE SET last_message_at = now(), updated_at = now()
-       RETURNING id`,
-      [barbershopId, canonicalPhone]
-    );
-    const conversationId = conv.rows[0]?.id;
-    if (!conversationId) {
-      res.status(200).send();
-      return;
-    }
-
-    await pool.query(
-      `INSERT INTO public.ai_messages (conversation_id, role, content, provider_message_id)
-       VALUES ($1, 'user', $2, $3)`,
-      [conversationId, text.slice(0, 64 * 1024), providerEventId]
-    );
-
-    const payloadJson = { fromPhone: canonicalPhone, text, providerEventId, event: body?.event };
-
-    // Sliding debounce: if there's already a queued job for this conversation,
-    // bump its run_after to give the client time to send follow-up messages.
-    // Otherwise insert a new job. The 30s window groups rapid messages into one AI turn.
-    const bumped = await pool.query<{ id: string }>(
-      `UPDATE public.ai_jobs
-       SET run_after = now() + interval '30 seconds', updated_at = now()
-       WHERE conversation_id = $1 AND status = 'queued'
-       RETURNING id`,
-      [conversationId]
-    );
-    let jobId: string | undefined;
-    if ((bumped.rowCount ?? 0) > 0) {
-      jobId = bumped.rows[0]?.id;
-      console.info("[uazapi webhook] debounced jobId=%s conversationId=%s barbershopId=%s", jobId, conversationId, barbershopId);
-    } else {
-      const jobInsert = await pool.query<{ id: string }>(
-        `INSERT INTO public.ai_jobs (barbershop_id, conversation_id, type, payload_json, status, run_after)
-         VALUES ($1, $2, 'process_inbound_message', $3, 'queued', now() + interval '30 seconds')
-         RETURNING id`,
-        [barbershopId, conversationId, JSON.stringify(payloadJson)]
+    if (parsed.instanceKey === LAB_EVOLUTION_INSTANCE) {
+      console.info(
+        "[evolution webhook] lab instance ignored instanceKey=%s fromPhone=%s",
+        parsed.instanceKey,
+        parsed.fromPhone,
       );
-      jobId = jobInsert.rows[0]?.id;
-      console.info("[uazapi webhook] enqueued jobId=%s conversationId=%s barbershopId=%s", jobId, conversationId, barbershopId);
+      res.status(200).send();
+      return;
     }
+    const barbershopId = await resolveBarbershopByInstance("evolution", parsed.instanceKey);
+    if (!barbershopId) {
+      console.warn("evolution webhook: no barbershop for instance=", parsed.instanceKey);
+      res.status(200).send();
+      return;
+    }
+    if (parsed.mediaKind === "audio" && !parsed.text && parsed.fromPhone && parsed.providerEventId) {
+      await handleInboundAudio({
+        barbershopId,
+        instanceKey: parsed.instanceKey,
+        fromPhone: parsed.fromPhone,
+        providerEventId: parsed.providerEventId,
+        payload: req.body,
+        logPrefix: "evolution webhook",
+      });
+      res.status(200).send();
+      return;
+    }
+    if (
+      (parsed.mediaKind === "image" || parsed.mediaKind === "document") &&
+      parsed.fromPhone &&
+      parsed.providerEventId
+    ) {
+      await handleInboundReceipt({
+        barbershopId,
+        instanceKey: parsed.instanceKey,
+        fromPhone: parsed.fromPhone,
+        providerEventId: parsed.providerEventId,
+        logPrefix: "evolution webhook",
+      });
+      res.status(200).send();
+      return;
+    }
+    if (parsed.editOfProviderEventId && parsed.text) {
+      await applyEditedInboundMessage({
+        provider: "evolution",
+        barbershopId,
+        fromPhone: parsed.fromPhone,
+        text: parsed.text,
+        originalProviderEventId: parsed.editOfProviderEventId,
+        providerEventId: parsed.providerEventId,
+        payload: req.body,
+        logPrefix: "evolution webhook",
+      });
+      res.status(200).send();
+      return;
+    }
+    if (!parsed.text) {
+      console.info(
+        "[evolution webhook] skip empty text instanceKey=%s fromPhone=%s",
+        parsed.instanceKey,
+        parsed.fromPhone,
+      );
+      res.status(200).send();
+      return;
+    }
+    await enqueueInboundMessage({
+      provider: "evolution",
+      barbershopId,
+      fromPhone: parsed.fromPhone,
+      text: parsed.text,
+      providerEventId: parsed.providerEventId,
+      payload: req.body,
+      eventLabel: "messages.upsert",
+      logPrefix: "evolution webhook",
+      pushName: parsed.pushName,
+    });
   } catch (e) {
-    console.error("uazapi webhook enqueue:", e);
+    console.error("evolution webhook enqueue:", e);
   }
   res.status(200).send();
 });

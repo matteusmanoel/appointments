@@ -23,7 +23,10 @@ const uazapiText = express.text({ limit: "2mb", type: "*/*" });
 // Uazapi webhook can send large payloads and sometimes with non-JSON content-type.
 // Parse it as text, then best-effort decode to JSON so `req.body` matches our handlers.
 app.use((req, res, next) => {
-  if (req.path === "/api/webhooks/uazapi" && req.method === "POST") {
+  if (
+    (req.path === "/api/webhooks/uazapi" || req.path === "/api/webhooks/evolution") &&
+    req.method === "POST"
+  ) {
     return uazapiText(req, res, () => {
       const raw = typeof (req as { body?: unknown }).body === "string" ? String((req as { body?: unknown }).body) : "";
       (req as unknown as { rawBody?: string }).rawBody = raw;
@@ -66,7 +69,11 @@ const limiter = rateLimit({
   max: 120,
   message: { error: "Too many requests" },
   standardHeaders: true,
-  skip: (req) => req.path === "/api/billing/webhook",
+  skip: (req) =>
+    req.path === "/api/billing/webhook" ||
+    req.path === "/health" ||
+    req.path === "/api/webhooks/evolution" ||
+    req.path === "/api/webhooks/uazapi",
 });
 app.use(limiter);
 

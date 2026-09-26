@@ -9,6 +9,7 @@ import {
   scheduleReminderForAppointment,
 } from "../outbound/scheduled-messages.js";
 import { updateClientMemoryFromAppointmentEvent } from "../ai/memory/client-memory.js";
+import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
 
 const statusEnum = z.enum(["pending", "confirmed", "completed", "cancelled", "no_show"]);
 const createBody = z.object({
@@ -245,6 +246,12 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
     const serviceIdsArr = snapshots.map((s) => s.service_id);
     const serviceNamesArr = snapshots.map((s) => s.name);
     res.status(201).json({ ...appointment, service_ids: serviceIdsArr, service_names: serviceNamesArr });
+    void recordAgendaChangeFromAppointment({
+      barbershopId,
+      appointmentId: appointment.id,
+      type: "appointment_created",
+      actor: "owner",
+    });
 
     barbershopHasAutomation(barbershopId).then((has) => {
       if (!has) return;
@@ -569,32 +576,39 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
     });
   }
 
+  let waitlistCandidate: unknown = null;
   if (parsed.data.status === "cancelled") {
-    const waitlistCandidate = await pool.query<{
-      id: string;
-      client_name: string | null;
-      client_phone: string;
-      desired_date: string;
-    }>(
-      `UPDATE public.appointment_waitlist
-       SET status = 'notified', updated_at = now()
-       WHERE id = (
-         SELECT w.id
-         FROM public.appointment_waitlist w
-         WHERE w.barbershop_id = $1
-           AND w.status = 'active'
-           AND w.desired_date = COALESCE($2::date, CURRENT_DATE)
-           AND ($3::uuid IS NULL OR w.barber_id IS NULL OR w.barber_id = $3::uuid)
-         ORDER BY w.created_at ASC
-         LIMIT 1
-       )
-       RETURNING id, client_name, client_phone, desired_date::text`
-      ,
-      [barbershopId, out?.scheduled_date ?? null, out?.barber_id ?? null]
-    );
-    if (waitlistCandidate.rows[0]) {
-      out.waitlist_candidate = waitlistCandidate.rows[0];
-    }
+    const recorded = await recordAgendaChangeFromAppointment({
+      barbershopId,
+      appointmentId: req.params.id,
+      type: "cancelled",
+      actor: "owner",
+    });
+    waitlistCandidate = recorded.waitlistCandidate;
+  } else if (parsed.data.status === "confirmed") {
+    void recordAgendaChangeFromAppointment({
+      barbershopId,
+      appointmentId: req.params.id,
+      type: "confirmed",
+      actor: "owner",
+    });
+  } else if (parsed.data.status === "no_show") {
+    void recordAgendaChangeFromAppointment({
+      barbershopId,
+      appointmentId: req.params.id,
+      type: "no_show",
+      actor: "owner",
+    });
+  } else if (parsed.data.scheduled_date !== undefined || parsed.data.scheduled_time !== undefined) {
+    void recordAgendaChangeFromAppointment({
+      barbershopId,
+      appointmentId: req.params.id,
+      type: "rescheduled",
+      actor: "owner",
+    });
+  }
+  if (waitlistCandidate && out) {
+    out.waitlist_candidate = waitlistCandidate;
   }
   res.json(out ?? existing.rows[0]);
 });
@@ -610,32 +624,11 @@ appointmentsRouter.delete("/:id", async (req: Request, res: Response): Promise<v
     return;
   }
   await cancelReminderForAppointment(req.params.id);
-  const deletedMeta = await pool.query<{ scheduled_date: string; barber_id: string }>(
-    "SELECT scheduled_date::text, barber_id FROM public.appointments WHERE id = $1",
-    [req.params.id]
-  );
-  const scheduledDate = deletedMeta.rows[0]?.scheduled_date ?? null;
-  const barberId = deletedMeta.rows[0]?.barber_id ?? null;
-  const waitlistCandidate = await pool.query<{
-    id: string;
-    client_name: string | null;
-    client_phone: string;
-    desired_date: string;
-  }>(
-    `UPDATE public.appointment_waitlist
-     SET status = 'notified', updated_at = now()
-     WHERE id = (
-       SELECT w.id
-       FROM public.appointment_waitlist w
-       WHERE w.barbershop_id = $1
-         AND w.status = 'active'
-         AND w.desired_date = COALESCE($2::date, CURRENT_DATE)
-         AND ($3::uuid IS NULL OR w.barber_id IS NULL OR w.barber_id = $3::uuid)
-       ORDER BY w.created_at ASC
-       LIMIT 1
-     )
-     RETURNING id, client_name, client_phone, desired_date::text`,
-    [barbershopId, scheduledDate, barberId]
-  );
-  res.json({ id: r.rows[0].id, status: "cancelled", waitlist_candidate: waitlistCandidate.rows[0] ?? null });
+  const recorded = await recordAgendaChangeFromAppointment({
+    barbershopId,
+    appointmentId: req.params.id,
+    type: "cancelled",
+    actor: "owner",
+  });
+  res.json({ id: r.rows[0].id, status: "cancelled", waitlist_candidate: recorded.waitlistCandidate });
 });

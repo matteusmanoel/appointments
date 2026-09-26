@@ -1,8 +1,15 @@
+import "../load-env.js";
 import { pool } from "../db.js";
 import { config } from "../config.js";
-import { decrypt } from "../integrations/encryption.js";
-import { sendText } from "../integrations/uazapi/client.js";
-import { runAgent, detectViolations, sanitizeClientFacingReply } from "../ai/agent.js";
+import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { confirmAssistantMessage, newBotPendingId, reserveAssistantMessage } from "../integrations/whatsapp/bot-pending.js";
+import { bumpOrEnqueueJob } from "../integrations/whatsapp/inbound.js";
+import {
+  clampInboundQuietSeconds,
+  shouldDropReplyBecauseTurnGrew,
+} from "../integrations/whatsapp/inbound-turn.js";
+import { runAgent, detectViolations, sanitizeClientFacingReply, containsAiExposure } from "../ai/agent.js";
+import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
@@ -11,10 +18,9 @@ import OpenAI from "openai";
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
 const POLL_MS = 1500;
 const OUTBOUND_INTERVAL_MS = 20_000;
-const FALLBACK_MESSAGE =
-  "Desculpe, o atendimento automático está temporariamente indisponível. Tente novamente em instantes ou entre em contato diretamente.";
+const FALLBACK_MESSAGE = "";
 
-const MAX_EMOJIS_PER_MESSAGE = 2;
+const MAX_EMOJIS_PER_MESSAGE = 4;
 
 function isUndefinedTableOrColumn(e: unknown): boolean {
   const code = (e as { code?: string })?.code;
@@ -76,9 +82,9 @@ function sanitizeOutgoingText(text: string): string {
   return out;
 }
 
-function isPermanentUazapiSendError(message: string): boolean {
+function isPermanentSendError(message: string): boolean {
   const m = (message ?? "").toLowerCase();
-  return m.includes("is not on whatsapp") || m.includes("not on whatsapp");
+  return m.includes("is not on whatsapp") || m.includes("not on whatsapp") || m.includes("exists: false");
 }
 
 async function getNextJob(): Promise<{
@@ -87,7 +93,15 @@ async function getNextJob(): Promise<{
   conversation_id: string;
   payload_json: { fromPhone: string; text: string; provider_event_id?: string };
   attempts: number;
+  locked_at: Date | null;
 } | null> {
+  const quietSecs = clampInboundQuietSeconds(config.aiInboundQuietSeconds);
+  const quietPredicate = `
+        AND (
+          SELECT coalesce(max(m.created_at), '-infinity'::timestamptz)
+          FROM public.ai_messages m
+          WHERE m.conversation_id = j.conversation_id AND m.role = 'user'
+        ) <= now() - make_interval(secs => $2::int)`;
   const primarySql = `UPDATE public.ai_jobs
      SET status = 'processing', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
      WHERE id = (
@@ -95,6 +109,7 @@ async function getNextJob(): Promise<{
       FROM public.ai_jobs j
       WHERE j.status = 'queued'
         AND j.run_after <= now()
+        ${quietPredicate}
         AND NOT EXISTS (
           SELECT 1
           FROM public.barbershop_ai_runtime r
@@ -111,7 +126,7 @@ async function getNextJob(): Promise<{
       LIMIT 1
       FOR UPDATE SKIP LOCKED
      )
-     RETURNING id, barbershop_id, conversation_id, payload_json, attempts`;
+     RETURNING id, barbershop_id, conversation_id, payload_json, attempts, locked_at`;
   const fallbackSql = `UPDATE public.ai_jobs
      SET status = 'processing', locked_at = now(), locked_by = $1, attempts = attempts + 1, updated_at = now()
      WHERE id = (
@@ -119,6 +134,7 @@ async function getNextJob(): Promise<{
       FROM public.ai_jobs j
       WHERE j.status = 'queued'
         AND j.run_after <= now()
+        ${quietPredicate}
         AND NOT EXISTS (
           SELECT 1
           FROM public.barbershop_ai_runtime r
@@ -129,7 +145,7 @@ async function getNextJob(): Promise<{
       LIMIT 1
       FOR UPDATE SKIP LOCKED
      )
-     RETURNING id, barbershop_id, conversation_id, payload_json, attempts`;
+     RETURNING id, barbershop_id, conversation_id, payload_json, attempts, locked_at`;
   let r;
   try {
     r = await pool.query<{
@@ -138,16 +154,23 @@ async function getNextJob(): Promise<{
     conversation_id: string;
     payload_json: unknown;
     attempts: number;
-    }>(primarySql, [WORKER_ID]);
+    locked_at: Date | null;
+    }>(primarySql, [WORKER_ID, quietSecs]);
   } catch (e) {
     if (!isUndefinedTableOrColumn(e)) throw e;
-    r = await pool.query<{
-      id: string;
-      barbershop_id: string;
-      conversation_id: string;
-      payload_json: unknown;
-      attempts: number;
-    }>(fallbackSql, [WORKER_ID]);
+    try {
+      r = await pool.query<{
+        id: string;
+        barbershop_id: string;
+        conversation_id: string;
+        payload_json: unknown;
+        attempts: number;
+        locked_at: Date | null;
+      }>(fallbackSql, [WORKER_ID, quietSecs]);
+    } catch (e2) {
+      if (!isUndefinedTableOrColumn(e2)) throw e2;
+      return null;
+    }
   }
   const row = r.rows[0];
   if (!row) return null;
@@ -162,6 +185,7 @@ async function getNextJob(): Promise<{
       provider_event_id: payload?.provider_event_id,
     },
     attempts: row.attempts,
+    locked_at: row.locked_at ?? null,
   };
 }
 
@@ -304,40 +328,11 @@ async function ensureAiSettingsRow(barbershopId: string): Promise<void> {
   );
 }
 
-/** Prefer connected; if status is stale (e.g. not yet updated after QR scan), still try token so send can succeed. */
-async function getUazapiToken(barbershopId: string): Promise<string | null> {
-  const r = await pool.query<{ uazapi_instance_token_encrypted: string }>(
-    `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
-     WHERE barbershop_id = $1 AND provider = 'uazapi' AND uazapi_instance_token_encrypted IS NOT NULL`,
-    [barbershopId]
-  );
-  const row = r.rows[0];
-  if (!row?.uazapi_instance_token_encrypted || !config.appEncryptionKey) return null;
-  return decrypt(row.uazapi_instance_token_encrypted, config.appEncryptionKey);
-}
-
 async function updateConversationLastMessage(conversationId: string): Promise<void> {
   await pool.query(
     `UPDATE public.ai_conversations SET last_message_at = now(), updated_at = now() WHERE id = $1`,
     [conversationId]
   );
-}
-
-function extractProviderMessageId(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const any = payload as Record<string, unknown>;
-  const candidates = [
-    any.id,
-    any.messageId,
-    any.message_id,
-    any.msgId,
-    any.key && typeof any.key === "object" ? (any.key as Record<string, unknown>).id : null,
-  ];
-  for (const c of candidates) {
-    if (typeof c === "string" && c.trim()) return c.trim();
-    if (typeof c === "number") return String(c);
-  }
-  return null;
 }
 
 async function processOneJob(): Promise<boolean> {
@@ -390,8 +385,7 @@ async function processOneJob(): Promise<boolean> {
       const usage = await getUsageAndLimit(barbershopId);
       if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
-        reply =
-          "No momento estamos com alta demanda por aqui. Um atendente da equipe te responde em instantes, combinado?";
+        reply = "";
       } else {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
@@ -416,22 +410,25 @@ async function processOneJob(): Promise<boolean> {
       // Safety net: if the reply claims the booking was confirmed but the agent never
       // set a state that proves a real DB write, the model may have hallucinated.
       const FALSE_CONFIRMATION_RE =
-        /agendamento\s+confirmado|aguardamos\s+você\b|está\s+(marcado|agendado|confirmado)\b|\bconfirmei\s+(o|seu|a\s+sua?)\s+(agendamento|remarca[cç][aã]o|horário)\b/i;
+        /agendamento\s+(foi\s+)?confirmado|aguardamos\s+você\b|está\s+(marcado|agendado|confirmado)\b|\bconfirmei\s+(o|seu|a\s+sua?)\s+(agendamento|remarca[cç][aã]o|horário)\b|n[aã]o\s+consegui\s+validar|atendente\s+confere/i;
       const REAL_CONFIRMATION_STATES = new Set<string>([
         "appointment_created",
         "appointment_rescheduled",
         "appointment_cancelled",
+        "appointment_confirmed",
         "plan_subscribed",
       ]);
-      if (FALSE_CONFIRMATION_RE.test(reply) && !REAL_CONFIRMATION_STATES.has(result.state ?? "")) {
+      if (
+        (FALSE_CONFIRMATION_RE.test(reply) || containsAiExposure(reply)) &&
+        !REAL_CONFIRMATION_STATES.has(result.state ?? "")
+      ) {
         console.warn(
           "[ai-worker] jobId=%s suppressed hallucinated booking confirmation (state=%s) conversationId=%s",
           jobId,
           result.state ?? "—",
           conversationId
         );
-        reply =
-          "Não consegui validar essa confirmação aqui no sistema. Um atendente confere pra você em instantes, combinado?";
+        reply = "";
       }
       if (!isSandbox && reply) {
         const violations = detectViolations(reply);
@@ -453,8 +450,39 @@ async function processOneJob(): Promise<boolean> {
       }
     }
 
-    const token = await getUazapiToken(barbershopId);
-    if (token) {
+    const session = await getWhatsAppOrNull(barbershopId);
+    if (session) {
+      const lastUserRow = await pool.query<{ last_user_at: Date | null }>(
+        `SELECT max(created_at) AS last_user_at
+         FROM public.ai_messages
+         WHERE conversation_id = $1 AND role = 'user'`,
+        [conversationId],
+      );
+      const lastUserAt = lastUserRow.rows[0]?.last_user_at;
+      const lockedAt = job.locked_at;
+      if (
+        lastUserAt &&
+        lockedAt &&
+        shouldDropReplyBecauseTurnGrew({
+          latestUserAtMs: new Date(lastUserAt).getTime(),
+          jobLockedAtMs: new Date(lockedAt).getTime(),
+        })
+      ) {
+        console.info(
+          "[ai-worker] jobId=%s dropped half-turn reply conversationId=%s",
+          jobId,
+          conversationId,
+        );
+        await markJobDone(jobId);
+        await bumpOrEnqueueJob({
+          barbershopId,
+          conversationId,
+          fromPhone,
+          text: String(userTextFromJob ?? ""),
+          logPrefix: "ai-worker",
+        });
+        return true;
+      }
       let typingSimulation: { enabled?: boolean; baseDelayMs?: number; msPerChar?: number; jitterMs?: number } | null = null;
       try {
         const tsRow = await pool.query<{ typing_simulation: unknown }>(
@@ -472,42 +500,41 @@ async function processOneJob(): Promise<boolean> {
       const msPerChar = typingSimulation?.enabled ? (typingSimulation.msPerChar ?? 20) : 0;
       const jitterMs = typingSimulation?.enabled ? (typingSimulation.jitterMs ?? 100) : 0;
 
-      // Allow the model to send multiple WhatsApp messages using a delimiter.
-      // Empty reply means human handoff — do not send any message.
-      const parts = String(reply ?? "")
-        .split("[[MSG]]")
-        .map((p) => sanitizeOutgoingText(p))
-        .filter((p) => p.length > 0);
+      const parts = splitOutgoingBubbles(String(reply ?? ""))
+        .map((p) => stripTrailingBubblePeriod(sanitizeOutgoingText(p)))
+        .filter((p) => p.length > 0)
+        .slice(0, 3);
       if (!parts.length) {
         console.info("[ai-worker] jobId=%s empty reply, skipping send (human handoff)", jobId);
         await updateConversationLastMessage(conversationId);
         await markJobDone(jobId);
         return true;
       }
-      const toSend = parts;
-      for (const part of toSend) {
+      for (const part of parts) {
         if (baseDelayMs > 0 || msPerChar > 0) {
           const delay = baseDelayMs + part.length * msPerChar + (jitterMs > 0 ? Math.floor(Math.random() * jitterMs) : 0);
           if (delay > 0) await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
         }
+        const pendingId = newBotPendingId();
+        await reserveAssistantMessage({ conversationId, content: part, pendingId });
         try {
-          const sent = await sendText({ token, number: fromPhone, text: part });
-          const providerMessageId = extractProviderMessageId(sent);
-          await pool.query(
-            `INSERT INTO public.ai_messages (conversation_id, role, content, provider_message_id, delivery_status)
-             VALUES ($1, 'assistant', $2, $3, 'sent')`,
-            [conversationId, part, providerMessageId]
-          );
+          const sent = await session.sendText(fromPhone, part);
+          await confirmAssistantMessage({
+            conversationId,
+            pendingId,
+            providerMessageId: sent.providerMessageId,
+            deliveryStatus: "sent",
+          });
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
-          if (isPermanentUazapiSendError(errMsg)) {
+          await confirmAssistantMessage({
+            conversationId,
+            pendingId,
+            providerMessageId: null,
+            deliveryStatus: "failed",
+          }).catch(() => {});
+          if (isPermanentSendError(errMsg)) {
             console.warn("[ai-worker] jobId=%s permanent delivery failure: %s", jobId, errMsg);
-            // Persist the attempted message as failed, and route to human followup (do not retry job).
-            await pool.query(
-              `INSERT INTO public.ai_messages (conversation_id, role, content, delivery_status)
-               VALUES ($1, 'assistant', $2, 'failed')`,
-              [conversationId, part]
-            ).catch(() => {});
             try {
               await pool.query(
                 `UPDATE public.ai_conversations SET needs_human_followup = true, updated_at = now() WHERE id = $1`,
@@ -530,7 +557,7 @@ async function processOneJob(): Promise<boolean> {
       }
       console.info("[ai-worker] jobId=%s sent to fromPhone=%s", jobId, fromPhone);
     } else {
-      console.warn("[ai-worker] jobId=%s no Uazapi token (status may not be connected) barbershopId=%s", jobId, barbershopId);
+      console.warn("[ai-worker] jobId=%s WhatsApp not connected barbershopId=%s", jobId, barbershopId);
     }
     await updateConversationLastMessage(conversationId);
     await markJobDone(jobId);

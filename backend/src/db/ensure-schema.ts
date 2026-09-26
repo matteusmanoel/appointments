@@ -48,6 +48,12 @@ export async function ensureCriticalSchema(): Promise<void> {
        ADD COLUMN IF NOT EXISTS selected_barbershop_id uuid`
     )
     .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE public.ai_conversation_runtime
+       ADD COLUMN IF NOT EXISTS booking_draft jsonb`
+    )
+    .catch(() => {});
 
   await pool
     .query(
@@ -155,7 +161,10 @@ export async function ensureCriticalSchema(): Promise<void> {
     .query(
       `ALTER TABLE public.barbershops
        ADD COLUMN IF NOT EXISTS latitude double precision,
-       ADD COLUMN IF NOT EXISTS longitude double precision`,
+       ADD COLUMN IF NOT EXISTS longitude double precision,
+       ADD COLUMN IF NOT EXISTS pix_key text,
+       ADD COLUMN IF NOT EXISTS pix_holder_name text,
+       ADD COLUMN IF NOT EXISTS pix_key_type text`,
     )
     .catch((e) => {
       if (!isUndefinedTableOrColumn(e)) throw e;
@@ -165,6 +174,92 @@ export async function ensureCriticalSchema(): Promise<void> {
     .query(
       `ALTER TABLE public.barbershop_ai_settings
        ADD COLUMN IF NOT EXISTS n8n_chat_webhook_url text`
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
+
+  await pool
+    .query(
+      `ALTER TABLE public.barbershop_whatsapp_connections
+       ADD COLUMN IF NOT EXISTS evolution_instance_name text`
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
+
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.agenda_activity (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        barbershop_id uuid NOT NULL REFERENCES public.barbershops(id) ON DELETE CASCADE,
+        appointment_id uuid REFERENCES public.appointments(id) ON DELETE SET NULL,
+        conversation_id uuid REFERENCES public.ai_conversations(id) ON DELETE SET NULL,
+        type text NOT NULL,
+        actor text NOT NULL,
+        client_name text,
+        client_phone text,
+        scheduled_date date,
+        scheduled_time time,
+        summary text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`
+    )
+    .catch(() => {});
+
+  await pool
+    .query(
+      `CREATE INDEX IF NOT EXISTS agenda_activity_barbershop_created_idx
+       ON public.agenda_activity (barbershop_id, created_at DESC)`
+    )
+    .catch(() => {});
+
+  await pool
+    .query(`ALTER TABLE public.appointment_waitlist ADD COLUMN IF NOT EXISTS desired_time time`)
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
+
+  await pool
+    .query(
+      `CREATE INDEX IF NOT EXISTS appointment_waitlist_clock_idx
+       ON public.appointment_waitlist (barbershop_id, desired_date, desired_time, status)`,
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
+
+  await pool
+    .query(`ALTER TABLE public.agenda_activity DROP CONSTRAINT IF EXISTS agenda_activity_type_check`)
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e)) throw e;
+    });
+
+  await pool
+    .query(
+      `ALTER TABLE public.agenda_activity ADD CONSTRAINT agenda_activity_type_check
+       CHECK (type IN (
+         'appointment_created',
+         'rescheduled',
+         'cancelled',
+         'confirmed',
+         'reminder_sent',
+         'waitlist_offered',
+         'no_show',
+         'payment_recognized',
+         'conversation_started'
+       ))`,
+    )
+    .catch((e) => {
+      if (!isUndefinedTableOrColumn(e) && (e as { code?: string }).code !== "42710") throw e;
+    });
+
+  await pool
+    .query(
+      `ALTER TABLE public.clients
+       ADD COLUMN IF NOT EXISTS photo_url text,
+       ADD COLUMN IF NOT EXISTS whatsapp_contact_name text,
+       ADD COLUMN IF NOT EXISTS name_confirmed boolean NOT NULL DEFAULT true`,
     )
     .catch((e) => {
       if (!isUndefinedTableOrColumn(e)) throw e;

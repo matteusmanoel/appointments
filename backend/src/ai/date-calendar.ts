@@ -59,6 +59,50 @@ export function nextDateForWeekday(fromIso: string, targetDow: number): string {
   return addDaysIso(fromIso, delta === 0 ? 7 : delta);
 }
 
+export function shopWindowOnIso(
+  iso: string,
+  businessHours: Record<string, { start?: string; end?: string } | null | undefined> | null | undefined,
+): { start: string | null; end: string | null } {
+  const day = businessHours?.[weekdayKeyFromIso(iso)];
+  if (!day || typeof day !== "object") return { start: null, end: null };
+  const start = String(day.start ?? "").slice(0, 5);
+  const end = String(day.end ?? "").slice(0, 5);
+  return {
+    start: /^\d{2}:\d{2}$/.test(start) ? start : null,
+    end: /^\d{2}:\d{2}$/.test(end) ? end : null,
+  };
+}
+
+/**
+ * Bare clock "às 6" is 06:00. When that hour is before opening and +12h still fits
+ * the same day, read it as afternoon (18:00). "da manhã" keeps the morning hour.
+ */
+export function alignSpokenHour(
+  text: string,
+  timeHHmm: string,
+  opensAt: string | null,
+  closesAt: string | null,
+): string {
+  if (!/^\d{2}:\d{2}$/.test(timeHHmm)) return timeHHmm;
+  const folded = (text ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (/\b(da|de) manha\b|\bcedo\b/.test(folded)) return timeHHmm;
+  const hour = parseInt(timeHHmm.slice(0, 2), 10);
+  const minute = timeHHmm.slice(3, 5);
+  if (hour >= 12) return timeHHmm;
+  const evening = /\b(da tarde|da noite|de noite|a noite)\b/.test(folded);
+  const opensH = opensAt ? parseInt(opensAt.slice(0, 2), 10) : null;
+  const closesH = closesAt ? parseInt(closesAt.slice(0, 2), 10) : null;
+  const beforeOpening = opensH != null && hour < opensH;
+  if (!evening && !beforeOpening) return timeHHmm;
+  const shifted = hour + 12;
+  if (shifted > 23) return timeHHmm;
+  if (closesH != null && shifted > closesH) return timeHHmm;
+  return `${String(shifted).padStart(2, "0")}:${minute}`;
+}
+
 export function shopOpensOnIso(
   iso: string,
   businessHours: Record<string, { start?: string; end?: string } | null | undefined> | null | undefined,
@@ -68,6 +112,40 @@ export function shopOpensOnIso(
   const s = String(day.start ?? "").slice(0, 5);
   const e = String(day.end ?? "").slice(0, 5);
   return Boolean(s && e);
+}
+
+export type ShopOpenStatus =
+  | { open: true; closesAt: string }
+  | { open: false; closedAt: string | null; nextOpenDate: string | null; nextOpenWeekdayPt: string | null; nextOpensAt: string | null };
+
+/**
+ * Whether the shop is open *right now*, computed from the configured hours — so the agent
+ * never has to infer "are we open" from a raw schedule table (it gets this wrong near closing).
+ */
+export function shopOpenStatusNow(params: {
+  todayIso: string;
+  nowHHmm: string;
+  businessHours: Record<string, { start?: string; end?: string } | null | undefined> | null | undefined;
+}): ShopOpenStatus {
+  const today = params.businessHours?.[weekdayKeyFromIso(params.todayIso)];
+  const start = today && typeof today === "object" ? String(today.start ?? "").slice(0, 5) : "";
+  const end = today && typeof today === "object" ? String(today.end ?? "").slice(0, 5) : "";
+  const now = params.nowHHmm.slice(0, 5);
+
+  if (start && end && now >= start && now < end) {
+    return { open: true, closesAt: end };
+  }
+
+  const next = nextOpenIso(params.todayIso, params.businessHours);
+  const nextDay = next ? params.businessHours?.[weekdayKeyFromIso(next)] : null;
+  const nextStart = nextDay && typeof nextDay === "object" ? String(nextDay.start ?? "").slice(0, 5) : "";
+  return {
+    open: false,
+    closedAt: end || null,
+    nextOpenDate: next,
+    nextOpenWeekdayPt: next ? weekdayPtFromIso(next) : null,
+    nextOpensAt: nextStart || null,
+  };
 }
 
 export function nextOpenIso(

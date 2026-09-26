@@ -486,5 +486,1645 @@
       "judgeEnabled": false,
       "totalScenarios": 57
     }
+  },
+  {
+    "runId": "82408192-a3fc-44dd-b628-61935c910587",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T09:31:19.047Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/82408192-a3fc-44dd-b628-61935c910587.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 6,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 23429,
+      "avgTokensPerScenario": 3904.83,
+      "avgElapsedMsPerScenario": 2548.83,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "82408192-a3fc-44dd-b628-61935c910587",
+      "runAt": "2026-09-21T09:31:02.340Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 6
+    }
+  },
+  {
+    "runId": "ede11dbe-3a7b-4b60-ab75-ce1e58f187f7",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T09:33:16.522Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/ede11dbe-3a7b-4b60-ab75-ce1e58f187f7.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 2,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 12023,
+      "avgTokensPerScenario": 6011.5,
+      "avgElapsedMsPerScenario": 3871.5,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "ede11dbe-3a7b-4b60-ab75-ce1e58f187f7",
+      "runAt": "2026-09-21T09:33:08.238Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 2
+    }
+  },
+  {
+    "runId": "f2b637ba-8177-4567-ba73-d338b51ab5dd",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T20:51:09.643Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/f2b637ba-8177-4567-ba73-d338b51ab5dd.json",
+    "summary": {
+      "avgScore": 99.21,
+      "minScore": 71,
+      "maxScore": 100,
+      "passedScenarios": 68,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 24,
+      "criticalViolations": 0,
+      "mediumViolations": 24,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.94,
+      "totalTokens": 186230,
+      "avgTokensPerScenario": 2738.68,
+      "avgElapsedMsPerScenario": 1263.99,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 17
+        },
+        {
+          "type": "loop_detected",
+          "count": 6
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "f2b637ba-8177-4567-ba73-d338b51ab5dd",
+      "runAt": "2026-09-21T20:49:28.873Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 68
+    }
+  },
+  {
+    "runId": "0696ce44-4546-4cc7-b147-f1144c30823e",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T21:04:02.807Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/0696ce44-4546-4cc7-b147-f1144c30823e.json",
+    "summary": {
+      "avgScore": 99.91,
+      "minScore": 97,
+      "maxScore": 100,
+      "passedScenarios": 32,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 9,
+      "criticalViolations": 0,
+      "mediumViolations": 9,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.97,
+      "totalTokens": 131008,
+      "avgTokensPerScenario": 4094,
+      "avgElapsedMsPerScenario": 4954.5,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 4
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 3
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "ignored_context",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "0696ce44-4546-4cc7-b147-f1144c30823e",
+      "runAt": "2026-09-21T21:01:15.750Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 32
+    }
+  },
+  {
+    "runId": "27d02885-be26-4b98-b54d-d5bcb91df2f4",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T21:07:02.253Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/27d02885-be26-4b98-b54d-d5bcb91df2f4.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 16,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 4,
+      "criticalViolations": 0,
+      "mediumViolations": 4,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 6274,
+      "avgTokensPerScenario": 392.13,
+      "avgElapsedMsPerScenario": 563.25,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 2
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "27d02885-be26-4b98-b54d-d5bcb91df2f4",
+      "runAt": "2026-09-21T21:06:49.237Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 16
+    }
+  },
+  {
+    "runId": "cd0f3721-9b62-4eb7-813c-48fb6f82ab91",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T21:08:20.778Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/cd0f3721-9b62-4eb7-813c-48fb6f82ab91.json",
+    "summary": {
+      "avgScore": 98.67,
+      "minScore": 92,
+      "maxScore": 100,
+      "passedScenarios": 6,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.83,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 548,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "cd0f3721-9b62-4eb7-813c-48fb6f82ab91",
+      "runAt": "2026-09-21T21:08:15.260Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 6
+    }
+  },
+  {
+    "runId": "90f75588-4922-4798-beaf-dece189f6d82",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T21:10:09.681Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/90f75588-4922-4798-beaf-dece189f6d82.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 68,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 3,
+      "criticalViolations": 0,
+      "mediumViolations": 3,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 92946,
+      "avgTokensPerScenario": 1366.85,
+      "avgElapsedMsPerScenario": 1045.51,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "90f75588-4922-4798-beaf-dece189f6d82",
+      "runAt": "2026-09-21T21:08:41.524Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 68
+    }
+  },
+  {
+    "runId": "11a64406-34af-4367-8f5a-4c6299d4ddab",
+    "tag": "candidate",
+    "savedAt": "2026-09-21T21:12:08.615Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/11a64406-34af-4367-8f5a-4c6299d4ddab.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 3,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 12808,
+      "avgTokensPerScenario": 4269.33,
+      "avgElapsedMsPerScenario": 3227.33,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "11a64406-34af-4367-8f5a-4c6299d4ddab",
+      "runAt": "2026-09-21T21:11:57.706Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 3
+    }
+  },
+  {
+    "runId": "e86ef597-2acd-42f4-b48b-104da3ffafcb",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T00:57:31.608Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/e86ef597-2acd-42f4-b48b-104da3ffafcb.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 12,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 37347,
+      "avgTokensPerScenario": 3112.25,
+      "avgElapsedMsPerScenario": 1692.83,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "e86ef597-2acd-42f4-b48b-104da3ffafcb",
+      "runAt": "2026-09-22T00:57:08.610Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 12
+    }
+  },
+  {
+    "runId": "40374447-c032-4b13-ac04-b468801e49f0",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:01:52.170Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/40374447-c032-4b13-ac04-b468801e49f0.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 12,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 37426,
+      "avgTokensPerScenario": 3118.83,
+      "avgElapsedMsPerScenario": 1634.67,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "40374447-c032-4b13-ac04-b468801e49f0",
+      "runAt": "2026-09-22T01:01:30.002Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 12
+    }
+  },
+  {
+    "runId": "c508ad1c-a42f-48a3-a6eb-983e85fe8a6d",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:03:54.538Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/c508ad1c-a42f-48a3-a6eb-983e85fe8a6d.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 1,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 154,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "c508ad1c-a42f-48a3-a6eb-983e85fe8a6d",
+      "runAt": "2026-09-22T01:03:54.090Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 1
+    }
+  },
+  {
+    "runId": "7f1ea32c-9a1a-4007-b778-52a578c2a6f2",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:04:05.692Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/7f1ea32c-9a1a-4007-b778-52a578c2a6f2.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 1,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 112,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "7f1ea32c-9a1a-4007-b778-52a578c2a6f2",
+      "runAt": "2026-09-22T01:04:05.272Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 1
+    }
+  },
+  {
+    "runId": "163f6272-2703-4b1e-b394-a29c5eaf2ea5",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:08:38.125Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/163f6272-2703-4b1e-b394-a29c5eaf2ea5.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 12,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 37382,
+      "avgTokensPerScenario": 3115.17,
+      "avgElapsedMsPerScenario": 1646.08,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "163f6272-2703-4b1e-b394-a29c5eaf2ea5",
+      "runAt": "2026-09-22T01:08:15.827Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 12
+    }
+  },
+  {
+    "runId": "1712a687-903d-4f9e-9a67-37a8f55770b1",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:09:55.212Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/1712a687-903d-4f9e-9a67-37a8f55770b1.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 68,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 122680,
+      "avgTokensPerScenario": 1804.12,
+      "avgElapsedMsPerScenario": 678.78,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "1712a687-903d-4f9e-9a67-37a8f55770b1",
+      "runAt": "2026-09-22T01:08:54.675Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 68
+    }
+  },
+  {
+    "runId": "9b23fd2d-8d7c-4ca6-a820-a8b3499710c8",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:26:25.017Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/9b23fd2d-8d7c-4ca6-a820-a8b3499710c8.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 68,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 123216,
+      "avgTokensPerScenario": 1812,
+      "avgElapsedMsPerScenario": 880.28,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "9b23fd2d-8d7c-4ca6-a820-a8b3499710c8",
+      "runAt": "2026-09-22T01:25:11.081Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 68
+    }
+  },
+  {
+    "runId": "9f61fb2f-316c-4fe4-8361-48373a529fa7",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:27:59.402Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/9f61fb2f-316c-4fe4-8361-48373a529fa7.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 68,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 121737,
+      "avgTokensPerScenario": 1790.25,
+      "avgElapsedMsPerScenario": 764.41,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "9f61fb2f-316c-4fe4-8361-48373a529fa7",
+      "runAt": "2026-09-22T01:26:53.336Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 68
+    }
+  },
+  {
+    "runId": "13cc0d99-e73d-491c-9074-3b1bdc53db72",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T01:32:58.782Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/13cc0d99-e73d-491c-9074-3b1bdc53db72.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 68,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 123233,
+      "avgTokensPerScenario": 1812.25,
+      "avgElapsedMsPerScenario": 768.4,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "13cc0d99-e73d-491c-9074-3b1bdc53db72",
+      "runAt": "2026-09-22T01:31:52.491Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 68
+    }
+  },
+  {
+    "runId": "cdb4e655-66f2-4d30-85be-c33a046fd930",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T02:56:57.264Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/cdb4e655-66f2-4d30-85be-c33a046fd930.json",
+    "summary": {
+      "avgScore": 99.33,
+      "minScore": 92,
+      "maxScore": 100,
+      "passedScenarios": 12,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.92,
+      "totalTokens": 38849,
+      "avgTokensPerScenario": 3237.42,
+      "avgElapsedMsPerScenario": 1375,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 2
+        }
+      ]
+    },
+    "meta": {
+      "runId": "cdb4e655-66f2-4d30-85be-c33a046fd930",
+      "runAt": "2026-09-22T02:56:38.166Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 12
+    }
+  },
+  {
+    "runId": "c899c319-5968-4c43-b6cb-e5480b8dac9d",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T02:57:54.347Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/c899c319-5968-4c43-b6cb-e5480b8dac9d.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 8,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 28143,
+      "avgTokensPerScenario": 3517.88,
+      "avgElapsedMsPerScenario": 1693.13,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "c899c319-5968-4c43-b6cb-e5480b8dac9d",
+      "runAt": "2026-09-22T02:57:39.071Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 8
+    }
+  },
+  {
+    "runId": "7f5ae96e-17a6-47e8-8b05-0c307790f650",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T02:58:40.995Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/7f5ae96e-17a6-47e8-8b05-0c307790f650.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 1,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 13859,
+      "avgTokensPerScenario": 13859,
+      "avgElapsedMsPerScenario": 7626,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "7f5ae96e-17a6-47e8-8b05-0c307790f650",
+      "runAt": "2026-09-22T02:58:33.022Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 1
+    }
+  },
+  {
+    "runId": "d4e538d6-d1de-4214-948a-74fe606cbeec",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T02:59:12.095Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/d4e538d6-d1de-4214-948a-74fe606cbeec.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 1,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 283,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "d4e538d6-d1de-4214-948a-74fe606cbeec",
+      "runAt": "2026-09-22T02:59:11.504Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 1
+    }
+  },
+  {
+    "runId": "6c9b1807-3f5b-4e51-a475-1dfda5675c91",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T02:59:32.079Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/6c9b1807-3f5b-4e51-a475-1dfda5675c91.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 8,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 26398,
+      "avgTokensPerScenario": 3299.75,
+      "avgElapsedMsPerScenario": 1383.25,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "6c9b1807-3f5b-4e51-a475-1dfda5675c91",
+      "runAt": "2026-09-22T02:59:19.271Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 8
+    }
+  },
+  {
+    "runId": "d11ea222-0b49-4ca4-a619-3602257c0665",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T03:00:39.970Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/d11ea222-0b49-4ca4-a619-3602257c0665.json",
+    "summary": {
+      "avgScore": 92.75,
+      "minScore": 0,
+      "maxScore": 100,
+      "passedScenarios": 64,
+      "failedScenarios": 5,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.93,
+      "totalTokens": 141292,
+      "avgTokensPerScenario": 2047.71,
+      "avgElapsedMsPerScenario": 625.97,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "d11ea222-0b49-4ca4-a619-3602257c0665",
+      "runAt": "2026-09-22T02:59:41.917Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 69
+    }
+  },
+  {
+    "runId": "3b64eddf-af8b-4aac-bde1-465a75b91f64",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T03:02:48.928Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/3b64eddf-af8b-4aac-bde1-465a75b91f64.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 69,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "totalTokens": 148955,
+      "avgTokensPerScenario": 2158.77,
+      "avgElapsedMsPerScenario": 673.38,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "3b64eddf-af8b-4aac-bde1-465a75b91f64",
+      "runAt": "2026-09-22T03:01:48.131Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 69
+    }
+  },
+  {
+    "runId": "3f6cecad-3986-4691-a102-e1f1b5638527",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T03:03:31.624Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/3f6cecad-3986-4691-a102-e1f1b5638527.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 3,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.67,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 125.67,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "3f6cecad-3986-4691-a102-e1f1b5638527",
+      "runAt": "2026-09-22T03:03:30.559Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 3
+    }
+  },
+  {
+    "runId": "dc2b7c72-8a9f-4e28-9453-049220ab135f",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T03:04:45.807Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/dc2b7c72-8a9f-4e28-9453-049220ab135f.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 69,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.99,
+      "totalTokens": 150274,
+      "avgTokensPerScenario": 2177.88,
+      "avgElapsedMsPerScenario": 802.74,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "dc2b7c72-8a9f-4e28-9453-049220ab135f",
+      "runAt": "2026-09-22T03:03:36.144Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 69
+    }
+  },
+  {
+    "runId": "7449148f-dce7-4785-921a-43f54fe1bb3e",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T03:43:15.375Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/7449148f-dce7-4785-921a-43f54fe1bb3e.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 69,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.97,
+      "totalTokens": 111882,
+      "avgTokensPerScenario": 1621.48,
+      "avgElapsedMsPerScenario": 648.1,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "7449148f-dce7-4785-921a-43f54fe1bb3e",
+      "runAt": "2026-09-22T03:42:15.015Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 69
+    }
+  },
+  {
+    "runId": "5aaf5a6b-d02e-4b24-808b-948027306939",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T03:45:40.334Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/5aaf5a6b-d02e-4b24-808b-948027306939.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 69,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.97,
+      "totalTokens": 117618,
+      "avgTokensPerScenario": 1704.61,
+      "avgElapsedMsPerScenario": 557.99,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "5aaf5a6b-d02e-4b24-808b-948027306939",
+      "runAt": "2026-09-22T03:44:46.776Z",
+      "mode": "live",
+      "judgeEnabled": false,
+      "totalScenarios": 69
+    }
+  },
+  {
+    "runId": "31486162-fa94-4fc4-a7a4-a62c3cfa3ea1",
+    "tag": "candidate",
+    "savedAt": "2026-09-22T15:19:02.606Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/31486162-fa94-4fc4-a7a4-a62c3cfa3ea1.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 71,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 3,
+      "criticalViolations": 0,
+      "mediumViolations": 2,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.97,
+      "avgJudgeScore": 75.34,
+      "totalTokens": 152662,
+      "avgTokensPerScenario": 2150.17,
+      "avgElapsedMsPerScenario": 1228.07,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "31486162-fa94-4fc4-a7a4-a62c3cfa3ea1",
+      "runAt": "2026-09-22T15:14:39.907Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 71
+    }
+  },
+  {
+    "runId": "3fe46f16-319f-4188-bb8b-9f3ea71c4358",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T15:31:11.694Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/3fe46f16-319f-4188-bb8b-9f3ea71c4358.json",
+    "summary": {
+      "avgScore": 99.1,
+      "minScore": 84,
+      "maxScore": 100,
+      "passedScenarios": 71,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 46,
+      "criticalViolations": 0,
+      "mediumViolations": 46,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.94,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 24
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 22
+        }
+      ]
+    },
+    "meta": {
+      "runId": "3fe46f16-319f-4188-bb8b-9f3ea71c4358",
+      "runAt": "2026-09-23T15:31:11.247Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 71
+    }
+  },
+  {
+    "runId": "aec42cfe-a585-44be-8432-a88fef88b0d3",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T18:59:48.594Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/aec42cfe-a585-44be-8432-a88fef88b0d3.json",
+    "summary": {
+      "avgScore": 99.12,
+      "minScore": 84,
+      "maxScore": 100,
+      "passedScenarios": 73,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 49,
+      "criticalViolations": 0,
+      "mediumViolations": 49,
+      "lightViolations": 0,
+      "taskCompletionRate": 0.95,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 0,
+      "topViolations": [
+        {
+          "type": "loop_detected",
+          "count": 26
+        },
+        {
+          "type": "missing_required_tool",
+          "count": 23
+        }
+      ]
+    },
+    "meta": {
+      "runId": "aec42cfe-a585-44be-8432-a88fef88b0d3",
+      "runAt": "2026-09-23T18:59:48.558Z",
+      "mode": "mock",
+      "judgeEnabled": true,
+      "totalScenarios": 73
+    }
+  },
+  {
+    "runId": "4530e6af-6644-4ca3-b163-f86c52b06403",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T20:18:18.828Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/4530e6af-6644-4ca3-b163-f86c52b06403.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 73,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.97,
+      "avgJudgeScore": 76.26,
+      "totalTokens": 142924,
+      "avgTokensPerScenario": 1957.86,
+      "avgElapsedMsPerScenario": 1106.49,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "4530e6af-6644-4ca3-b163-f86c52b06403",
+      "runAt": "2026-09-23T20:13:08.568Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 73
+    }
+  },
+  {
+    "runId": "de497b18-7987-4936-b73d-e31d7c43020f",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:34:31.505Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/de497b18-7987-4936-b73d-e31d7c43020f.json",
+    "summary": {
+      "avgScore": 99.23,
+      "minScore": 40,
+      "maxScore": 100,
+      "passedScenarios": 77,
+      "failedScenarios": 1,
+      "passThreshold": 60,
+      "totalViolations": 4,
+      "criticalViolations": 1,
+      "mediumViolations": 2,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.95,
+      "avgJudgeScore": 76.81,
+      "totalTokens": 155364,
+      "avgTokensPerScenario": 1991.85,
+      "avgElapsedMsPerScenario": 877.51,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 2
+        },
+        {
+          "type": "past_time_suggestion",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "de497b18-7987-4936-b73d-e31d7c43020f",
+      "runAt": "2026-09-23T22:29:47.959Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 78
+    }
+  },
+  {
+    "runId": "6d4bf090-e324-4a3b-a1ea-2ea201329a3e",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:38:57.011Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/6d4bf090-e324-4a3b-a1ea-2ea201329a3e.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 6,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "avgJudgeScore": 84.83,
+      "totalTokens": 6472,
+      "avgTokensPerScenario": 1078.67,
+      "avgElapsedMsPerScenario": 522.67,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "6d4bf090-e324-4a3b-a1ea-2ea201329a3e",
+      "runAt": "2026-09-23T22:38:39.576Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 6
+    }
+  },
+  {
+    "runId": "bb7e56b9-fa69-4121-8819-82c0aef4290e",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:41:28.313Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/bb7e56b9-fa69-4121-8819-82c0aef4290e.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 1,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 1,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 0,
+      "taskCompletionRate": 0,
+      "avgJudgeScore": 70,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 353,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "bb7e56b9-fa69-4121-8819-82c0aef4290e",
+      "runAt": "2026-09-23T22:41:24.700Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 1
+    }
+  },
+  {
+    "runId": "8e911619-e0ac-47d3-8567-5476fce3f45c",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:42:04.082Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/8e911619-e0ac-47d3-8567-5476fce3f45c.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 1,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 0,
+      "avgJudgeScore": 100,
+      "totalTokens": 6852,
+      "avgTokensPerScenario": 6852,
+      "avgElapsedMsPerScenario": 2695,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "8e911619-e0ac-47d3-8567-5476fce3f45c",
+      "runAt": "2026-09-23T22:41:58.711Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 1
+    }
+  },
+  {
+    "runId": "03487ca4-4fb0-415d-b6f6-a7bd3d883911",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:46:38.909Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/03487ca4-4fb0-415d-b6f6-a7bd3d883911.json",
+    "summary": {
+      "avgScore": 99.23,
+      "minScore": 40,
+      "maxScore": 100,
+      "passedScenarios": 77,
+      "failedScenarios": 1,
+      "passThreshold": 60,
+      "totalViolations": 3,
+      "criticalViolations": 1,
+      "mediumViolations": 1,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.95,
+      "avgJudgeScore": 76.68,
+      "totalTokens": 148931,
+      "avgTokensPerScenario": 1909.37,
+      "avgElapsedMsPerScenario": 808.55,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "past_time_suggestion",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "03487ca4-4fb0-415d-b6f6-a7bd3d883911",
+      "runAt": "2026-09-23T22:42:23.854Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 78
+    }
+  },
+  {
+    "runId": "887686ce-13b9-466a-b5f1-2d983fcee36a",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:48:18.344Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/887686ce-13b9-466a-b5f1-2d983fcee36a.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 5,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 0,
+      "criticalViolations": 0,
+      "mediumViolations": 0,
+      "lightViolations": 0,
+      "taskCompletionRate": 1,
+      "avgJudgeScore": 83.2,
+      "totalTokens": 6478,
+      "avgTokensPerScenario": 1295.6,
+      "avgElapsedMsPerScenario": 577.6,
+      "topViolations": []
+    },
+    "meta": {
+      "runId": "887686ce-13b9-466a-b5f1-2d983fcee36a",
+      "runAt": "2026-09-23T22:48:02.782Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 5
+    }
+  },
+  {
+    "runId": "380da035-8203-4c8a-86d1-4648a4157602",
+    "tag": "candidate",
+    "savedAt": "2026-09-23T22:52:52.099Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/380da035-8203-4c8a-86d1-4648a4157602.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 78,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 2,
+      "criticalViolations": 0,
+      "mediumViolations": 1,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.95,
+      "avgJudgeScore": 76.36,
+      "totalTokens": 150278,
+      "avgTokensPerScenario": 1926.64,
+      "avgElapsedMsPerScenario": 973.71,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "380da035-8203-4c8a-86d1-4648a4157602",
+      "runAt": "2026-09-23T22:48:23.169Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 78
+    }
+  },
+  {
+    "runId": "fc683b12-3737-4e23-8eff-f8ded60192a9",
+    "tag": "candidate",
+    "savedAt": "2026-09-24T05:17:11.259Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/fc683b12-3737-4e23-8eff-f8ded60192a9.json",
+    "summary": {
+      "avgScore": 99.76,
+      "minScore": 94,
+      "maxScore": 100,
+      "passedScenarios": 25,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 14,
+      "criticalViolations": 0,
+      "mediumViolations": 13,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.88,
+      "avgJudgeScore": 63.44,
+      "totalTokens": 0,
+      "avgTokensPerScenario": 0,
+      "avgElapsedMsPerScenario": 140.12,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 10
+        },
+        {
+          "type": "loop_detected",
+          "count": 2
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "fc683b12-3737-4e23-8eff-f8ded60192a9",
+      "runAt": "2026-09-24T05:16:02.884Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 25
+    }
+  },
+  {
+    "runId": "b3ace815-2821-4b59-8231-77109123d865",
+    "tag": "candidate",
+    "savedAt": "2026-09-24T06:22:00.016Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/b3ace815-2821-4b59-8231-77109123d865.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 25,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 9,
+      "criticalViolations": 0,
+      "mediumViolations": 8,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.96,
+      "avgJudgeScore": 70.4,
+      "totalTokens": 48647,
+      "avgTokensPerScenario": 1945.88,
+      "avgElapsedMsPerScenario": 1186.68,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 6
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "b3ace815-2821-4b59-8231-77109123d865",
+      "runAt": "2026-09-24T06:20:32.153Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 25
+    }
+  },
+  {
+    "runId": "570fc560-aaff-4ea1-9ebf-6e73f7c01b6f",
+    "tag": "candidate",
+    "savedAt": "2026-09-24T06:26:36.802Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/570fc560-aaff-4ea1-9ebf-6e73f7c01b6f.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 25,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 9,
+      "criticalViolations": 0,
+      "mediumViolations": 8,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.44,
+      "avgJudgeScore": 70.4,
+      "totalTokens": 41220,
+      "avgTokensPerScenario": 1648.8,
+      "avgElapsedMsPerScenario": 850.2,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 6
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "570fc560-aaff-4ea1-9ebf-6e73f7c01b6f",
+      "runAt": "2026-09-24T06:25:23.045Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 25
+    }
+  },
+  {
+    "runId": "a25b1116-9947-4c25-bba9-0be0f5d8dac3",
+    "tag": "candidate",
+    "savedAt": "2026-09-24T06:55:37.247Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/a25b1116-9947-4c25-bba9-0be0f5d8dac3.json",
+    "summary": {
+      "avgScore": 100,
+      "minScore": 100,
+      "maxScore": 100,
+      "passedScenarios": 25,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 9,
+      "criticalViolations": 0,
+      "mediumViolations": 8,
+      "lightViolations": 1,
+      "taskCompletionRate": 0.44,
+      "avgJudgeScore": 67.6,
+      "totalTokens": 35683,
+      "avgTokensPerScenario": 1427.32,
+      "avgElapsedMsPerScenario": 1547.12,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 6
+        },
+        {
+          "type": "duplicate_confirmation",
+          "count": 1
+        },
+        {
+          "type": "empty_message",
+          "count": 1
+        },
+        {
+          "type": "loop_detected",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "a25b1116-9947-4c25-bba9-0be0f5d8dac3",
+      "runAt": "2026-09-24T06:54:04.426Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 25
+    }
+  },
+  {
+    "runId": "9d4ea4b4-486f-42fd-a8aa-04868ebda4bf",
+    "tag": "candidate",
+    "savedAt": "2026-09-24T07:59:03.176Z",
+    "filePath": "/Users/matteusmanoel/Projects/Personal/appointments/backend/benchmark/results/9d4ea4b4-486f-42fd-a8aa-04868ebda4bf.json",
+    "summary": {
+      "avgScore": 97.26,
+      "minScore": 84,
+      "maxScore": 100,
+      "passedScenarios": 27,
+      "failedScenarios": 0,
+      "passThreshold": 60,
+      "totalViolations": 21,
+      "criticalViolations": 0,
+      "mediumViolations": 16,
+      "lightViolations": 5,
+      "taskCompletionRate": 0.22,
+      "avgJudgeScore": 61.85,
+      "totalTokens": 260758,
+      "avgTokensPerScenario": 9657.7,
+      "avgElapsedMsPerScenario": 11174.59,
+      "topViolations": [
+        {
+          "type": "missing_required_tool",
+          "count": 13
+        },
+        {
+          "type": "empty_message",
+          "count": 5
+        },
+        {
+          "type": "loop_detected",
+          "count": 2
+        },
+        {
+          "type": "redundant_info_request",
+          "count": 1
+        }
+      ]
+    },
+    "meta": {
+      "runId": "9d4ea4b4-486f-42fd-a8aa-04868ebda4bf",
+      "runAt": "2026-09-24T07:52:51.803Z",
+      "mode": "live",
+      "judgeEnabled": true,
+      "totalScenarios": 27
+    }
   }
 ]

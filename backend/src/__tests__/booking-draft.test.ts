@@ -144,6 +144,19 @@ describe("composeOccupiedSlot", () => {
     expect(out).toMatch(/só com o Lucas/i);
     expect(out).not.toMatch(/preenchido/);
   });
+
+  it("holds the requested barber when day, clock and barber are pinned", () => {
+    const out = composeOccupiedSlot({
+      barberName: "Lucas Lima",
+      timeHHmm: "10:00",
+      alternatives: [],
+      sameTimeOthers: [{ barber_name: "Eduardo Gustavo" }],
+      holdRequestedBarber: true,
+    });
+    expect(out).toMatch(/Lucas/);
+    expect(out).toMatch(/te aviso/i);
+    expect(out).not.toMatch(/Eduardo/);
+  });
 });
 
 describe("composeHoursOverflow / closed", () => {
@@ -166,6 +179,19 @@ describe("composeHoursOverflow / closed", () => {
       lastFitBarberName: "Eduardo Gustavo",
       isToday: false,
     })).toBe(out);
+  });
+
+  it("names the opening time when the request was before the shop opens", () => {
+    const out = composeHoursOverflow({
+      lastFitTime: "09:00",
+      lastFitBarberName: "Eduardo Gustavo",
+      isToday: false,
+      requestedTime: "08:00",
+      opensAt: "09:00",
+    });
+    expect(out).toMatch(/Abrimos às 9h/);
+    expect(out).toMatch(/primeiro horário/);
+    expect(out).not.toMatch(/preenchido/);
   });
 
   it("draft clock becomes last_fit, not the refused request", () => {

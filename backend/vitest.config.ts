@@ -3,7 +3,7 @@ import { resolve } from "path";
 
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "benchmark/**/*.test.ts"],
     environment: "node",
     setupFiles: ["src/__tests__/setup.ts"],
   },

@@ -4,11 +4,13 @@ import {
   formatWeekCalendarForTools,
   nextDateForWeekday,
   nextOpenIso,
+  shopOpenStatusNow,
   dateToolMeta,
   weekdayPtFromIso,
   weekdayShortPtFromIso,
   resolveClientDateFromText,
   pickExecutedToolDate,
+  alignSpokenHour,
   parseClientTime,
   pickExecutedToolTime,
   formatTimePt,
@@ -50,6 +52,30 @@ describe("date calendar", () => {
     expect(cal).toContain("amanhã: domingo 20/09/2026 → 2026-09-20");
     expect(cal).toContain("segunda-feira 21/09/2026 → 2026-09-21");
     expect(addDaysIso("2026-09-19", 2)).toBe("2026-09-21");
+  });
+});
+
+describe("shopOpenStatusNow", () => {
+  it("is open mid-afternoon and names the closing time", () => {
+    const status = shopOpenStatusNow({ todayIso: "2026-09-21", nowHHmm: "15:30", businessHours: HOURS });
+    expect(status.open).toBe(true);
+    if (status.open) expect(status.closesAt).toBe("19:00");
+  });
+
+  it("is closed after hours and points at the next opening", () => {
+    const status = shopOpenStatusNow({ todayIso: "2026-09-21", nowHHmm: "22:00", businessHours: HOURS });
+    expect(status.open).toBe(false);
+    if (!status.open) {
+      expect(status.closedAt).toBe("19:00");
+      expect(status.nextOpenDate).toBe("2026-09-22");
+      expect(status.nextOpensAt).toBe("09:00");
+    }
+  });
+
+  it("is closed all day on a day with no hours", () => {
+    const status = shopOpenStatusNow({ todayIso: "2026-09-20", nowHHmm: "12:00", businessHours: HOURS });
+    expect(status.open).toBe(false);
+    if (!status.open) expect(status.nextOpenDate).toBe("2026-09-21");
   });
 });
 
@@ -110,6 +136,13 @@ describe("parseClientTime", () => {
     expect(parseClientTime("as 18:30h")).toBe("18:30");
     expect(parseClientTime("às 18:30")).toBe("18:30");
     expect(parseClientTime("18h30")).toBe("18:30");
+  });
+
+  it("reads às 6 as 18h when the shop is already open at 9h", () => {
+    expect(alignSpokenHour("amanha as 6", "06:00", "09:00", "19:00")).toBe("18:00");
+    expect(alignSpokenHour("as 6 da manha", "06:00", "09:00", "19:00")).toBe("06:00");
+    expect(alignSpokenHour("as 18h", "18:00", "09:00", "19:00")).toBe("18:00");
+    expect(alignSpokenHour("as 10", "10:00", "09:00", "19:00")).toBe("10:00");
   });
 
   it("parses an equivalent half-hour on another weekday", () => {

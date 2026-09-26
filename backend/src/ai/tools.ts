@@ -1,8 +1,5 @@
 import { createHash } from "node:crypto";
 import { pool } from "../db.js";
-import { config } from "../config.js";
-import { decrypt } from "../integrations/encryption.js";
-import { sendPixRequest } from "../integrations/uazapi/client.js";
 import { validateUuidIds, isValidUuid } from "../lib/uuid.js";
 import {
   canonicalizeBrPhoneDigits,
@@ -14,6 +11,25 @@ import {
   scheduleReminder2hForAppointment,
   scheduleReminderForAppointment,
 } from "../outbound/scheduled-messages.js";
+import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
+import { scheduleClientPhotoSync } from "../clients/sync-contact-photo.js";
+import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { dateToolMeta, weekdayKeyFromIso } from "./date-calendar.js";
+import { appendClientNote } from "./memory/client-memory.js";
+import {
+  classifyRequestedSlot,
+  firstFitStartMins,
+  lastFitStartMins,
+  minutesToHHmm,
+  type UnavailableReason,
+} from "./slot-fit.js";
+
+function asBusinessHours(
+  raw: unknown,
+): Record<string, { start?: string; end?: string } | null | undefined> {
+  if (!raw || typeof raw !== "object") return {};
+  return raw as Record<string, { start?: string; end?: string } | null | undefined>;
+}
 
 const MAX_TEXT_LENGTH = 8 * 1024;
 
@@ -275,8 +291,10 @@ export async function checkAvailability(
       total_price: services.reduce((s, r) => s + Number(r.price ?? 0), 0),
       services,
       requested: { available: false, barbers: [] },
+      unavailable_reason: "past" as UnavailableReason,
       why_unavailable:
         "Horário no passado ou antes do mínimo para hoje. Use get_next_slots para obter os próximos horários.",
+      last_fit: null,
       alternatives: [],
     });
   }
@@ -295,23 +313,7 @@ export async function checkAvailability(
   );
   if (barbers.rows.length === 0) return { error: "No barbers available" };
 
-  const dowRow = await pool.query<{ dow: number }>(
-    "select extract(dow from $1::date)::int as dow",
-    [params.date],
-  );
-  const dow = dowRow.rows[0]?.dow ?? 0; // 0=Sunday ... 6=Saturday
-  const dayKey =
-    (
-      [
-        "sunday",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-      ] as const
-    )[dow] ?? "monday";
+  const dayKey = weekdayKeyFromIso(params.date);
 
   // Shop-level business hours + closures (single source of open/closed for slot calculation).
   const [shopRow, closureRow] = await Promise.all([
@@ -332,13 +334,15 @@ export async function checkAvailability(
   const closure = closureRow.rows[0];
   if (closure?.status === "closed") {
     return truncateForLlm({
-      date: params.date,
+      ...dateToolMeta(params.date, asBusinessHours(shopRow.rows[0]?.business_hours)),
       time: timeNorm,
       duration_minutes: totalDuration,
       total_price: totalPrice,
       services,
       requested: { available: false, barbers: [] },
+      unavailable_reason: "closed" as UnavailableReason,
       why_unavailable: "Barbearia fechada nesta data.",
+      last_fit: null,
       alternatives: [],
     });
   }
@@ -389,16 +393,20 @@ export async function checkAvailability(
   }
   if (shopStartM == null || shopEndM == null) {
     return truncateForLlm({
-      date: params.date,
+      ...dateToolMeta(params.date, bh),
       time: timeNorm,
       duration_minutes: totalDuration,
       total_price: totalPrice,
       services,
       requested: { available: false, barbers: [] },
+      unavailable_reason: "closed" as UnavailableReason,
       why_unavailable: "Barbearia não abre neste dia.",
+      last_fit: null,
       alternatives: [],
     });
   }
+  const shopOpen = shopStartM;
+  const shopClose = shopEndM;
   const inUnavailability = unavailabilityIntervals.some((i) => {
     const iStart = timeToMinutes(i.start);
     const iEnd = timeToMinutes(i.end);
@@ -416,8 +424,10 @@ export async function checkAvailability(
       total_price: totalPrice,
       services,
       requested: { available: false, barbers: [] },
+      unavailable_reason: "occupied" as UnavailableReason,
       why_unavailable:
         "Horário dentro de um intervalo de indisponibilidade (ex.: almoço).",
+      last_fit: null,
       alternatives: [],
     });
   }
@@ -431,8 +441,8 @@ export async function checkAvailability(
   for (const b of barbers.rows) {
     const sched = (b.schedule ?? {}) as Record<string, any>;
     const day = sched?.[dayKey];
-    let startM = shopStartM;
-    let endM = shopEndM;
+    let startM = shopOpen;
+    let endM = shopClose;
     if (day && typeof day === "object") {
       const bStart = timeToMinutes(String(day.start ?? ""));
       const bEnd = timeToMinutes(String(day.end ?? ""));
@@ -516,8 +526,49 @@ export async function checkAvailability(
 
   const available = availableBarbers.length > 0;
 
-  // Alternatives: closest free slots on a 30-min grid around the requested time.
-  // Using 30-min intervals avoids impractical suggestions like 18h05 / 18h10.
+  const barberWindow = (b: { schedule: unknown }): { start: number; end: number } => {
+    const sched = (b.schedule ?? {}) as Record<string, { start?: string; end?: string }>;
+    const day = sched?.[dayKey];
+    let startM = shopOpen;
+    let endM = shopClose;
+    if (day && typeof day === "object") {
+      const bStart = timeToMinutes(String(day.start ?? ""));
+      const bEnd = timeToMinutes(String(day.end ?? ""));
+      if (bStart != null) startM = Math.max(startM, bStart);
+      if (bEnd != null) endM = Math.min(endM, bEnd);
+    }
+    return { start: startM, end: endM };
+  };
+
+  const windowForReason = params.barber_id
+    ? barbers.rows.find((b) => b.id === params.barber_id) ?? barbers.rows[0]
+    : barbers.rows[0];
+  const win = windowForReason ? barberWindow(windowForReason) : { start: shopOpen, end: shopClose };
+  const slotClass = classifyRequestedSlot({
+    requestedStart,
+    durationMins: totalDuration,
+    windowStart: win.start,
+    windowEnd: win.end,
+    minStart: effectiveAfterMins,
+  });
+  let unavailableReason: UnavailableReason | null = null;
+  if (!available) {
+    if (slotClass === "past" || slotClass === "hours_overflow") unavailableReason = slotClass;
+    else if (candidates.length === 0 && requestedEnd > win.end) unavailableReason = "hours_overflow";
+    else unavailableReason = "occupied";
+  }
+
+  // Asked for a time before opening → offer the first slot of the day. Asked for one that runs
+  // past closing → offer the last slot that still fits. Same direction the client was aiming for.
+  const askedBeforeOpening = requestedStart < win.start;
+  const fitMins = (askedBeforeOpening ? firstFitStartMins : lastFitStartMins)({
+    durationMins: totalDuration,
+    windowStart: win.start,
+    windowEnd: win.end,
+    minStart: effectiveAfterMins,
+  });
+  const lastFitMins = fitMins;
+
   const alternatives: {
     time: string;
     barber_id: string;
@@ -535,16 +586,7 @@ export async function checkAvailability(
       if (minStartMins != null && slotStart < minStartMins) continue;
       const slotEnd = slotStart + totalDuration;
       for (const b of barbers.rows) {
-        const sched = (b.schedule ?? {}) as Record<string, any>;
-        const day = sched?.[dayKey];
-        let startM = shopStartM;
-        let endM = shopEndM;
-        if (day && typeof day === "object") {
-          const bStart = timeToMinutes(String(day.start ?? ""));
-          const bEnd = timeToMinutes(String(day.end ?? ""));
-          if (bStart != null) startM = Math.max(startM, bStart);
-          if (bEnd != null) endM = Math.min(endM, bEnd);
-        }
+        const { start: startM, end: endM } = barberWindow(b);
         if (slotStart < startM || slotEnd > endM) continue;
         const occ = byBarber.get(b.id) ?? [];
         const conflict = occ.some((o) =>
@@ -562,16 +604,100 @@ export async function checkAvailability(
     }
   }
 
+  // Before opening, the window math alone can name a barber who is already booked at that
+  // clock. alternatives is built from real occupancy, so use the earliest free slot.
+  // Prefer the requested barber when they are free at that same clock.
+  const windowFit =
+    lastFitMins != null && windowForReason
+      ? {
+          time: minutesToHHmm(lastFitMins),
+          barber_id: windowForReason.id,
+          barber_name: windowForReason.name,
+        }
+      : null;
+  const earliestAlt = alternatives[0];
+  const requestedBarberAlt =
+    earliestAlt && params.barber_id
+      ? alternatives.find((a) => a.time === earliestAlt.time && a.barber_id === params.barber_id)
+      : undefined;
+  const realFit = requestedBarberAlt ?? earliestAlt;
+  const lastFit =
+    askedBeforeOpening && realFit
+      ? { time: realFit.time, barber_id: realFit.barber_id, barber_name: realFit.barber_name }
+      : windowFit;
+
+  let sameTimeOtherBarbers: { barber_id: string; barber_name: string }[] = [];
+  if (!available && unavailableReason === "occupied" && params.barber_id) {
+    const others = await pool.query<{ id: string; name: string; schedule: unknown }>(
+      `SELECT id, name, schedule
+       FROM public.barbers
+       WHERE barbershop_id = $1 AND status IN ('active','break') AND id <> $2
+       ORDER BY name`,
+      [barbershopId, params.barber_id],
+    );
+    const otherAppts = await pool.query<{
+      barber_id: string;
+      scheduled_time: string;
+      duration_minutes: number;
+      status: string;
+      completed_time: string | null;
+    }>(
+      `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time
+       FROM public.appointments
+       WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show')
+         AND barber_id <> $3`,
+      [barbershopId, params.date, params.barber_id],
+    );
+    const otherByBarber = new Map<string, { start: number; end: number }[]>();
+    for (const a of otherAppts.rows) {
+      const t = String(a.scheduled_time ?? "").slice(0, 5);
+      const s = timeToMinutes(t);
+      if (s == null) continue;
+      const d = Number(a.duration_minutes ?? 0);
+      const effectiveEndMins =
+        a.status === "completed" && a.completed_time != null
+          ? (timeToMinutes(String(a.completed_time).slice(0, 5)) ?? s + d)
+          : s + (Number.isFinite(d) && d > 0 ? d : 0);
+      const e =
+        effectiveEndMins > s
+          ? effectiveEndMins
+          : s + (Number.isFinite(d) && d > 0 ? d : 0);
+      const list = otherByBarber.get(a.barber_id) ?? [];
+      list.push({ start: s, end: e });
+      otherByBarber.set(a.barber_id, list);
+    }
+    for (const b of others.rows) {
+      const { start: startM, end: endM } = barberWindow(b);
+      if (requestedStart < startM || requestedEnd > endM) continue;
+      const occ = otherByBarber.get(b.id) ?? [];
+      const conflict = occ.some((o) =>
+        overlapsWithBuffer(requestedStart, requestedEnd, o.start, o.end, bufferMins),
+      );
+      if (!conflict) {
+        sameTimeOtherBarbers.push({ barber_id: b.id, barber_name: b.name });
+      }
+    }
+  }
+
+  const whyByReason: Record<UnavailableReason, string> = {
+    closed: "Barbearia não abre neste dia.",
+    hours_overflow: "Horário não cabe no expediente.",
+    occupied: "Barbeiro ocupado neste horário.",
+    past: "Horário no passado ou antes do mínimo para hoje.",
+  };
+
   return truncateForLlm({
-    date: params.date,
+    ...dateToolMeta(params.date, bh),
+    shop_open: minutesToHHmm(shopOpen),
     time: timeNorm,
     duration_minutes: totalDuration,
     total_price: totalPrice,
     services,
     requested: { available, barbers: availableBarbers },
-    why_unavailable: available
-      ? null
-      : "Não encaixou no expediente ou conflitou com outros horários do barbeiro (sem expor dados).",
+    unavailable_reason: unavailableReason,
+    why_unavailable: available ? null : whyByReason[unavailableReason ?? "occupied"],
+    last_fit: unavailableReason === "hours_overflow" || unavailableReason === "past" ? lastFit : null,
+    same_time_other_barbers: sameTimeOtherBarbers,
     alternatives,
     debug: { evaluated_barbers: debugBarbers },
   });
@@ -860,23 +986,7 @@ export async function getNextSlots(
   if (barbers.length === 0)
     return { slots: [], message: "Nenhum barbeiro disponível." };
 
-  const dowRow = await pool.query<{ dow: number }>(
-    "SELECT extract(dow from $1::date)::int AS dow",
-    [params.date],
-  );
-  const dow = dowRow.rows[0]?.dow ?? 0;
-  const dayKey =
-    (
-      [
-        "sunday",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-      ] as const
-    )[dow] ?? "monday";
+  const dayKey = weekdayKeyFromIso(params.date);
 
   let startM: number;
   let endM: number;
@@ -884,7 +994,7 @@ export async function getNextSlots(
   const closure = closureRow.rows[0];
   if (closure?.status === "closed") {
     return truncateForLlm({
-      date: params.date,
+      ...dateToolMeta(params.date, asBusinessHours(shopRow.rows[0]?.business_hours)),
       slots: [],
       message: "Barbearia fechada nesta data.",
     });
@@ -927,7 +1037,7 @@ export async function getNextSlots(
     const day = bh[dayKey];
     if (!day || typeof day !== "object") {
       return truncateForLlm({
-        date: params.date,
+        ...dateToolMeta(params.date, bh),
         slots: [],
         message: "Barbearia não abre neste dia.",
       });
@@ -1042,15 +1152,22 @@ export async function getNextSlots(
   });
 }
 
+function canonicalClientPhone(phone: string): string | null {
+  const raw = (phone ?? "").trim();
+  if (!raw || /^(undefined|null|nan)$/i.test(raw)) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return canonicalizeBrPhoneDigits(digits) ?? digits;
+}
+
 export async function upsertClient(
   barbershopId: string,
   phone: string,
   name?: string,
   notes?: string,
 ): Promise<unknown> {
-  const digits = phone.replace(/\D/g, "") || phone;
-  if (!digits) return { error: "phone required" };
-  const canonicalPhone = canonicalizeBrPhoneDigits(digits) ?? digits;
+  const canonicalPhone = canonicalClientPhone(phone);
+  if (!canonicalPhone) return { error: "phone required" };
   const matchKeys = brPhoneMatchKeys(canonicalPhone);
   const resolvedNameInput = (): string | null => {
     if (name === undefined) return null;
@@ -1063,8 +1180,10 @@ export async function upsertClient(
     id: string;
     name: string | null;
     phone: string;
+    name_confirmed: boolean | null;
+    whatsapp_contact_name: string | null;
   }>(
-    `SELECT id, name, phone FROM public.clients
+    `SELECT id, name, phone, name_confirmed, whatsapp_contact_name FROM public.clients
      WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])
      LIMIT 1`,
     [barbershopId, matchKeys],
@@ -1075,6 +1194,7 @@ export async function upsertClient(
       `UPDATE public.clients SET
          name = COALESCE($2, name),
          notes = COALESCE($3, notes),
+         name_confirmed = CASE WHEN $2::text IS NOT NULL THEN true ELSE name_confirmed END,
          updated_at = now()
        WHERE id = $1`,
       [row.id, nameForUpdate, notes ?? null],
@@ -1084,26 +1204,30 @@ export async function upsertClient(
       name: string | null;
       phone: string;
       barbershop_id: string;
+      name_confirmed: boolean | null;
+      whatsapp_contact_name: string | null;
     }>(
-      `SELECT id, name, phone, barbershop_id FROM public.clients WHERE id = $1`,
+      `SELECT id, name, phone, barbershop_id, name_confirmed, whatsapp_contact_name FROM public.clients WHERE id = $1`,
       [row.id],
     );
     return truncateForLlm(updated.rows[0]);
   }
-  const insertName =
-    name !== undefined && String(name).trim()
-      ? (formatStoredClientName(String(name).trim()) ?? String(name).trim())
-      : "Cliente";
+  const named = name !== undefined && String(name).trim();
+  const insertName = named
+    ? (formatStoredClientName(String(name).trim()) ?? String(name).trim())
+    : "Cliente";
   const r = await pool.query(
-    `INSERT INTO public.clients (barbershop_id, name, phone, notes)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO public.clients (barbershop_id, name, phone, notes, name_confirmed)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (barbershop_id, phone) DO UPDATE SET
        name = COALESCE(EXCLUDED.name, clients.name),
        notes = COALESCE(EXCLUDED.notes, clients.notes),
+       name_confirmed = clients.name_confirmed OR EXCLUDED.name_confirmed,
        updated_at = now()
-     RETURNING id, name, phone, barbershop_id`,
-    [barbershopId, insertName, canonicalPhone, notes ?? null],
+     RETURNING id, name, phone, barbershop_id, name_confirmed, whatsapp_contact_name`,
+    [barbershopId, insertName, canonicalPhone, notes ?? null, named],
   );
+  scheduleClientPhotoSync(barbershopId, canonicalPhone);
   return truncateForLlm(r.rows[0]);
 }
 
@@ -1120,11 +1244,12 @@ export async function createAppointment(
     time: string;
     notes?: string;
   },
+  conversationId?: string | null,
 ): Promise<unknown> {
   const resolveClientId = async (): Promise<string | null> => {
     if (params.client_id && typeof params.client_id === "string")
       return params.client_id;
-    const phone = (params.client_phone ?? "").toString();
+    const phone = canonicalClientPhone((params.client_phone ?? "").toString());
     if (!phone) return null;
     const r = (await upsertClient(
       barbershopId,
@@ -1345,6 +1470,13 @@ export async function createAppointment(
       );
     }
     await client.query("COMMIT");
+    void recordAgendaChangeFromAppointment({
+      barbershopId,
+      appointmentId: appointment.id,
+      type: "appointment_created",
+      actor: "ai",
+      conversationId: conversationId ?? null,
+    });
     const serviceNamesArr = snapshots.map((s) => s.name);
     barbershopHasAutomation(barbershopId)
       .then((has) => {
@@ -1515,6 +1647,8 @@ export async function getClientFavoriteServices(
 export async function listClientUpcomingAppointments(
   barbershopId: string,
   clientPhone: string,
+  /** Quando informado, substitui CURRENT_DATE como piso de data. Usa o relógio simulado do benchmark. */
+  referenceDate?: string,
 ): Promise<unknown> {
   const digits = clientPhone.replace(/\D/g, "");
   if (!digits) return { error: "client_phone required" };
@@ -1526,18 +1660,22 @@ export async function listClientUpcomingAppointments(
     scheduled_time: string;
     service_names: string;
     barber_name: string;
+    barber_id: string;
+    service_ids: string[];
+    status: string;
   }>(
-    `SELECT a.id, a.scheduled_date::text, a.scheduled_time::text,
+    `SELECT a.id, a.scheduled_date::text, a.scheduled_time::text, a.status, a.barber_id::text AS barber_id,
             (SELECT string_agg(aps.service_name, ', ' ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_names,
+            COALESCE((SELECT array_agg(aps.service_id::text ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id), '{}'::text[]) AS service_ids,
             b.name AS barber_name
      FROM public.appointments a
      JOIN public.clients c ON c.id = a.client_id
      JOIN public.barbers b ON b.id = a.barber_id
      WHERE a.barbershop_id = $1 AND a.status NOT IN ('cancelled')
-       AND a.scheduled_date >= CURRENT_DATE
+       AND a.scheduled_date >= COALESCE($3::date, CURRENT_DATE)
        AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
      ORDER BY a.scheduled_date, a.scheduled_time`,
-    [barbershopId, matchKeys],
+    [barbershopId, matchKeys, referenceDate ?? null],
   );
   return truncateForLlm(
     r.rows.map((row) => ({
@@ -1545,9 +1683,142 @@ export async function listClientUpcomingAppointments(
       date: row.scheduled_date,
       time: String(row.scheduled_time).slice(0, 5),
       service_names: row.service_names ?? "",
+      service_ids: Array.isArray(row.service_ids) ? row.service_ids : [],
+      barber_id: row.barber_id,
       barber_name: row.barber_name,
+      status: row.status,
     })),
   );
+}
+
+export type LastVisit = {
+  service_names: string;
+  service_ids: string[];
+  barber_name: string;
+  barber_id: string;
+  time: string;
+  date: string;
+};
+
+/** Latest visit, including a cancelled one, so "quero remarcar" keeps service and barber. */
+export async function getClientLastAppointment(
+  barbershopId: string,
+  clientPhone: string,
+): Promise<LastVisit | null> {
+  const phone = canonicalClientPhone(clientPhone);
+  if (!phone) return null;
+  const matchKeys = brPhoneMatchKeys(phone);
+  const r = await pool.query<{
+    service_names: string | null;
+    service_ids: string[] | null;
+    barber_name: string;
+    barber_id: string;
+    scheduled_time: string;
+    scheduled_date: string;
+  }>(
+    `SELECT a.scheduled_date::text, a.scheduled_time::text, a.barber_id::text AS barber_id, b.name AS barber_name,
+            (SELECT string_agg(aps.service_name, ', ' ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_names,
+            COALESCE((SELECT array_agg(aps.service_id::text ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id), '{}'::text[]) AS service_ids
+     FROM public.appointments a
+     JOIN public.clients c ON c.id = a.client_id
+     JOIN public.barbers b ON b.id = a.barber_id
+     WHERE a.barbershop_id = $1
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     ORDER BY a.scheduled_date DESC, a.scheduled_time DESC
+     LIMIT 1`,
+    [barbershopId, matchKeys],
+  );
+  const row = r.rows[0];
+  if (!row?.service_names) return null;
+  return {
+    service_names: row.service_names,
+    service_ids: Array.isArray(row.service_ids) ? row.service_ids : [],
+    barber_name: row.barber_name,
+    barber_id: row.barber_id,
+    time: String(row.scheduled_time).slice(0, 5),
+    date: String(row.scheduled_date).slice(0, 10),
+  };
+}
+
+export async function listClientPlanSubscription(
+  barbershopId: string,
+  clientPhone: string,
+): Promise<unknown> {
+  const phone = canonicalClientPhone(clientPhone);
+  if (!phone) return { error: "client_phone required" };
+  const matchKeys = brPhoneMatchKeys(phone);
+  const r = await pool.query<{
+    subscription_id: string;
+    plan_name: string;
+    price: string;
+    status: string;
+    due_date: string | null;
+    charge_status: string | null;
+  }>(
+    `SELECT s.id AS subscription_id, bp.name AS plan_name, bp.price::text AS price, s.status,
+            ch.due_date::text AS due_date, ch.status AS charge_status
+     FROM public.client_plan_subscriptions s
+     JOIN public.clients c ON c.id = s.client_id
+     JOIN public.barbershop_plans bp ON bp.id = s.plan_id
+     LEFT JOIN LATERAL (
+       SELECT due_date, status FROM public.plan_pix_charges
+       WHERE subscription_id = s.id AND status IN ('pending', 'sent')
+       ORDER BY due_date ASC LIMIT 1
+     ) ch ON true
+     WHERE s.barbershop_id = $1 AND s.status = 'active'
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     ORDER BY s.created_at DESC
+     LIMIT 1`,
+    [barbershopId, matchKeys],
+  );
+  const row = r.rows[0];
+  if (!row) return { found: false, message: "Nenhuma assinatura ativa neste telefone." };
+  const overdue = Boolean(row.due_date && row.charge_status === "pending");
+  return truncateForLlm({
+    found: true,
+    subscription_id: row.subscription_id,
+    plan_name: row.plan_name,
+    price: Number(row.price),
+    overdue,
+    due_date: row.due_date,
+    message: overdue
+      ? `Assinatura "${row.plan_name}" com cobrança pendente. Use send_pix_plan_charge com este subscription_id.`
+      : `Assinatura "${row.plan_name}" ativa.`,
+  });
+}
+
+/** Returns true when the client has an upcoming pending appointment (RSVP still open). */
+export async function hasUpcomingPendingAppointment(
+  barbershopId: string,
+  clientPhone: string,
+): Promise<boolean> {
+  const status = await getUpcomingBookedStatus(barbershopId, clientPhone);
+  return status === "pending";
+}
+
+/** Occupying upcoming appointment: pending already holds the slot; confirmed is RSVP'd. */
+export async function getUpcomingBookedStatus(
+  barbershopId: string,
+  clientPhone: string,
+  /** Quando informado, substitui CURRENT_DATE como piso de data. Usa o relógio simulado do benchmark. */
+  referenceDate?: string,
+): Promise<"pending" | "confirmed" | null> {
+  const digits = clientPhone.replace(/\D/g, "");
+  if (!digits) return null;
+  const matchKeys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(digits) ?? digits);
+  const r = await pool.query<{ status: string }>(
+    `SELECT a.status FROM public.appointments a
+     JOIN public.clients c ON c.id = a.client_id
+     WHERE a.barbershop_id = $1 AND a.status IN ('pending', 'confirmed')
+       AND a.scheduled_date >= COALESCE($3::date, CURRENT_DATE)
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     ORDER BY CASE WHEN a.status = 'pending' THEN 0 ELSE 1 END, a.scheduled_date, a.scheduled_time
+     LIMIT 1`,
+    [barbershopId, matchKeys, referenceDate ?? null],
+  );
+  const status = r.rows[0]?.status;
+  if (status === "pending" || status === "confirmed") return status;
+  return null;
 }
 
 /**
@@ -1557,6 +1828,7 @@ export async function cancelAppointmentByAgent(
   barbershopId: string,
   appointmentId: string,
   clientPhone: string,
+  conversationId?: string | null,
 ): Promise<unknown> {
   if (!isValidUuid(appointmentId))
     return { error: "appointment_id deve ser o UUID retornado por list_client_upcoming_appointments, não um número ou nome." };
@@ -1583,6 +1855,13 @@ export async function cancelAppointmentByAgent(
     [appointmentId, barbershopId],
   );
   await cancelReminderForAppointment(appointmentId);
+  void recordAgendaChangeFromAppointment({
+    barbershopId,
+    appointmentId,
+    type: "cancelled",
+    actor: "ai",
+    conversationId: conversationId ?? null,
+  });
   return { ok: true, message: "Agendamento cancelado" };
 }
 
@@ -1594,6 +1873,7 @@ export async function rescheduleAppointmentByAgent(
   appointmentId: string,
   clientPhone: string,
   params: { date: string; time: string; barber_id?: string },
+  conversationId?: string | null,
 ): Promise<unknown> {
   if (!isValidUuid(appointmentId))
     return { error: "appointment_id deve ser o UUID retornado por list_client_upcoming_appointments, não um número ou nome." };
@@ -1731,7 +2011,73 @@ export async function rescheduleAppointmentByAgent(
       });
     }
   }
+  void recordAgendaChangeFromAppointment({
+    barbershopId,
+    appointmentId,
+    type: "rescheduled",
+    actor: "ai",
+    conversationId: conversationId ?? null,
+  });
   return { ok: true, date: params.date, time: timeNorm };
+}
+
+/**
+ * RSVP do lembrete: pending → confirmed. O horário já estava bloqueado no create.
+ */
+export async function confirmAppointmentByAgent(
+  barbershopId: string,
+  appointmentId: string,
+  clientPhone: string,
+  conversationId?: string | null,
+): Promise<unknown> {
+  if (!isValidUuid(appointmentId)) {
+    return { error: "appointment_id deve ser o UUID retornado por list_client_upcoming_appointments." };
+  }
+  const digits = clientPhone.replace(/\D/g, "");
+  if (!digits) return { error: "Telefone do cliente é obrigatório" };
+  const matchKeys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(digits) ?? digits);
+  const row = await pool.query<{ id: string; status: string }>(
+    `SELECT a.id, a.status FROM public.appointments a
+     JOIN public.clients c ON c.id = a.client_id
+     WHERE a.id = $1 AND a.barbershop_id = $2
+       AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])`,
+    [appointmentId, barbershopId, matchKeys],
+  );
+  if (row.rows.length === 0) {
+    return { error: "Agendamento não encontrado ou não pertence a este cliente" };
+  }
+  const status = row.rows[0].status;
+  if (status === "confirmed") {
+    return { ok: true, already_confirmed: true, message: "Agendamento já estava confirmado" };
+  }
+  if (status !== "pending") {
+    return { error: `Não é possível confirmar um agendamento com status ${status}` };
+  }
+  const reminder = await pool.query<{ id: string }>(
+    `SELECT id FROM public.agenda_activity
+     WHERE appointment_id = $1 AND barbershop_id = $2 AND type = 'reminder_sent'
+     LIMIT 1`,
+    [appointmentId, barbershopId],
+  );
+  if (!reminder.rows[0]) {
+    return {
+      error:
+        "Não é RSVP de lembrete. Use create_appointment só no aceite do rascunho; confirm_appointment só depois do lembrete 24h/2h.",
+    };
+  }
+  await pool.query(
+    `UPDATE public.appointments SET status = 'confirmed', updated_at = now()
+     WHERE id = $1 AND barbershop_id = $2 AND status = 'pending'`,
+    [appointmentId, barbershopId],
+  );
+  void recordAgendaChangeFromAppointment({
+    barbershopId,
+    appointmentId,
+    type: "confirmed",
+    actor: "ai",
+    conversationId: conversationId ?? null,
+  });
+  return { ok: true, message: "Presença confirmada" };
 }
 
 export async function addToWaitlist(
@@ -1740,31 +2086,34 @@ export async function addToWaitlist(
     client_phone: string;
     client_name?: string;
     desired_date: string;
-    service_id?: string;
+    desired_time: string;
+    service_id: string;
     barber_id?: string;
     notes?: string;
   },
 ): Promise<unknown> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.desired_date))
     return { error: "desired_date must be yyyy-MM-dd" };
+  const timeNorm = String(params.desired_time ?? "").replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
+  if (!/^\d{2}:\d{2}$/.test(timeNorm)) return { error: "desired_time must be HH:mm" };
   const phone = params.client_phone.replace(/\D/g, "");
   if (!phone) return { error: "client_phone required" };
-  if (params.service_id && !isValidUuid(params.service_id))
-    return { error: "service_id inválido" };
+  if (!isValidUuid(params.service_id)) return { error: "service_id obrigatório (UUID)" };
   if (params.barber_id && !isValidUuid(params.barber_id))
     return { error: "barber_id inválido" };
 
   const r = await pool.query(
     `INSERT INTO public.appointment_waitlist
-      (barbershop_id, client_phone, client_name, desired_date, service_id, barber_id, source, notes, status, updated_at)
-     VALUES ($1, $2, $3, $4::date, $5, $6, 'ai', $7, 'active', now())
-     RETURNING id, barbershop_id, client_phone, client_name, desired_date, service_id, barber_id, status, created_at`,
+      (barbershop_id, client_phone, client_name, desired_date, desired_time, service_id, barber_id, source, notes, status, updated_at)
+     VALUES ($1, $2, $3, $4::date, $5::time, $6, $7, 'ai', $8, 'active', now())
+     RETURNING id, barbershop_id, client_phone, client_name, desired_date, desired_time, service_id, barber_id, status, created_at`,
     [
       barbershopId,
       phone,
       params.client_name ?? null,
       params.desired_date,
-      params.service_id ?? null,
+      timeNorm,
+      params.service_id,
       params.barber_id ?? null,
       params.notes ?? null,
     ],
@@ -1894,23 +2243,16 @@ export async function sendPixPlanCharge(
   const shop = shopRow.rows[0];
   if (!shop?.pix_key) return { error: "Chave PIX não cadastrada. Configure em Configurações → Dados da NavalhIA." };
 
-  const connRow = await pool.query<{ uazapi_instance_token_encrypted: string }>(
-    `SELECT uazapi_instance_token_encrypted FROM public.barbershop_whatsapp_connections
-     WHERE barbershop_id = $1 AND provider = 'uazapi' AND status = 'connected' AND uazapi_instance_token_encrypted IS NOT NULL LIMIT 1`,
-    [barbershopId],
-  );
-  const enc = connRow.rows[0]?.uazapi_instance_token_encrypted;
-  if (!enc || !config.appEncryptionKey) return { error: "WhatsApp não conectado." };
-  const token = decrypt(enc, config.appEncryptionKey);
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (!session?.sendPixRequest) return { error: "WhatsApp não conectado ou PIX indisponível neste provedor." };
 
   const clientPhone = (params.client_phone || sub.client_phone).replace(/\D/g, "");
   const amount = Number(sub.price);
   const city = (shop.address ?? "").split(",").pop()?.trim() || "Brasil";
 
   try {
-    await sendPixRequest({
-      token,
-      number: clientPhone,
+    await session.sendPixRequest({
+      to: clientPhone,
       amount,
       description: `Plano ${sub.plan_name} — NavalhIA`,
       pixKey: shop.pix_key,
@@ -1932,4 +2274,101 @@ export async function sendPixPlanCharge(
     amount,
     message: `Cobrança PIX de R$ ${amount.toFixed(2)} enviada para o plano "${sub.plan_name}".`,
   };
+}
+
+export async function sendShopPix(
+  barbershopId: string,
+  clientPhone: string,
+): Promise<unknown> {
+  const shopRow = await pool.query<{
+    pix_key: string | null;
+    pix_holder_name: string | null;
+    pix_key_type: string | null;
+    name: string;
+    address: string | null;
+  }>(
+    `SELECT pix_key, pix_holder_name, pix_key_type, name, address FROM public.barbershops WHERE id = $1`,
+    [barbershopId],
+  );
+  const shop = shopRow.rows[0];
+  const pixKey = (shop?.pix_key ?? "").trim();
+  if (!pixKey) {
+    return {
+      error: "missing_pix_key",
+      message: "Chave PIX não cadastrada. Diga que a equipe passa a chave.",
+    };
+  }
+  const to = clientPhone.replace(/\D/g, "");
+  if (!to) return { error: "client_phone required" };
+  const city = (shop?.address ?? "").split(",").pop()?.trim() || "Brasil";
+
+  const typeLabel: Record<string, string> = {
+    cpf: "CPF",
+    cnpj: "CNPJ",
+    telefone: "Telefone",
+    email: "E-mail",
+    aleatoria: "Chave aleatória",
+  };
+  const typeLine = shop?.pix_key_type
+    ? `\nTipo: ${typeLabel[shop.pix_key_type] ?? shop.pix_key_type}`
+    : "";
+  const holderLine = shop?.pix_holder_name ? `\nRecebedor: ${shop.pix_holder_name}` : "";
+  const textFallback = `💰 *PIX da ${shop?.name ?? "barbearia"}*${typeLine}\nChave: ${pixKey}${holderLine}`;
+
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (session?.sendPixRequest) {
+    try {
+      await session.sendPixRequest({
+        to,
+        amount: 0,
+        description: `PIX ${shop?.name ?? "barbearia"}`,
+        pixKey,
+        name: shop?.name ?? "Barbearia",
+        city,
+      });
+      return {
+        ok: true,
+        channel: "native",
+        sent: true,
+        pix_key: pixKey,
+        message: "PIX nativo já enviado. Não repita a chave nem o bloco de PIX no texto.",
+      };
+    } catch (e) {
+      console.warn("[sendShopPix] native failed, falling back to text:", e instanceof Error ? e.message : e);
+    }
+  }
+  if (session) {
+    try {
+      await session.sendText(to, textFallback);
+      return {
+        ok: true,
+        channel: "text",
+        sent: true,
+        pix_key: pixKey,
+        message: "Chave PIX já enviada em texto. Não repita a chave na resposta.",
+      };
+    } catch (e) {
+      console.warn("[sendShopPix] text send failed:", e instanceof Error ? e.message : e);
+    }
+  }
+  return {
+    ok: true,
+    channel: "text_unsent",
+    pix_key: pixKey,
+    message: textFallback,
+    warning: "Entrega WhatsApp falhou. Inclua a chave PIX no texto da resposta.",
+  };
+}
+
+/**
+ * Persist a short observation about the client into notes_safe.
+ * Called by the AI agent via the `update_client_notes` tool.
+ */
+export async function updateClientNotes(
+  barbershopId: string,
+  clientPhone: string,
+  note: string
+): Promise<{ ok: boolean }> {
+  await appendClientNote(barbershopId, clientPhone, note);
+  return { ok: true };
 }

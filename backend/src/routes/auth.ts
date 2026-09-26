@@ -112,7 +112,7 @@ authRouter.post("/login", async (req: Request, res: Response): Promise<void> => 
               COALESCE(b.billing_plan, 'pro') AS billing_plan
        FROM public.profiles p
        LEFT JOIN public.barbershops b ON b.id = p.barbershop_id
-       WHERE p.email = $1`,
+       WHERE LOWER(TRIM(p.email)) = LOWER(TRIM($1))`,
       [email]
     );
     if (r.rows.length === 0) {

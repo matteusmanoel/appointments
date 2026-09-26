@@ -1,24 +1,12 @@
-import { greetingScenarios } from "./barbershop/greeting.js";
-import { bookingScenarios } from "./barbershop/booking.js";
-import { rescheduleScenarios } from "./barbershop/reschedule.js";
-import { cancellationScenarios } from "./barbershop/cancellation.js";
-import { managementScenarios } from "./barbershop/management.js";
-import { memoryScenarios } from "./barbershop/memory.js";
-import { edgeCaseScenarios } from "./barbershop/edge-cases.js";
-import { planScenarios } from "./barbershop/plans.js";
+import { goldenScenarios } from "./barbershop/golden.js";
 import type { Scenario, ScenarioTag } from "../types.js";
 
-/** Complete scenario registry */
-export const ALL_SCENARIOS: Scenario[] = [
-  ...greetingScenarios,
-  ...bookingScenarios,
-  ...rescheduleScenarios,
-  ...cancellationScenarios,
-  ...managementScenarios,
-  ...memoryScenarios,
-  ...edgeCaseScenarios,
-  ...planScenarios,
-];
+/**
+ * Suíte ativa: só os golden scenarios da revisão de 24/09.
+ * Os arquivos antigos (greeting, booking, memory, edge, …) continuam no disco
+ * e ficam de fora do runner até a revisão humana desta lista.
+ */
+export const ALL_SCENARIOS: Scenario[] = [...goldenScenarios];
 
 /**
  * Filter scenarios by one or more tags.

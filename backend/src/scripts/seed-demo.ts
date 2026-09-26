@@ -1,3 +1,4 @@
+import "../load-env.js";
 /**
  * Seed de dados de demonstração: serviços, barbeiros, clientes.
  * Rode após o seed principal (estabelecimento + admin). Idempotente: só insere se não houver dados.
@@ -119,7 +120,7 @@ async function seedDemo() {
       await client.query(
         `INSERT INTO public.clients (barbershop_id, name, phone)
          VALUES
-           ($1, 'Mateus Manoel', '554588230845'),
+           ($1, 'Mateus Manoel', '5545988230845'),
            ($1, 'Pedro Oliveira', '45998022522'),
            ($1, 'Ana Costa',     '45991112233')`,
         [barbershopId],

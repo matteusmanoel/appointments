@@ -1,4 +1,5 @@
 import type { Scenario } from "../../types.js";
+import { seedHarnessAppointment } from "./seed-appointment.js";
 
 /** Cancellation scenarios — cancelamento de agendamentos */
 export const cancellationScenarios: Scenario[] = [
@@ -10,6 +11,7 @@ export const cancellationScenarios: Scenario[] = [
       "Agente deve cancelar imediatamente com mensagem afirmativa, sem perguntar 'Posso confirmar?' novamente.",
     tags: ["cancellation", "multi-turn"],
     vertical: "barbershop",
+    setup: (ctx) => seedHarnessAppointment({ ...ctx, offsetDays: 1, time: "10:00" }),
     turns: [
       { role: "user", content: "Preciso cancelar meu agendamento" },
       { role: "user", content: "Sim, pode cancelar" },
@@ -51,6 +53,10 @@ export const cancellationScenarios: Scenario[] = [
       "Agente deve listar e cancelar sequencialmente.",
     tags: ["cancellation", "multi-turn", "edge"],
     vertical: "barbershop",
+    setup: async (ctx) => {
+      await seedHarnessAppointment({ ...ctx, offsetDays: 1, time: "10:00" });
+      await seedHarnessAppointment({ ...ctx, offsetDays: 2, time: "15:00" });
+    },
     turns: [
       { role: "user", content: "Pode cancelar todos os meus agendamentos" },
       { role: "user", content: "Sim, cancele todos" },

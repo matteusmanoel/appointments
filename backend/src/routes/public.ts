@@ -8,6 +8,7 @@ import {
   scheduleReminder2hForAppointment,
   scheduleReminderForAppointment,
 } from "../outbound/scheduled-messages.js";
+import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
 
 const RESCHEDULE_CUTOFF_MINUTES = 120;
 
@@ -112,6 +113,12 @@ publicRouter.post("/appointments/:token/cancel", async (req: Request, res: Respo
     [appointment.id]
   );
   await cancelReminderForAppointment(appointment.id);
+  void recordAgendaChangeFromAppointment({
+    barbershopId: appointment.barbershop_id,
+    appointmentId: appointment.id,
+    type: "cancelled",
+    actor: "client_link",
+  });
   res.status(200).json({ ok: true, message: "Agendamento cancelado" });
 });
 
@@ -162,6 +169,12 @@ publicRouter.post("/appointments/:token/reschedule", async (req: Request, res: R
     `UPDATE public.appointments SET scheduled_date = $1::date, scheduled_time = $2::time, barber_id = $4, updated_at = now() WHERE id = $3`,
     [scheduled_date, timeNorm, appointment.id, barberId]
   );
+  void recordAgendaChangeFromAppointment({
+    barbershopId,
+    appointmentId: appointment.id,
+    type: "rescheduled",
+    actor: "client_link",
+  });
   const updated = await getAppointmentByToken(req.params.token);
   barbershopHasAutomation(barbershopId).then((has) => {
     if (!has) return;

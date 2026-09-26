@@ -52,6 +52,7 @@ export function isClientConfirmation(text: string): boolean {
     return true;
   }
   if (/^(sim|pode|ok).{0,40}(confirmar|gentileza|favor|obrigad)/.test(t)) return true;
+  if (/^(por gentileza|gentileza|por favor|obrigado|obrigada)([,!.\s]|$)/.test(t)) return true;
   // Same affirmative vocabulary as above, but not anchored to the first word — a filler
   // lead-in ("Fica sim", "Show, fechado") is the same claim as "Sim" in different word
   // order and must resolve the same way (RC3: anchored-regex word-order brittleness).
@@ -188,7 +189,7 @@ export function looksLikeZeroIntentUnknown(text: string): boolean {
 
 export function looksLikePlanIntent(text: string): boolean {
   const t = fold(text);
-  return /\b(plano|assinatura|mensalidade)\b/.test(t);
+  return /\b(plano|assinatura|assinar|mensalidade)\b/.test(t);
 }
 
 export function looksLikeWaitlistIntent(text: string): boolean {
@@ -340,6 +341,17 @@ export function assistantOfferedNextOpenDay(text: string): boolean {
 export function prefersNamedBarberOverTime(text: string): boolean {
   const t = fold(text);
   return /\bso (com |o )/.test(t) || /\bseria so com\b/.test(t);
+}
+
+/** Barber + clock + day in the same message. That pin does not swap barbers. */
+export function clientPinnedBarberClockAndDay(
+  text: string,
+  barbers: CatalogBarber[],
+  todayIso: string,
+): boolean {
+  if (!resolveBarberFromText(text, barbers)) return false;
+  if (!parseClientTime(text)) return false;
+  return Boolean(bookingDateFromUserTurn(text, todayIso));
 }
 
 export function acceptsAnyBarber(text: string): boolean {

@@ -31,6 +31,10 @@ export const config = {
   uazapiAdminToken: optional("UAZAPI_ADMIN_TOKEN", ""),
   uazapiWebhookPublicUrl: optional("UAZAPI_WEBHOOK_PUBLIC_URL", ""),
   uazapiRequireWebhook: optional("UAZAPI_REQUIRE_WEBHOOK", "").toLowerCase() === "true",
+  evolutionApiUrl: optional("EVOLUTION_API_URL", ""),
+  evolutionApiKey: optional("EVOLUTION_API_KEY", ""),
+  evolutionWebhookPublicUrl: optional("EVOLUTION_WEBHOOK_PUBLIC_URL", ""),
+  whatsappProvider: optional("WHATSAPP_PROVIDER", ""),
   appEncryptionKey: optional("APP_ENCRYPTION_KEY", ""),
   n8nChatTriggerUrl: optional("N8N_CHAT_TRIGGER_URL", ""),
   /** Timeout (ms) for POST ao n8n quando NATIVE_AI_DISABLED + N8N_CHAT_TRIGGER_URL. */
@@ -42,6 +46,8 @@ export const config = {
   aiWorkerConcurrency: parseInt(optional("AI_WORKER_CONCURRENCY", "5"), 10),
   aiJobMaxAttempts: parseInt(optional("AI_JOB_MAX_ATTEMPTS", "5"), 10),
   aiJobBackoffBaseSeconds: parseInt(optional("AI_JOB_BACKOFF_BASE_SECONDS", "2"), 10),
+  /** Quiet window after the last user bubble before the worker flushes the turn. */
+  aiInboundQuietSeconds: parseInt(optional("AI_INBOUND_QUIET_SECONDS", "8"), 10),
   // n8n outbound events (optional)
   n8nEventsWebhookUrl: optional("N8N_EVENTS_WEBHOOK_URL", ""),
   n8nEventsSecret: optional("N8N_EVENTS_SECRET", ""),

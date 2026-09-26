@@ -1,3 +1,4 @@
+import "../load-env.js";
 import bcrypt from "bcryptjs";
 import pg from "pg";
 
@@ -63,7 +64,13 @@ async function seed() {
       console.log("Created admin profile (email:", email, ")");
     } else {
       profileId = profileResult.rows[0].id;
-      console.log("Admin profile already exists (email:", email, ")");
+      await client.query(
+        `UPDATE public.profiles
+         SET password_hash = $1, full_name = COALESCE(full_name, $2), barbershop_id = COALESCE(barbershop_id, $3)
+         WHERE id = $4`,
+        [passwordHash, process.env.SEED_ADMIN_NAME ?? "Admin", barbershopId, profileId]
+      );
+      console.log("Updated admin password for", email);
     }
     await client.query(
       `INSERT INTO public.account_memberships (profile_id, account_id, role)
