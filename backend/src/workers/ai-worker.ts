@@ -17,6 +17,7 @@ import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-ev
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
 import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
 import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
+import { maybeReapStuckAiJobs } from "./ai-jobs-reaper.js";
 import OpenAI from "openai";
 
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
@@ -823,6 +824,8 @@ async function processOneJob(): Promise<boolean> {
 export async function runAiWorkerCycle(options?: { maxJobs?: number }): Promise<{ processed: number }> {
   const maxJobs = options?.maxJobs ?? 10;
   let processed = 0;
+  // Devolve à fila (ou manda a dead-letter) jobs presos em `processing` por worker que morreu.
+  await maybeReapStuckAiJobs();
   while (processed < maxJobs) {
     const did = await processOneJob();
     if (!did) break;

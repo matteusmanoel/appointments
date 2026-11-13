@@ -46,6 +46,10 @@ export const config = {
   aiWorkerConcurrency: parseInt(optional("AI_WORKER_CONCURRENCY", "5"), 10),
   aiJobMaxAttempts: parseInt(optional("AI_JOB_MAX_ATTEMPTS", "5"), 10),
   aiJobBackoffBaseSeconds: parseInt(optional("AI_JOB_BACKOFF_BASE_SECONDS", "2"), 10),
+  /** ai_jobs em `processing` há mais que isto voltam à fila (ou vão a dead-letter se esgotaram tentativas). */
+  aiJobProcessingTimeoutSeconds: parseInt(optional("AI_JOB_PROCESSING_TIMEOUT_SECONDS", "600"), 10),
+  /** Intervalo mínimo entre execuções do reaper em cada processo do worker. */
+  aiJobReaperIntervalSeconds: parseInt(optional("AI_JOB_REAPER_INTERVAL_SECONDS", "60"), 10),
   /** Quiet window after the last user bubble before the worker flushes the turn. */
   aiInboundQuietSeconds: parseInt(optional("AI_INBOUND_QUIET_SECONDS", "8"), 10),
   // n8n outbound events (optional)
