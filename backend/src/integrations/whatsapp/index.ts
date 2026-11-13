@@ -3,6 +3,7 @@ import { config } from "../../config.js";
 import { decrypt } from "../encryption.js";
 import { pingUazapi } from "../uazapi/client.js";
 import { pingEvolution } from "./evolution-client.js";
+import { evolutionInstanceNameFor, resolveWhatsAppProvider } from "./provider-config.js";
 import { EvolutionSession } from "./evolution-session.js";
 import { UazapiSession, createUazapiToken } from "./uazapi-session.js";
 import type {
@@ -23,10 +24,7 @@ const CONNECTION_SELECT = `
 `;
 
 export function defaultWhatsAppProvider(): WhatsAppProviderName {
-  const explicit = (process.env.WHATSAPP_PROVIDER ?? "").toLowerCase();
-  if (explicit === "evolution" || explicit === "uazapi") return explicit;
-  if (process.env.EVOLUTION_API_URL) return "evolution";
-  return "uazapi";
+  return resolveWhatsAppProvider();
 }
 
 export async function loadConnection(
@@ -67,7 +65,7 @@ export async function loadConnection(
 
 function sessionFromRow(row: ConnectionRow): WhatsAppSession {
   if (row.provider === "evolution") {
-    const name = row.evolution_instance_name ?? `nh-${row.barbershop_id.replace(/-/g, "").slice(0, 16)}`;
+    const name = evolutionInstanceNameFor(row.barbershop_id, row.evolution_instance_name);
     return new EvolutionSession(row.barbershop_id, name, row);
   }
   const enc = row.uazapi_instance_token_encrypted;
@@ -104,7 +102,7 @@ export async function ensureWhatsAppSession(
   if (row && row.provider === provider) return sessionFromRow(row);
 
   if (provider === "evolution") {
-    const name = `nh-${barbershopId.replace(/-/g, "").slice(0, 16)}`;
+    const name = evolutionInstanceNameFor(barbershopId);
     await pool.query(
       `INSERT INTO public.barbershop_whatsapp_connections
          (barbershop_id, provider, evolution_instance_name, status, updated_at)

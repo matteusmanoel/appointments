@@ -1,3 +1,4 @@
+import { evolutionInstanceNameFor } from "./provider-config.js";
 import { pool } from "../../db.js";
 import { config } from "../../config.js";
 import * as evo from "./evolution-client.js";
@@ -12,9 +13,7 @@ import type {
 } from "./types.js";
 
 function instanceNameFor(barbershopId: string, existing: string | null): string {
-  if (existing && existing.trim()) return existing.trim();
-  const compact = barbershopId.replace(/-/g, "").slice(0, 16);
-  return `nh-${compact}`;
+  return evolutionInstanceNameFor(barbershopId, existing);
 }
 
 export function evolutionWebhookUrl(): string {

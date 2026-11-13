@@ -153,3 +153,32 @@ variable "lambda_zip_path" {
   description = "Zip real do backend (dist + node_modules). Vazio usa placeholder só para plan/validate."
   default     = ""
 }
+
+variable "whatsapp_provider" {
+  type        = string
+  description = "Provider de WhatsApp: evolution (padrão) ou uazapi. A escolha de produção é decisão do dono do projeto."
+  default     = "evolution"
+  validation {
+    condition     = contains(["evolution", "uazapi"], var.whatsapp_provider)
+    error_message = "whatsapp_provider deve ser \"evolution\" ou \"uazapi\"."
+  }
+}
+
+variable "evolution_api_url" {
+  type        = string
+  description = "URL base da Evolution API (host externo, sempre ligado). Nada é provisionado aqui."
+  default     = ""
+}
+
+variable "evolution_api_key" {
+  type        = string
+  description = "API key da Evolution. Nunca commitar o valor real."
+  default     = ""
+  sensitive   = true
+}
+
+variable "whatsapp_instance_prefix" {
+  type        = string
+  description = "Prefixo das instâncias da NavalhIA no host de WhatsApp (isola de outros apps no mesmo host)."
+  default     = "navalhia"
+}
