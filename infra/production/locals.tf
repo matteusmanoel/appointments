@@ -15,22 +15,28 @@ locals {
   acm_cdn_count             = var.attach_custom_domains ? 1 : 0
   acm_api_count             = var.attach_custom_domains ? 1 : 0
   ses_domain_identity_count = var.attach_custom_domains ? 1 : 0
-  ses_sender_identity_count = (!var.attach_custom_domains && var.ses_sender_email != "") ? 1 : 0
+  # Com o flag false, ses_sender_email é obrigatório (validation); a identidade de e-mail sempre é criada.
+  ses_sender_identity_count = var.attach_custom_domains ? 0 : 1
   apigw_custom_domain_count = var.attach_custom_domains ? 1 : 0
 
   # Sem domínio próprio: APP_URL vem de app_public_url (Vercel). Não cair no FQDN customizado.
-  app_url         = var.attach_custom_domains ? "https://${local.app_fqdn}" : trimsuffix(var.app_public_url, "/")
-  api_public_base = var.attach_custom_domains ? "https://${local.api_fqdn}" : trimsuffix(var.api_public_url, "/")
+  app_url = var.attach_custom_domains ? "https://${local.app_fqdn}" : trimsuffix(var.app_public_url, "/")
+  # URL pública da API: domínio customizado, ou override opcional, ou o api_endpoint do HTTP API.
+  # aws_apigatewayv2_api.http não depende da Lambda (a integration é que depende das duas),
+  # então referenciar api_endpoint no env da Lambda não forma ciclo. Sem isso, EVOLUTION_WEBHOOK_PUBLIC_URL
+  # vazio faz o backend cair em APP_URL (Vercel) no 1º apply.
+  api_public_base = var.attach_custom_domains ? "https://${local.api_fqdn}" : trimsuffix(
+    var.api_public_url != "" ? var.api_public_url : aws_apigatewayv2_api.http.api_endpoint,
+    "/",
+  )
 
   cors_origin = var.cors_origin
 
-  # api_public_url vazio (1º apply) deixa os webhooks em branco de propósito — preencha após o output api_gateway_url.
-  # Não use aws_apigatewayv2_api.http.api_endpoint aqui: ciclo API Gateway ↔ env da Lambda.
-  uazapi_webhook_public_url    = local.api_public_base != "" ? "${local.api_public_base}/api/webhooks/uazapi" : ""
-  evolution_webhook_public_url = local.api_public_base != "" ? "${local.api_public_base}/api/webhooks/evolution" : ""
+  uazapi_webhook_public_url    = "${local.api_public_base}/api/webhooks/uazapi"
+  evolution_webhook_public_url = "${local.api_public_base}/api/webhooks/evolution"
 
-  # Sem domínio: remetente = identidade de e-mail individual (ses_sender_email), se preenchida.
-  from_email = var.attach_custom_domains ? var.from_email : (var.ses_sender_email != "" ? var.ses_sender_email : var.from_email)
+  # Sem domínio: remetente = identidade de e-mail individual (obrigatória).
+  from_email = var.attach_custom_domains ? var.from_email : var.ses_sender_email
 
   ses_identity_arns = compact(concat(
     local.ses_domain_identity_count == 1 ? [aws_sesv2_email_identity.domain[0].arn] : [],

@@ -595,11 +595,31 @@ resource "aws_sesv2_email_identity" "domain" {
   email_identity = var.domain_name
 }
 
-# Sem domínio próprio: identidade de e-mail opcional, verificação individual (link no inbox).
+# Sem domínio próprio: identidade de e-mail obrigatória (ses_sender_email), verificação individual (link no inbox).
 # Em sandbox, e-mail para destinatários não verificados permanece pendente.
 resource "aws_sesv2_email_identity" "sender" {
   count          = local.ses_sender_identity_count
   email_identity = var.ses_sender_email
+}
+
+# Endereços sem índice → [0] depois de introduzir count. Sem estes blocos, um state
+# já aplicado (certificados / identidade de domínio) destruiria e recriaria os recursos.
+# Se o "from" não existir no state, o bloco é no-op. Com count=0 e o recurso ainda no
+# state antigo, o move vai para [0] e em seguida o count 0 remove o recurso (esperado
+# neste deploy sem domínio; não é destroy+recreate).
+moved {
+  from = aws_acm_certificate.cdn
+  to   = aws_acm_certificate.cdn[0]
+}
+
+moved {
+  from = aws_acm_certificate.api
+  to   = aws_acm_certificate.api[0]
+}
+
+moved {
+  from = aws_sesv2_email_identity.domain
+  to   = aws_sesv2_email_identity.domain[0]
 }
 
 # ---------------------------------------------------------------------------

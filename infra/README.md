@@ -8,7 +8,7 @@ CloudFormation em `infra/api/` e `infra/static/` é legado da conta antiga (`321
 ## Arquitetura aprovada
 
 - Frontend: produção imediata na **Vercel** (`https://appointments-psi-five.vercel.app`). S3 (`us-east-2`) + CloudFront continuam no stack; com `attach_custom_domains=false` o CloudFront usa o certificado padrão (sem alias `app.navalhia.com` / apex).
-- API: Lambda + HTTP API (`us-east-2`). Sem domínio próprio, a URL pública é o `api_endpoint` do API Gateway (`output api_gateway_url`), gravada em `api_public_url` **depois** do primeiro apply (referenciar o endpoint no mesmo módulo cria ciclo API ↔ Lambda).
+- API: Lambda + HTTP API (`us-east-2`). Sem domínio próprio, a URL pública dos webhooks é o `api_endpoint` do API Gateway já no primeiro apply (`aws_apigatewayv2_api.http` não depende da Lambda; a integration é que une as duas — não há ciclo). `api_public_url` é só um override opcional.
 - Workers: Lambda + EventBridge (1 min / 5 min / 5 min)
 - Banco: **Supabase Pro** (recriar o projeto; MCP ainda não aponta para NavalhIA) — na prática o alvo atual é Neon (pooler em `DATABASE_URL`, direto em `DATABASE_URL_DIRECT`).
 - WhatsApp: o example de produção usa **`whatsapp_provider=evolution`** (host externo; nada é provisionado aqui). Uazapi continua disponível no código.
@@ -112,9 +112,9 @@ Ordem segura:
 O que usar no lugar:
 
 - `app_public_url` = `https://appointments-psi-five.vercel.app` (vira `APP_URL`).
-- `api_public_url` vazio no 1º apply; depois copie o output `api_gateway_url` e faça um 2º apply (preenche `UAZAPI_WEBHOOK_PUBLIC_URL` / `EVOLUTION_WEBHOOK_PUBLIC_URL`).
-- `cors_origin` = a origem Vercel; depois do 1º apply, acrescente `,https://<output cloudfront_domain>`.
-- `ses_sender_email`: variável **sem default** — declare no tfvars. Vazio = não cria identidade. Preenchido = `aws_sesv2_email_identity.sender` (verifique o e-mail no inbox). `FROM_EMAIL` passa a ser esse endereço.
+- Webhooks (`UAZAPI_WEBHOOK_PUBLIC_URL` / `EVOLUTION_WEBHOOK_PUBLIC_URL`) usam `aws_apigatewayv2_api.http.api_endpoint` no 1º apply. `api_public_url` só como override. Sem isso, com a URL dedicada vazia, `evolutionWebhookUrl()` cai em `APP_URL` (a origem Vercel).
+- `cors_origin` não pode ser vazio (validation). Valor inicial = origem Vercel; depois do 1º apply, acrescente `,https://<output cloudfront_domain>` (2º apply só para CORS do CloudFront, se for usar o SPA no CDN).
+- `ses_sender_email`: **sem default e obrigatória** com o flag false (o plan recusa vazio). Cria `aws_sesv2_email_identity.sender`; `FROM_EMAIL` é esse endereço. Verifique o link no inbox.
 - Output `custom_domain_resource_counts` e os `local.*_count` devem ser 0 para ACM / SES de domínio / API domain quando o flag é false. Confira com `terraform console -var-file=terraform.tfvars.example` (sem plan/apply) avaliando `local.acm_cdn_count`, `local.acm_api_count`, `local.ses_domain_identity_count` e `local.apigw_custom_domain_count` (devem ser 0).
 
 ## Domínio Cloudflare (`navalhia.com`) — passo posterior

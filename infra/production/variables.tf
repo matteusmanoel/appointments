@@ -53,11 +53,11 @@ variable "from_email" {
 
 variable "ses_sender_email" {
   type        = string
-  description = "Identidade SES de e-mail (verificação individual, não de domínio). Sem default de propósito: informe no tfvars (vazio = não cria a identidade). Usada quando attach_custom_domains=false. Em sandbox, só destinatários também verificados recebem; os demais ficam pendentes."
+  description = "Identidade SES de e-mail (verificação individual, não de domínio). Sem default. Obrigatória quando attach_custom_domains=false — o plan recusa vazio para não deixar o remetente sem verificação. Com o flag true (identidade de domínio), pode ser vazio. Em sandbox, só destinatários também verificados recebem; os demais ficam pendentes."
 
   validation {
-    condition     = var.ses_sender_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.ses_sender_email))
-    error_message = "ses_sender_email deve ser vazio ou um endereço de e-mail."
+    condition     = var.attach_custom_domains || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.ses_sender_email))
+    error_message = "Com attach_custom_domains=false, ses_sender_email é obrigatório (endereço a verificar individualmente no SES). Não deixe o remetente sem identidade."
   }
 }
 
@@ -69,14 +69,19 @@ variable "app_public_url" {
 
 variable "api_public_url" {
   type        = string
-  description = "URL pública da API quando attach_custom_domains=false. Preencha APÓS o primeiro apply com o output api_gateway_url. Não referencie aws_apigatewayv2_api.http.api_endpoint neste módulo: ciclo API Gateway ↔ Lambda. Com o flag true, é ignorada."
+  description = "Override opcional da URL pública da API quando attach_custom_domains=false. Vazio (padrão) usa aws_apigatewayv2_api.http.api_endpoint no mesmo apply (a API HTTP não depende da Lambda; não há ciclo). Com o flag true, é ignorada."
   default     = ""
 }
 
 variable "cors_origin" {
   type        = string
-  description = "Origens CORS da API, separadas por vírgula. Sem domínio próprio: URL de produção da Vercel; depois do 1º apply, acrescente https://<cloudfront_domain>."
+  description = "Origens CORS da API, separadas por vírgula. Não pode ser vazio (fail closed). Sem domínio próprio: URL de produção da Vercel; depois do 1º apply, acrescente https://<cloudfront_domain>."
   default     = "https://appointments-psi-five.vercel.app"
+
+  validation {
+    condition     = length([for o in split(",", var.cors_origin) : o if trimspace(o) != ""]) > 0
+    error_message = "cors_origin não pode ser vazio (fail closed). Informe ao menos uma origem, ex.: https://appointments-psi-five.vercel.app."
+  }
 }
 
 variable "log_retention_days" {

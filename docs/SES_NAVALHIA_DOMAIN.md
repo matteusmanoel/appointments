@@ -5,7 +5,7 @@
 O stack Terraform de produção (`infra/production`, região `us-east-2`) sobe com `attach_custom_domains=false`. Nesse modo:
 
 - **Não** se cria identidade SES de domínio (`aws_sesv2_email_identity.domain`) nem registros DKIM.
-- Informe `ses_sender_email` no `terraform.tfvars` (a variável **não tem default**). Vazio = o Terraform não cria identidade de remetente. Preenchido = cria `aws_sesv2_email_identity.sender` e a Lambda usa esse endereço como `FROM_EMAIL`.
+- Informe `ses_sender_email` no `terraform.tfvars` (a variável **não tem default** e é **obrigatória** quando `attach_custom_domains=false`; o plan recusa vazio). O Terraform cria `aws_sesv2_email_identity.sender` e a Lambda usa esse endereço como `FROM_EMAIL`.
 - A verificação é **individual**: o SES envia um link para o inbox de `ses_sender_email`. Sem clicar no link, a identidade não envia.
 - A conta está em **sandbox** (limite baixo; só entrega para identidades verificadas). E-mail para destinatários **não verificados permanece pendente** (não chega) até você verificar também o destinatário ou solicitar *Production access* no console SES (`us-east-2`).
 

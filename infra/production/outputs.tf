@@ -84,7 +84,7 @@ output "app_url" {
 }
 
 output "webhook_public_urls" {
-  description = "URLs públicas dos webhooks. Vazias no 1º apply até preencher api_public_url com api_gateway_url."
+  description = "URLs públicas dos webhooks. Sem domínio próprio, derivadas de api_endpoint (ou de api_public_url se houver override) já no 1º apply."
   value = {
     uazapi    = local.uazapi_webhook_public_url
     evolution = local.evolution_webhook_public_url
