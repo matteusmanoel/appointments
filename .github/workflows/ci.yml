@@ -2,7 +2,8 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # `develop` é a branch de integração (base dos PRs de correção): sem ela, o CI só rodava ao abrir PR para a main.
+    branches: [main, develop]
 
 jobs:
   test:
