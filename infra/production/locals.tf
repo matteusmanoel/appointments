@@ -58,6 +58,7 @@ locals {
     EVOLUTION_WEBHOOK_PUBLIC_URL    = local.evolution_webhook_public_url
     N8N_CHAT_TRIGGER_URL            = ""
     TOOLS_API_KEY                   = ""
+    BILLING_NOTIFY_PAYMENT_FAILED   = tostring(var.billing_notify_payment_failed)
   }
 
   # Segredos dos webhooks de WhatsApp (valores vêm de variáveis sem default útil; ver docs/RUNBOOK_WEBHOOK_SECRET.md).

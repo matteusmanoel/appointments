@@ -11,6 +11,9 @@ function isUndefinedTableOrColumn(e: unknown): boolean {
  * Keep this idempotent and conservative.
  */
 export async function ensureCriticalSchema(): Promise<void> {
+  for (const col of ["subscription_status_changed_at", "subscription_current_period_end", "subscription_event_at"]) {
+    await pool.query(`ALTER TABLE public.barbershops ADD COLUMN IF NOT EXISTS ${col} timestamptz`).catch(() => {});
+  }
   // Endurecimento de autenticação/cobrança (ver supabase/migrations/20261113120000_auth_hardening.sql).
   await pool
     .query(
@@ -39,6 +42,19 @@ export async function ensureCriticalSchema(): Promise<void> {
       `CREATE TABLE IF NOT EXISTS public.checkout_session_exchanges (
         stripe_session_id text PRIMARY KEY,
         consumed_at timestamptz NOT NULL DEFAULT now()
+      )`
+    )
+    .catch(() => {});
+
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.billing_notice_log (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        barbershop_id uuid NOT NULL REFERENCES public.barbershops(id) ON DELETE CASCADE,
+        kind text NOT NULL,
+        ref text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (barbershop_id, kind, ref)
       )`
     )
     .catch(() => {});

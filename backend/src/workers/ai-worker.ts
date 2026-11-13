@@ -13,6 +13,7 @@ import { logTurnTrace, maskPhone, previewError, previewText, type AgentTurnTrace
 import { persistTurnSheet } from "../ai/turn-sheet-store.js";
 import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
+import { aiGateState, getSubscriptionAccess } from "../billing-access.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
 import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
@@ -492,18 +493,27 @@ async function processOneJob(): Promise<boolean> {
       turnSink.state = "cached_reply";
       turnSink.replyLen = reply.length;
     } else if (config.nativeAiDisabled) {
-      try {
-        const raw = await callN8nAgent(conversationId, fromPhone, barbershopId, String(userTextFromJob ?? ""));
-        reply = sanitizeClientFacingReply(raw);
+      // O ramo n8n passa pela mesma porta da IA nativa (assinatura inativa / plano sem IA / limite).
+      const n8nGate = await aiGateState(barbershopId);
+      if (n8nGate) {
+        console.warn("[ai-worker] n8n bloqueado barbershopId=%s motivo=%s", barbershopId, n8nGate);
+        turnSink.state = n8nGate;
+        reply = "";
         turnSink.replyText = reply;
-        console.info("[ai-worker] jobId=%s n8n reply len=%s", jobId, reply.length);
-        turnSink.state = "n8n";
-        turnSink.replyLen = reply.length;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error("[ai-worker] jobId=%s n8n error: %s", jobId, msg);
-        reply = FALLBACK_MESSAGE;
-        turnSink.replyText = reply;
+      } else {
+        try {
+          const raw = await callN8nAgent(conversationId, fromPhone, barbershopId, String(userTextFromJob ?? ""));
+          reply = sanitizeClientFacingReply(raw);
+          turnSink.replyText = reply;
+          console.info("[ai-worker] jobId=%s n8n reply len=%s", jobId, reply.length);
+          turnSink.state = "n8n";
+          turnSink.replyLen = reply.length;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error("[ai-worker] jobId=%s n8n error: %s", jobId, msg);
+          reply = FALLBACK_MESSAGE;
+          turnSink.replyText = reply;
+        }
       }
       const convRowN8n = await pool.query<{ is_sandbox: boolean }>(
         `SELECT is_sandbox FROM public.ai_conversations WHERE id = $1`,
@@ -526,8 +536,14 @@ async function processOneJob(): Promise<boolean> {
       reply = FALLBACK_MESSAGE;
       turnSink.replyText = reply;
     } else {
+      const access = await getSubscriptionAccess(barbershopId);
       const usage = await getUsageAndLimit(barbershopId);
-      if (usage.hardExceeded) {
+      if (!access.allowed) {
+        console.warn("[ai-worker] assinatura inativa barbershopId=%s; IA pausada", barbershopId);
+        turnSink.state = "subscription_blocked";
+        reply = "";
+        turnSink.replyText = reply;
+      } else if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         turnSink.state = "hard_limit";
         reply = "";

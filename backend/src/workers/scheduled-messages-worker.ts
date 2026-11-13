@@ -1,5 +1,7 @@
 import "../load-env.js";
+import { getSubscriptionAccess } from "../billing-access.js";
 import { pool } from "../db.js";
+import { retryPaymentFailedNotices } from "../lib/billing-notify.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 import { recordAgendaChange } from "../agenda/record-agenda-change.js";
 import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
@@ -393,6 +395,13 @@ async function processOne(): Promise<boolean> {
     }
 
     try {
+      // Assinatura inativa pausa TODO envio automático (inclui cobrança de planos e reativação, que têm gate próprio).
+      const subscription = await getSubscriptionAccess(barbershopId);
+      if (!subscription.allowed) {
+        await markSkipped(id, "Assinatura inativa: envio automático pausado");
+        continue;
+      }
+
       const tzRows = await pool.query<{ timezone: string }>(
         `SELECT timezone FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
         [barbershopId]
@@ -646,6 +655,8 @@ async function runDailySweeps(): Promise<void> {
     // runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
     runPlanBillingCycleSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] plan billing cycle sweep:", e)),
     runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
+    // Reenvio do aviso de pagamento falho ao dono (só com BILLING_NOTIFY_PAYMENT_FAILED=true; no máx. 1x/15 min por processo).
+    retryPaymentFailedNotices().catch((e) => console.error("[scheduled-messages-worker] payment_failed notice retry:", e)),
   ]);
 }
 

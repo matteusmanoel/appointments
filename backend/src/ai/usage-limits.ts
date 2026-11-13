@@ -37,8 +37,9 @@ export async function getUsageAndLimit(barbershopId: string): Promise<UsageLimit
   const used = parseInt(countRow.rows[0]?.count ?? "0", 10);
   const plan = planRow.rows[0]?.billing_plan ?? "pro";
   const limit = LIMITS[plan] ?? LIMITS.pro;
-  const softExceeded = limit > 0 && used >= limit;
-  const hardExceeded = limit > 0 && used >= 2 * limit;
+  const softExceeded = limit === 0 ? true : used >= limit;
+  // Plano sem IA (limite 0, ex.: Essencial): bloqueio total — antes `limit > 0 &&` deixava a IA ilimitada.
+  const hardExceeded = limit === 0 ? true : used >= 2 * limit;
   return {
     used,
     limit,

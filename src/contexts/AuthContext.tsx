@@ -10,6 +10,8 @@ export type Profile = {
   role: string;
   must_change_password?: boolean;
   billing_plan?: BillingPlan;
+  /** Aviso de cobrança (tolerância ou IA pausada por falta de pagamento). */
+  billing_alert?: { level: "grace" | "blocked"; message: string; ends_at: string | null } | null;
   barbershops?: AuthProfileBarbershop[];
 };
 

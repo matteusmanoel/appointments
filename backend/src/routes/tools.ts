@@ -1,4 +1,5 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
+import { getSubscriptionAccess } from "../billing-access.js";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireToolsKey, getBarbershopId } from "../middleware/auth.js";
@@ -18,6 +19,24 @@ async function resolveBarbershopId(req: Request): Promise<string | null> {
 export const toolsRouter = Router();
 
 toolsRouter.use(requireToolsKey);
+
+// Assinatura inativa (carência vencida): as ferramentas (que criam agendamentos e clientes em nome da barbearia, via n8n)
+// também pausam, como a IA nativa, o worker agendado e os eventos do n8n.
+toolsRouter.use(async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const barbershopId = await resolveBarbershopId(req);
+    if (barbershopId) {
+      const access = await getSubscriptionAccess(barbershopId);
+      if (!access.allowed) {
+        res.status(402).json({ error: access.message ?? "Assinatura inativa", code: "subscription_blocked" });
+        return;
+      }
+    }
+    next();
+  } catch (e) {
+    next(e);
+  }
+});
 
 toolsRouter.get("/list_services", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = await resolveBarbershopId(req);

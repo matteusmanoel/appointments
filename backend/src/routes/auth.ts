@@ -8,6 +8,7 @@ import { pool } from "../db.js";
 import { config } from "../config.js";
 import { JwtPayload, requireJwt } from "../middleware/auth.js";
 import { sendPasswordResetEmail } from "../lib/ses.js";
+import { getSubscriptionAccess } from "../billing-access.js";
 
 const loginBody = z.object({ email: z.string().email(), password: z.string().min(1) });
 const forgotPasswordBody = z.object({ email: z.string().email() });
@@ -96,6 +97,7 @@ authRouter.get("/me", requireJwt, async (req: Request, res: Response): Promise<v
     role: row.role,
     must_change_password: Boolean(row.must_change_password),
     billing_plan: billingPlanForCurrent,
+    billing_alert: await billingAlertFor(currentBarbershopId),
     barbershops,
   });
 });
@@ -441,3 +443,11 @@ authRouter.post("/register", async (req: Request, res: Response): Promise<void> 
     },
   });
 });
+
+/** Aviso de cobrança para o painel (null quando está tudo certo). */
+async function billingAlertFor(barbershopId: string | null | undefined): Promise<{ level: "grace" | "blocked"; message: string; ends_at: string | null } | null> {
+  if (!barbershopId) return null;
+  const a = await getSubscriptionAccess(barbershopId);
+  if (a.level === "ok" || !a.message) return null;
+  return { level: a.level, message: a.message, ends_at: a.graceEndsAt ? a.graceEndsAt.toISOString() : null };
+}

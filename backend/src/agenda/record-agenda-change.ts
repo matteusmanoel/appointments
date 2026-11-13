@@ -1,3 +1,4 @@
+import { getSubscriptionAccess } from "../billing-access.js";
 import { pool } from "../db.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 import {
@@ -106,6 +107,8 @@ async function notifyWaitlist(event: AgendaChangeEvent): Promise<WaitlistHit | n
     notified: false,
   };
   if (!session) return hit;
+  // Aviso automático ao cliente da lista de espera: pausado com assinatura inativa (a vaga segue registrada em `hit`).
+  if (!(await getSubscriptionAccess(event.barbershopId)).allowed) return hit;
   const first = (row.client_name ?? "").trim().split(/\s+/)[0] || "";
   const greeting = first ? `${first}, ` : "";
   try {
