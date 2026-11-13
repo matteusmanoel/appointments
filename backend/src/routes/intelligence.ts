@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ALL_ROLES, accessRules } from "../middleware/rbac.js";
 import {
   cancelQueuedReactivation,
   enqueueReactivation,
@@ -12,6 +13,8 @@ import { pool } from "../db.js";
 
 export const intelligenceRouter = Router();
 intelligenceRouter.use(requireJwt);
+// RBAC: reativação (campanhas) só admin/manager; resumo do dia é de todos.
+intelligenceRouter.use(accessRules([{ path: /^\/day-summary\/?$/, roles: ALL_ROLES }], ADMIN_MANAGER));
 
 const windowQuery = z.object({
   window_days: z.preprocess(

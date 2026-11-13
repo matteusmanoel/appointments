@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ADMIN_ONLY, requireRole } from "../middleware/rbac.js";
 
 const unavailabilityIntervalSchema = z.object({
   start: z.string().regex(/^\d{2}:\d{2}$/),
@@ -90,7 +91,7 @@ barbershopsRouter.get("/", requireJwt, async (req: Request, res: Response): Prom
   res.json(r.rows[0]);
 });
 
-barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Promise<void> => {
+barbershopsRouter.patch("/", requireJwt, requireRole(...ADMIN_MANAGER), async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const parsed = updateBody.safeParse(req.body);
   if (!parsed.success) {
@@ -166,7 +167,7 @@ barbershopsRouter.patch("/", requireJwt, async (req: Request, res: Response): Pr
 });
 
 // --- Create new branch (Premium only) ---
-barbershopsRouter.post("/", requireJwt, async (req: Request, res: Response): Promise<void> => {
+barbershopsRouter.post("/", requireJwt, requireRole(...ADMIN_ONLY), async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const parsed = createBranchBody.safeParse(req.body);
   if (!parsed.success) {
@@ -264,7 +265,7 @@ barbershopsRouter.get("/closures", requireJwt, async (req: Request, res: Respons
   res.json(r.rows);
 });
 
-barbershopsRouter.post("/closures", requireJwt, async (req: Request, res: Response): Promise<void> => {
+barbershopsRouter.post("/closures", requireJwt, requireRole(...ADMIN_MANAGER), async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const parsed = createClosureBody.safeParse(req.body);
   if (!parsed.success) {
@@ -297,7 +298,7 @@ barbershopsRouter.get("/closures/:id", requireJwt, async (req: Request, res: Res
   res.json(r.rows[0]);
 });
 
-barbershopsRouter.patch("/closures/:id", requireJwt, async (req: Request, res: Response): Promise<void> => {
+barbershopsRouter.patch("/closures/:id", requireJwt, requireRole(...ADMIN_MANAGER), async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const { id } = req.params;
   const parsed = updateClosureBody.safeParse(req.body);
@@ -354,7 +355,7 @@ barbershopsRouter.patch("/closures/:id", requireJwt, async (req: Request, res: R
   res.json(r.rows[0]);
 });
 
-barbershopsRouter.delete("/closures/:id", requireJwt, async (req: Request, res: Response): Promise<void> => {
+barbershopsRouter.delete("/closures/:id", requireJwt, requireRole(...ADMIN_MANAGER), async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);
   const { id } = req.params;
   const r = await pool.query(

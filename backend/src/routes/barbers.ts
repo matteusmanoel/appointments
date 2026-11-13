@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ALL_ROLES, READ_METHODS, accessRules } from "../middleware/rbac.js";
 
 const createBody = z.object({
   name: z.string().min(1),
@@ -17,6 +18,8 @@ const updateBody = createBody.partial();
 export const barbersRouter = Router();
 
 barbersRouter.use(requireJwt);
+// RBAC: equipe (barbeiros) — todos leem; criar/editar/excluir só admin/manager.
+barbersRouter.use(accessRules([{ methods: READ_METHODS, path: /^\//, roles: ALL_ROLES }], ADMIN_MANAGER));
 
 barbersRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   let scope: { single: string } | { all: string[] };

@@ -1,10 +1,13 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopScope } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ALL_ROLES, accessRules } from "../middleware/rbac.js";
 
 export const reportsRouter = Router();
 
 reportsRouter.use(requireJwt);
+// RBAC: relatórios financeiros/comissões só admin/manager; o feed de atividade da agenda é de todos.
+reportsRouter.use(accessRules([{ path: /^\/agenda-activity\/?$/, roles: ALL_ROLES }], ADMIN_MANAGER));
 
 reportsRouter.get("/revenue_by_day", async (req: Request, res: Response): Promise<void> => {
   let scope: { single: string } | { all: string[] };

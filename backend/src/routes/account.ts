@@ -1,12 +1,13 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { ADMIN_ONLY, requireRole } from "../middleware/rbac.js";
 import { cancelStripeSubscription } from "./billing.js";
 
 export const accountRouter = Router();
 
 /** DELETE /api/account/barbershop — delete current barbershop (unit). Requires owner or admin. */
-accountRouter.delete("/barbershop", requireJwt, async (req: Request, res: Response): Promise<void> => {
+accountRouter.delete("/barbershop", requireJwt, requireRole(...ADMIN_ONLY), async (req: Request, res: Response): Promise<void> => {
   const profileId = req.auth?.profileId;
   if (!profileId) {
     res.status(401).json({ error: "Unauthorized" });
@@ -58,7 +59,7 @@ accountRouter.delete("/barbershop", requireJwt, async (req: Request, res: Respon
 });
 
 /** DELETE /api/account — delete entire account (all barbershops). Requires owner. */
-accountRouter.delete("/", requireJwt, async (req: Request, res: Response): Promise<void> => {
+accountRouter.delete("/", requireJwt, requireRole(...ADMIN_ONLY), async (req: Request, res: Response): Promise<void> => {
   const profileId = req.auth?.profileId;
   if (!profileId) {
     res.status(401).json({ error: "Unauthorized" });
