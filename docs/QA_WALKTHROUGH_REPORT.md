@@ -13,7 +13,7 @@ O app carregou corretamente. Dashboard usa API real para agendamentos; gráficos
 ## 2. Login
 
 - Rota `/login` existe. Campos email/senha. Placeholder: admin@navalhia.com.br
-- Credenciais sugeridas: admin@navalhia.com.br / admin123
+- Credenciais: as do seed local (a senha agora é definida por -v admin_password em scripts/seed-production.sql; sem senha padrão)
 - AuthContext lê profile de localStorage; ProtectedRoute redireciona se não logado
 - 401 na API redireciona para /login
 
