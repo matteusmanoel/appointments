@@ -13,6 +13,7 @@ import { logTurnTrace, maskPhone, previewError, previewText, type AgentTurnTrace
 import { persistTurnSheet } from "../ai/turn-sheet-store.js";
 import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
+import { maybeAlertAiUsage } from "../ai/usage-alert.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
 import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
@@ -526,6 +527,8 @@ async function processOneJob(): Promise<boolean> {
       turnSink.replyText = reply;
     } else {
       const usage = await getUsageAndLimit(barbershopId);
+      // Aviso ao dono em 80% do limite (atrás de AI_USAGE_ALERT_ENABLED; desligado por padrão; nunca bloqueia o turno).
+      void maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit });
       if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         turnSink.state = "hard_limit";

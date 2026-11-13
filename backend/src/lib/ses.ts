@@ -234,3 +234,46 @@ Se você não pediu a recuperação de senha, ignore este e-mail. Sua senha atua
     })
   );
 }
+
+export type AiUsageAlertEmailParams = {
+  to: string;
+  barbershopName: string;
+  appUrl: string;
+  used: number;
+  limit: number;
+  thresholdPct: number;
+};
+
+/** Aviso ao dono quando as respostas de IA do mês chegam a X% do limite. Só é chamado com AI_USAGE_ALERT_ENABLED=true (ver ai/usage-alert.ts). */
+export async function sendAiUsageAlertEmail(params: AiUsageAlertEmailParams): Promise<void> {
+  const from = process.env.FROM_EMAIL;
+  if (!from) return;
+  const settingsUrl = `${ensureNoTrailingSlash(params.appUrl)}/app/configuracoes`;
+  const textBody = `
+Olá,
+
+As respostas de IA de ${params.barbershopName} neste mês chegaram a ${params.thresholdPct}% do limite do plano (${params.used} de ${params.limit}).
+
+Ao ultrapassar o limite, o atendimento automático continua por uma margem e depois pausa até o próximo mês. Para ampliar o limite, veja os planos em ${settingsUrl}.
+`.trim();
+  const htmlBody = buildEmailLayout({
+    baseUrl: params.appUrl,
+    title: "Uso da IA no limite",
+    bodyHtml: `
+    <p style="margin: 0 0 12px 0;">Olá,</p>
+    <p style="margin: 0 0 16px 0;">As respostas de IA de <strong>${escapeHtml(params.barbershopName)}</strong> neste mês chegaram a <strong>${params.thresholdPct}%</strong> do limite do plano (${params.used} de ${params.limit}).</p>
+    <p style="margin: 0 0 16px 0;">Ao ultrapassar o limite, o atendimento automático continua por uma margem e depois pausa até o próximo mês.</p>`.trim(),
+    buttonText: "Ver planos",
+    buttonUrl: settingsUrl,
+  });
+  await ses.send(
+    new SendEmailCommand({
+      Source: from,
+      Destination: { ToAddresses: [params.to] },
+      Message: {
+        Subject: { Data: `Uso da IA em ${params.thresholdPct}% do limite - NavalhIA` },
+        Body: { Text: { Data: textBody }, Html: { Data: htmlBody } },
+      },
+    }),
+  );
+}
