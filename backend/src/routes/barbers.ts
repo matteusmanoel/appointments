@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
+import { requireTenantRefs, uuidParam } from "../lib/tenant-refs.js";
 
 const createBody = z.object({
   name: z.string().min(1),
@@ -17,6 +18,7 @@ const updateBody = createBody.partial();
 export const barbersRouter = Router();
 
 barbersRouter.use(requireJwt);
+barbersRouter.param("id", uuidParam);
 
 barbersRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   let scope: { single: string } | { all: string[] };

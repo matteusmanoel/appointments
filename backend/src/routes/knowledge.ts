@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { getBarbershopId } from "../middleware/auth.js";
+import { requireTenantRefs } from "../lib/tenant-refs.js";
 import {
   buildKnowledgeKey,
   createPresignedPutUrl,
@@ -155,6 +156,7 @@ knowledgeRouter.post("/documents", async (req: Request, res: Response): Promise<
       return;
     }
     const { title, original_filename, mime_type, source_id } = parsed.data;
+    if (source_id && !(await requireTenantRefs(res, barbershopId, { knowledgeSources: [source_id] }))) return;
     const r = await pool.query<{
       id: string;
       s3_bucket: string | null;
@@ -170,8 +172,8 @@ knowledgeRouter.post("/documents", async (req: Request, res: Response): Promise<
     const bucket = process.env.KNOWLEDGE_S3_BUCKET ?? null;
     const key = buildKnowledgeKey(barbershopId, row.id, original_filename);
     await pool.query(
-      `UPDATE public.barbershop_ai_knowledge_documents SET s3_bucket = $1, s3_key = $2, updated_at = now() WHERE id = $3`,
-      [bucket, key, row.id]
+      `UPDATE public.barbershop_ai_knowledge_documents SET s3_bucket = $1, s3_key = $2, updated_at = now() WHERE id = $3 AND barbershop_id = $4`,
+      [bucket, key, row.id, barbershopId]
     );
     const uploadUrl = await createPresignedPutUrl(key, mime_type);
     res.status(201).json({
@@ -221,8 +223,8 @@ knowledgeRouter.post("/documents/:id/complete", async (req: Request, res: Respon
     await pool.query(
       `UPDATE public.barbershop_ai_knowledge_documents
        SET status = 'processing', checksum_sha256 = $1, size_bytes = $2, updated_at = now()
-       WHERE id = $3`,
-      [parsed.data.checksum_sha256 ?? null, parsed.data.size_bytes ?? null, documentId]
+       WHERE id = $3 AND barbershop_id = $4`,
+      [parsed.data.checksum_sha256 ?? null, parsed.data.size_bytes ?? null, documentId, barbershopId]
     );
     await pool.query(
       `INSERT INTO public.barbershop_ai_knowledge_jobs (barbershop_id, document_id, type, status, updated_at)

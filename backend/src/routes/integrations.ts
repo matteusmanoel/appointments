@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
 import { config } from "../config.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { requireTenantRefs } from "../lib/tenant-refs.js";
 import { whatsappRouter } from "./whatsapp.js";
 import { buildFollowUp30d, resolveReminderSendBody } from "../outbound/templates.js";
 import { appendReminderTranscript, loadReminderAppointment } from "../outbound/scheduled-messages.js";
@@ -717,6 +718,7 @@ integrationsRouter.post("/automations/campaigns", async (req: Request, res: Resp
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
+  if (!(await requireTenantRefs(res, barbershopId, { clients: parsed.data.client_ids, messageTemplates: [parsed.data.template_id] }))) return;
   let body = parsed.data.body;
   if (!body && parsed.data.template_id) {
     const t = await pool.query<{ body: string }>(

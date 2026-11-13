@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { requireTenantRefs } from "../lib/tenant-refs.js";
 import {
   cancelQueuedReactivation,
   enqueueReactivation,
@@ -74,6 +75,7 @@ intelligenceRouter.post("/reactivation/queue", async (req: Request, res: Respons
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
+  if (!(await requireTenantRefs(res, getBarbershopId(req), { clients: parsed.data.client_ids }))) return;
   try {
     const result = await enqueueReactivation(
       getBarbershopId(req),

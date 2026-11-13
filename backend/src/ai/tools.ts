@@ -1206,8 +1206,8 @@ export async function upsertClient(
          notes = COALESCE($3, notes),
          name_confirmed = CASE WHEN $2::text IS NOT NULL THEN true ELSE name_confirmed END,
          updated_at = now()
-       WHERE id = $1`,
-      [row.id, nameForUpdate, notes ?? null],
+       WHERE id = $1 AND barbershop_id = $4`,
+      [row.id, nameForUpdate, notes ?? null, barbershopId],
     );
     const updated = await pool.query<{
       id: string;
@@ -1257,8 +1257,13 @@ export async function createAppointment(
   conversationId?: string | null,
 ): Promise<unknown> {
   const resolveClientId = async (): Promise<string | null> => {
-    if (params.client_id && typeof params.client_id === "string")
-      return params.client_id;
+    if (params.client_id && typeof params.client_id === "string") {
+      // client_id vindo do LLM/chamador precisa ser desta barbearia
+      const own = isValidUuid(params.client_id)
+        ? await pool.query("SELECT 1 FROM public.clients WHERE id = $1 AND barbershop_id = $2", [params.client_id, barbershopId])
+        : { rows: [] as unknown[] };
+      return own.rows.length > 0 ? params.client_id : null;
+    }
     const phone = canonicalClientPhone((params.client_phone ?? "").toString());
     if (!phone) return null;
     const r = (await upsertClient(

@@ -11,10 +11,12 @@ import {
   recordPlanChargeReceipt,
 } from "../outbound/plan-billing.js";
 import { barbershopTimezone } from "../outbound/dispatch-gate.js";
+import { requireTenantRefs, uuidParam } from "../lib/tenant-refs.js";
 import { DAILY_CAP_REACHED_MESSAGE, dispatchWaitMessage } from "../outbound/dispatch-policy.js";
 
 export const plansRouter = Router();
 plansRouter.use(requireJwt);
+plansRouter.param("id", uuidParam);
 
 const billingCycleEnum = z.enum(["monthly", "quarterly", "yearly"]);
 
@@ -65,6 +67,7 @@ plansRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     const d = parsed.data;
+    if (!(await requireTenantRefs(res, barbershopId, { services: d.service_ids }))) return;
     const r = await pool.query<{ id: string }>(
       `INSERT INTO public.barbershop_plans
          (barbershop_id, name, description, service_ids, price, billing_cycle, max_visits, is_active, updated_at)
@@ -93,6 +96,7 @@ plansRouter.put("/:id", async (req: Request, res: Response) => {
       return;
     }
     const d = parsed.data;
+    if (d.service_ids && !(await requireTenantRefs(res, barbershopId, { services: d.service_ids }))) return;
     const fields: string[] = [];
     const vals: unknown[] = [id, barbershopId];
     const add = (col: string, v: unknown) => {
@@ -176,6 +180,7 @@ plansRouter.post("/subscriptions", async (req: Request, res: Response) => {
       return;
     }
     const { client_id, plan_id, billing_day } = parsed.data;
+    if (!(await requireTenantRefs(res, barbershopId, { clients: [client_id], plans: [plan_id] }))) return;
 
     const planRow = await pool.query<{ price: string; billing_cycle: string }>(
       `SELECT price, billing_cycle FROM public.barbershop_plans WHERE id = $1 AND barbershop_id = $2 AND is_active = true`,
