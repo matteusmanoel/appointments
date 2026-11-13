@@ -2,14 +2,35 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    # `develop` é a branch de integração (base dos PRs de correção): sem ela, o CI só rodava ao abrir PR para a main.
+    branches: [main, develop]
+  push:
+    # O que entra por merge também é revalidado (um merge que quebra o develop aparece no próprio push, não no PR seguinte).
+    branches: [main, develop]
+  workflow_dispatch:
+
+# O CI só lê o repositório; nada aqui escreve em PR, issue ou pacote.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    name: Test & Build
-    runs-on: ubuntu-latest
+    name: Test & Build (node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # O runtime das Lambdas continua nodejs20.x (infra/production/main.tf): o 20 é o que vale para produção.
+        # O 22 roda como aviso (não reprova) enquanto a troca de runtime é planejada em PR de Terraform à parte.
+        node: ["20", "22"]
+    continue-on-error: ${{ matrix.node == '22' }}
 
-    # Postgres descartável (sem secrets) só para validar que as migrations aplicam do zero e são idempotentes.
+    # Postgres descartável (sem secrets): os testes de banco precisam dele. Sem DATABASE_URL eles passam em 0 ms (falso verde).
     # Imagem com pgvector: as migrations de conhecimento/embeddings fazem CREATE EXTENSION vector (postgres:16 puro não tem).
     services:
       postgres:
@@ -23,32 +44,51 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
 
+    env:
+      DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      JWT_SECRET: ci-only-not-a-secret
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node }}
           cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
 
-      - name: Backend — install & test
+      - name: Backend — install
         run: |
           cd backend
           npm ci
-          npm test
 
-      - name: Backend — migrations (banco descartável, 2x para checar idempotência)
-        env:
-          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+      - name: Backend — migrations (banco descartável; a 2ª execução deve ser no-op)
         run: |
           cd backend
-          npm run migrate:all
-          npm run migrate:all
+          npx tsx scripts/run-all-migrations.ts
+          npx tsx scripts/run-all-migrations.ts
+
+      # Sem continue-on-error: teste vermelho reprova o PR. Linha de base conhecida no develop (33bf413), que NÃO é corrigida aqui:
+      # orchestrator-multi-intent.test.ts (2 testes) e agent-golden.test.ts (7, dependem de dados de seed). Ver docs/CI.md.
+      - name: Backend — test
+        run: |
+          cd backend
+          npm test
 
       - name: Backend — build (TypeScript)
         run: |
           cd backend
           npm run build
+
+      # O bundle e o verificador chegam com o tema sqs-trigger; enquanto não existirem no branch, o passo é pulado.
+      - name: Backend — bundle das Lambdas e verificação do zip de conhecimento
+        if: ${{ hashFiles('backend/scripts/bundle-lambdas.mjs') != '' }}
+        run: |
+          cd backend
+          node scripts/bundle-lambdas.mjs
+          node scripts/verify-knowledge-zip.mjs
 
       - name: Backend — benchmark mock (AI gate)
         run: |
@@ -56,9 +96,47 @@ jobs:
           npm run benchmark:run:mock
         continue-on-error: true
 
-      - name: Frontend — install & build
+  frontend:
+    name: Frontend (build & test)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Frontend — install, test & build
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL || 'https://api.navalhia.com.br' }}
         run: |
           npm ci
+          npm test
           npm run build
+
+  terraform:
+    name: Terraform (fmt & validate, sem credenciais)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+          terraform_wrapper: false
+
+      # Sem plan, sem apply, sem backend e sem credenciais da AWS: só formatação e validação estática.
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra
+
+      - name: terraform init & validate
+        working-directory: infra/production
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
