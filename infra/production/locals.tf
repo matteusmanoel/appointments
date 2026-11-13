@@ -15,7 +15,8 @@ locals {
 
   cors_origin = var.cors_origin
 
-  uazapi_webhook_public_url = "${local.api_url_custom}/api/webhooks/uazapi"
+  uazapi_webhook_public_url    = "${local.api_url_custom}/api/webhooks/uazapi"
+  evolution_webhook_public_url = "${local.api_url_custom}/api/webhooks/evolution"
 
   lambda_zip  = var.lambda_zip_path != "" ? var.lambda_zip_path : data.archive_file.placeholder.output_path
   lambda_hash = var.lambda_zip_path != "" ? filebase64sha256(var.lambda_zip_path) : data.archive_file.placeholder.output_base64sha256
@@ -30,7 +31,8 @@ locals {
     APP_URL                         = local.app_url
     CORS_ORIGIN                     = local.cors_origin
     FROM_EMAIL                      = var.from_email
-    WHATSAPP_PROVIDER               = "uazapi"
+    WHATSAPP_PROVIDER               = var.whatsapp_provider
+    WHATSAPP_INSTANCE_PREFIX        = var.whatsapp_instance_prefix
     UAZAPI_BASE_URL                 = var.uazapi_base_url
     UAZAPI_ADMIN_TOKEN              = var.uazapi_admin_token
     UAZAPI_WEBHOOK_PUBLIC_URL       = local.uazapi_webhook_public_url
@@ -46,8 +48,9 @@ locals {
     STRIPE_PRICE_ID_FOLLOWUP_CREDIT = var.stripe_price_id_followup_credit
     KNOWLEDGE_S3_BUCKET             = aws_s3_bucket.knowledge.bucket
     KNOWLEDGE_S3_PREFIX             = "knowledge"
-    EVOLUTION_API_URL               = ""
-    EVOLUTION_API_KEY               = ""
+    EVOLUTION_API_URL               = var.evolution_api_url
+    EVOLUTION_API_KEY               = var.evolution_api_key
+    EVOLUTION_WEBHOOK_PUBLIC_URL    = local.evolution_webhook_public_url
     N8N_CHAT_TRIGGER_URL            = ""
     TOOLS_API_KEY                   = ""
   }

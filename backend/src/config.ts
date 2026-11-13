@@ -34,7 +34,8 @@ export const config = {
   evolutionApiUrl: optional("EVOLUTION_API_URL", ""),
   evolutionApiKey: optional("EVOLUTION_API_KEY", ""),
   evolutionWebhookPublicUrl: optional("EVOLUTION_WEBHOOK_PUBLIC_URL", ""),
-  whatsappProvider: optional("WHATSAPP_PROVIDER", ""),
+  whatsappProvider: optional("WHATSAPP_PROVIDER", "evolution"),
+  whatsappInstancePrefix: optional("WHATSAPP_INSTANCE_PREFIX", "navalhia"),
   appEncryptionKey: optional("APP_ENCRYPTION_KEY", ""),
   n8nChatTriggerUrl: optional("N8N_CHAT_TRIGGER_URL", ""),
   /** Timeout (ms) for POST ao n8n quando NATIVE_AI_DISABLED + N8N_CHAT_TRIGGER_URL. */
