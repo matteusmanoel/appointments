@@ -78,6 +78,8 @@ export default function PublicBooking() {
   const [step, setStep] = useState(0);
   const [serviceIds, setServiceIds] = useState<string[]>([]);
   const [barberId, setBarberId] = useState("");
+  const [copiedLink, setCopiedLink] = useState<"reschedule" | "cancel" | "error" | null>(null);
+  const [publicToken, setPublicToken] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const d = new Date();
     if (d.getHours() >= 20) return addDays(d, 1);
@@ -87,8 +89,6 @@ export default function PublicBooking() {
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [success, setSuccess] = useState(false);
-  const [copiedLink, setCopiedLink] = useState<"reschedule" | "cancel" | "error" | null>(null);
-  const [publicToken, setPublicToken] = useState<string | null>(null);
 
   const {
     data: barbershop,
@@ -122,20 +122,19 @@ export default function PublicBooking() {
         const s = services.find((x) => x.id === id);
         return acc + (s?.duration_minutes ?? 30);
       }, 0);
-      const barberToUse =
-        barberId ||
-        resolveBarberForSlot(selectedTime, totalDuration) ||
-        barbers[0]?.id;
-      if (!barberToUse) throw new Error("Nenhum barbeiro disponível.");
-      const created = await publicApi.createAppointment(slug!, {
+      const barberToUse = barberId || resolveBarberForSlot(selectedTime, totalDuration);
+      // Sem barbeiro livre para esse horário: trata como horário ocupado (volta ao passo 3), nunca manda o POST para outro barbeiro.
+      if (!barberToUse) {
+        throw Object.assign(new Error("Esse horário não está mais disponível."), { status: 409 });
+      }
+      await publicApi.createAppointment(slug!, {
         service_ids: serviceIds,
         barber_id: barberToUse,
         scheduled_date: dateStr,
         scheduled_time: selectedTime,
         client_name: clientName,
         client_phone: clientPhone,
-      });
-      setPublicToken(created?.public_token ?? null);
+      }).then((created) => setPublicToken(created?.public_token ?? null));
     },
     onSuccess: () => setSuccess(true),
   });
