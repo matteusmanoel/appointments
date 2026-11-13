@@ -70,6 +70,13 @@ variable "database_url" {
   default     = ""
 }
 
+variable "database_url_direct" {
+  type        = string
+  description = "Postgres SEM pooler (conexão direta, SSL) para os workers: advisory locks de sessão e jobs longos. Declarada sem valor; informe via TF_VAR_database_url_direct. Vazio = os workers reutilizam DATABASE_URL. Ver docs/DB_CONEXOES_NEON.md."
+  sensitive   = true
+  default     = ""
+}
+
 variable "jwt_secret" {
   type        = string
   description = "Segredo JWT. Nunca commitar o valor real."

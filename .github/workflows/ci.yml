@@ -10,9 +10,10 @@ jobs:
     runs-on: ubuntu-latest
 
     # Postgres descartável (sem secrets) só para validar que as migrations aplicam do zero e são idempotentes.
+    # Imagem com pgvector: as migrations de conhecimento/embeddings fazem CREATE EXTENSION vector (postgres:16 puro não tem).
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
