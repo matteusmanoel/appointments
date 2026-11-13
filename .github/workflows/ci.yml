@@ -9,6 +9,19 @@ jobs:
     name: Test & Build
     runs-on: ubuntu-latest
 
+    # Postgres descartável (sem secrets) só para validar que as migrations aplicam do zero e são idempotentes.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci" --health-interval 5s --health-timeout 5s --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +35,14 @@ jobs:
           cd backend
           npm ci
           npm test
+
+      - name: Backend — migrations (banco descartável, 2x para checar idempotência)
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+        run: |
+          cd backend
+          npm run migrate:all
+          npm run migrate:all
 
       - name: Backend — build (TypeScript)
         run: |

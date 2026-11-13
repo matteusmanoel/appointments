@@ -1,4 +1,4 @@
-import { pool } from "../db.js";
+import { pool, directPool } from "../db.js";
 import {
   GATED_SCHEDULED_TYPES,
   decideDispatch,
@@ -64,7 +64,7 @@ export async function withDispatchLock<T>(
   barbershopId: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const hashResult = await client.query<{ h: number }>(
       `SELECT ('x' || substr(md5($1), 1, 8))::bit(32)::int AS h`,

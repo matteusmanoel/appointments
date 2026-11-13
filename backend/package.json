@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "migrate": "node --experimental-vm-modules node_modules/.bin/db-migrate",
+    "migrate:all": "tsx scripts/run-all-migrations.ts",
     "seed": "node dist/scripts/seed.js",
     "seed:dev": "tsx src/scripts/seed.ts",
     "seed:demo": "node dist/scripts/seed-demo.js",

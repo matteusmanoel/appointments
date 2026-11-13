@@ -1,4 +1,4 @@
-import { pool } from "../db.js";
+import { pool, directPool } from "../db.js";
 import { setPaymentPending } from "../ai/memory/client-memory.js";
 import { barbershopTimezone, checkDispatchGate } from "./dispatch-gate.js";
 import {
@@ -293,7 +293,7 @@ export async function recordPlanChargeReceipt(params: {
 }
 
 export async function runPlanBillingCycleSweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",

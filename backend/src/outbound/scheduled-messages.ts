@@ -1,5 +1,5 @@
 import type { PoolClient } from "pg";
-import { pool } from "../db.js";
+import { pool, directPool } from "../db.js";
 import { config } from "../config.js";
 import { setPaymentPendingFlag } from "../ai/memory/client-memory.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
@@ -514,7 +514,7 @@ export async function schedulePaymentReminder(params: {
 
 /** Run the daily follow-up sweep with an advisory lock so only one worker runs it. */
 export async function runDailyFollowUp30dSweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
@@ -531,7 +531,7 @@ export async function runDailyFollowUp30dSweepWithLock(): Promise<void> {
 }
 
 export async function runDailyFollowUpNoAppointmentSweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
@@ -546,7 +546,7 @@ export async function runDailyFollowUpNoAppointmentSweepWithLock(): Promise<void
 }
 
 export async function runBirthdaySweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
@@ -561,7 +561,7 @@ export async function runBirthdaySweepWithLock(): Promise<void> {
 }
 
 export async function runDailyOpeningSummarySweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
@@ -682,7 +682,7 @@ export async function appendReminderTranscript(params: {
 }
 
 export async function runNoShowSweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
@@ -820,7 +820,7 @@ export async function runOverduePlanBillingReminderSweep(): Promise<void> {
 }
 
 export async function runOverduePlanBillingReminderSweepWithLock(): Promise<void> {
-  const client = await pool.connect();
+  const client = await directPool.connect(); // lock de sessão: conexão direta (ver db.ts)
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
