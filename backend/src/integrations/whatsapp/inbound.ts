@@ -207,7 +207,7 @@ export async function enqueueInboundMessage(params: {
 
   const optOutMatchKeys = brPhoneMatchKeys(canonicalPhone);
   const optOutPattern =
-    /^(parar|n[aã]o\s*quero\s*receber|cancelar\s*inscri[cç][aã]o|opt\s*out|remover|n[aã]o\s*receber\s*mais|sair\s*da\s*lista)$/i;
+    /^(parar|n[aã]o\s*quero\s*receber|cancelar\s*inscri[cç][aã]o|opt\s*out|remover|n[aã]o\s*receber\s*mais|sair\s*da\s*lista|sair)$/i;
   const trimmed = (text || "").trim().toLowerCase();
   if (optOutPattern.test(trimmed) || (trimmed.includes("parar") && trimmed.length < 50)) {
     if (canonicalPhone) {
