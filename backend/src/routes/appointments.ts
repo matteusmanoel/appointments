@@ -1,4 +1,4 @@
-import { isLockTimeout, lockBarberDay } from "../lib/booking-lock.js";
+import { isLockTimeout, LOCK_BUSY_MESSAGE, lockBarberDay } from "../lib/booking-lock.js";
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
@@ -302,7 +302,11 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
         });
     }).catch(() => {});
   } catch (e) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (isLockTimeout(e)) {
+      res.status(409).json({ error: LOCK_BUSY_MESSAGE });
+      return;
+    }
     throw e;
   } finally {
     client.release();
@@ -529,7 +533,7 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
       if (!committed) await tx.query("ROLLBACK").catch(() => undefined);
       committed = true;
       if (isLockTimeout(e)) {
-        res.status(409).json({ error: "Agenda deste barbeiro está sendo alterada; tente novamente em instantes" });
+        res.status(409).json({ error: LOCK_BUSY_MESSAGE });
         return;
       }
       throw e;

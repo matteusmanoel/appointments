@@ -3,7 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireToolsKey, getBarbershopId } from "../middleware/auth.js";
 import { validateUuidIds } from "../lib/uuid.js";
-import { isLockTimeout, lockBarberDay } from "../lib/booking-lock.js";
+import { isLockTimeout, LOCK_BUSY_MESSAGE, lockBarberDay } from "../lib/booking-lock.js";
 
 async function resolveBarbershopId(req: Request): Promise<string | null> {
   try {
@@ -213,7 +213,7 @@ toolsRouter.post("/create_appointment", async (req: Request, res: Response): Pro
   } catch (e) {
     await client.query("ROLLBACK").catch(() => undefined);
     if (isLockTimeout(e)) {
-      res.status(409).json({ error: "Agenda deste barbeiro está sendo alterada; tente novamente" });
+      res.status(409).json({ error: LOCK_BUSY_MESSAGE });
       return;
     }
     throw e;
