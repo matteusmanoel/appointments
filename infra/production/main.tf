@@ -385,6 +385,7 @@ resource "aws_lambda_function" "worker_ai" {
   environment {
     variables = merge(local.common_env, {
       DATABASE_POOL_MAX           = "2"
+      DATABASE_URL_DIRECT         = var.database_url_direct
       AI_WORKER_CONCURRENCY       = "1"
       AI_JOB_MAX_ATTEMPTS         = "5"
       AI_JOB_BACKOFF_BASE_SECONDS = "2"
@@ -407,6 +408,7 @@ resource "aws_lambda_function" "worker_scheduled" {
   environment {
     variables = merge(local.common_env, {
       DATABASE_POOL_MAX           = "2"
+      DATABASE_URL_DIRECT         = var.database_url_direct
       SCHEDULED_SEND_WINDOW_START = "9"
       SCHEDULED_SEND_WINDOW_END   = "20"
     })
@@ -427,7 +429,8 @@ resource "aws_lambda_function" "worker_knowledge" {
 
   environment {
     variables = merge(local.common_env, {
-      DATABASE_POOL_MAX = "2"
+      DATABASE_POOL_MAX   = "2"
+      DATABASE_URL_DIRECT = var.database_url_direct
     })
   }
 

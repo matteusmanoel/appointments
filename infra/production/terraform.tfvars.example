@@ -33,3 +33,5 @@ stripe_price_id_premium = ""
 stripe_price_id_extra_number = ""
 stripe_price_id_followup_credit = ""
 lambda_zip_path         = ""
+
+# database_url_direct: NÃO coloque o valor aqui. Use TF_VAR_database_url_direct (URL sem pooler; vazio = reutiliza database_url).

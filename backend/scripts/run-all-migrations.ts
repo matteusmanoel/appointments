@@ -7,15 +7,19 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, "../../.env") });
 
-const databaseUrl = process.env.DATABASE_URL;
+// DDL deve ir pela conexão DIRETA (não pelo pooler de transação).
+const databaseUrl = process.env.DATABASE_URL_DIRECT || process.env.DATABASE_URL;
 if (!databaseUrl) {
-  console.error("DATABASE_URL is required");
+  console.error("DATABASE_URL_DIRECT (ou DATABASE_URL) is required");
   process.exit(1);
 }
 
 const migrationsDir = join(__dirname, "../../supabase/migrations");
 const stubPath = join(__dirname, "local-auth-stub.sql");
-const client = new pg.Client({ connectionString: databaseUrl });
+const client = new pg.Client({
+  connectionString: databaseUrl,
+  ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : undefined,
+});
 
 const MIGRATIONS_TABLE = "public._migrations";
 

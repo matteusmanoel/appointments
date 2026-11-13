@@ -10,6 +10,9 @@ const optionalNull = (key: string): string | null => (process.env[key] ?? null) 
 export const config = {
   port: parseInt(optional("PORT", "3000"), 10),
   databaseUrl: required("DATABASE_URL"),
+  // Conexão DIRETA (sem pooler de transação). Obrigatória para quem usa advisory lock de sessão
+  // (workers/sweeps) e para migrations. Se não definida, cai para DATABASE_URL (ok em Postgres local/Supabase session mode).
+  databaseUrlDirect: optional("DATABASE_URL_DIRECT", "") || required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
   jwtExpiresIn: optional("JWT_EXPIRES_IN", "7d"),
   toolsApiKey: optional("TOOLS_API_KEY", ""),
