@@ -35,9 +35,13 @@ async function repairWebhook(instanceName: string, expectedUrl: string): Promise
     found = null;
   }
   const parsed = parseWebhookFind(found);
-  // A URL registrada carrega ?token=<segredo>; comparar com a URL já autenticada para reparar webhooks antigos.
-  const authedUrl = withWebhookToken(expectedUrl, getWebhookSecret("evolution"));
-  if (!webhookNeedsRepair({ ...parsed, expectedUrl: authedUrl })) return;
+  // A URL esperada é a pública SEM token (o segredo vai no cabeçalho). Webhooks antigos registrados com ?token=
+  // (ex.: a chave mestra) não batem e são reescritos com o formato novo.
+  const registeredShape =
+    (process.env.EVOLUTION_WEBHOOK_TOKEN_IN_URL ?? "").toLowerCase() === "true"
+      ? withWebhookToken(expectedUrl, getWebhookSecret("evolution"))
+      : expectedUrl;
+  if (!webhookNeedsRepair({ ...parsed, expectedUrl: registeredShape })) return;
   await evo.setInstanceWebhook(instanceName, expectedUrl);
   try {
     await evo.setInstanceSettings(instanceName);

@@ -43,6 +43,7 @@ Guia de teste com os números reais: [TESTE_AGENTE_WHATSAPP.md](./TESTE_AGENTE_W
 | `WHATSAPP_PROVIDER` | Default de novas conexões: `evolution` ou `uazapi` |
 | `EVOLUTION_API_URL` | Base HTTP da Evolution no host (ex.: `http://localhost:8081`) |
 | `EVOLUTION_API_KEY` | `AUTHENTICATION_API_KEY` da Evolution |
+| `WHATSAPP_WEBHOOK_SECRET` | Segredo dedicado dos webhooks (cabeçalho `apikey` registrado na instância). **Não** reutiliza `EVOLUTION_API_KEY`. Rotação e reconfiguração: `docs/RUNBOOK_WEBHOOK_SECRET.md` |
 | `EVOLUTION_WEBHOOK_PUBLIC_URL` | URL de `POST /api/webhooks/evolution` alcançável **pela Evolution** |
 | `EVOLUTION_POSTGRES_PASSWORD` / `EVOLUTION_REDIS_PASSWORD` | Senhas do stack isolado |
 

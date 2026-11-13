@@ -13,13 +13,12 @@ import {
 } from "../integrations/whatsapp/inbound.js";
 import { persistEvolutionSocketState } from "../integrations/whatsapp/evolution-session.js";
 import { LAB_EVOLUTION_INSTANCE } from "../integrations/whatsapp/inbound-allowlist.js";
-import { checkWebhookSecret, getWebhookSecret, verifyMetaSignature } from "../integrations/whatsapp/webhook-auth.js";
+import { checkWebhookSecret, getAcceptedMetaAppSecrets, getAcceptedWebhookSecrets, verifyMetaSignature } from "../integrations/whatsapp/webhook-auth.js";
 
-const metaAppSecret = (): string => (process.env.WHATSAPP_APP_SECRET ?? "").trim();
 
 /** Fail closed: sem segredo → 503; segredo ausente/errado → 401. Devolve true se a requisição deve ser rejeitada. */
 function rejectUnauthenticated(provider: "uazapi" | "evolution", req: Request, res: Response): boolean {
-  const r = checkWebhookSecret(req, getWebhookSecret(provider));
+  const r = checkWebhookSecret(req, getAcceptedWebhookSecrets());
   if (r === "ok") return false;
   if (r === "unconfigured") console.error("[webhook] segredo do webhook %s não configurado (WHATSAPP_WEBHOOK_SECRET); requisição recusada", provider);
   res.status(r === "unconfigured" ? 503 : 401).send();
@@ -68,8 +67,9 @@ webhooksRouter.get("/whatsapp", (req: Request, res: Response): void => {
 
 webhooksRouter.post("/whatsapp", async (req: Request, res: Response): Promise<void> => {
   const rawBody = (req as unknown as { rawBody?: string }).rawBody;
-  if (!verifyMetaSignature(rawBody, req.headers["x-hub-signature-256"] as string | undefined, metaAppSecret())) {
-    res.status(metaAppSecret() ? 401 : 503).send();
+  const metaSecrets = getAcceptedMetaAppSecrets();
+  if (!verifyMetaSignature(rawBody, req.headers["x-hub-signature-256"] as string | undefined, metaSecrets)) {
+    res.status(metaSecrets.length ? 401 : 503).send();
     return;
   }
   res.status(200).send(); // acknowledge immediately

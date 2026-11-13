@@ -153,3 +153,32 @@ variable "lambda_zip_path" {
   description = "Zip real do backend (dist + node_modules). Vazio usa placeholder só para plan/validate."
   default     = ""
 }
+
+# --- Segredos dos webhooks de WhatsApp (declarados SEM valor; informe via TF_VAR_* / cofre, nunca no repositório) ---
+variable "whatsapp_webhook_secret" {
+  type        = string
+  description = "Segredo exigido nos webhooks Uazapi/Evolution (WHATSAPP_WEBHOOK_SECRET). Vazio = os webhooks respondem 503 (fail closed). Ver docs/RUNBOOK_WEBHOOK_SECRET.md."
+  default     = ""
+  sensitive   = true
+}
+
+variable "whatsapp_webhook_secret_previous" {
+  type        = string
+  description = "Segredo anterior, aceito só durante a rotação (WHATSAPP_WEBHOOK_SECRET_PREVIOUS). Deixe vazio fora de rotação."
+  default     = ""
+  sensitive   = true
+}
+
+variable "whatsapp_app_secret" {
+  type        = string
+  description = "App Secret do app Meta (WHATSAPP_APP_SECRET): valida X-Hub-Signature-256. Vazio = POST do webhook da Meta responde 503."
+  default     = ""
+  sensitive   = true
+}
+
+variable "whatsapp_verify_token" {
+  type        = string
+  description = "Token do handshake GET do webhook da Meta (WHATSAPP_VERIFY_TOKEN)."
+  default     = ""
+  sensitive   = true
+}
