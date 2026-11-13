@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   formatPhoneBR,
@@ -23,6 +24,12 @@ import {
 } from "@/lib/input-masks";
 import { billingApi, type BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
+import {
+  WHATSAPP_RISK_CHECKBOX_LABEL,
+  WHATSAPP_RISK_NOTICE_TEXT,
+  WHATSAPP_RISK_NOTICE_VERSION,
+  WHATSAPP_RISK_REQUIRED_MESSAGE,
+} from "@/lib/whatsapp-risk-notice";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -59,6 +66,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [plan, setPlan] = useState<BillingPlan>(initialPlan);
   const [extraNumbers, setExtraNumbers] = useState(0);
+  const [riskAccepted, setRiskAccepted] = useState(false);
   const [form, setForm] = useState({
     barbershop_name: "",
     cnpj: "",
@@ -96,8 +104,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     if (!isValidEmail(emailVal)) return false;
     if (phoneDigits(phoneVal).length < 10 || phoneDigits(phoneVal).length > 11) return false;
     if (cnpjVal.length > 0 && cnpjDigits(cnpjVal).length !== 14) return false;
+    if (!riskAccepted) return false;
     return true;
-  }, [form.barbershop_name, form.email, form.phone, form.cnpj]);
+  }, [form.barbershop_name, form.email, form.phone, form.cnpj, riskAccepted]);
 
   const validateAndSetErrors = (): boolean => {
     const errors: Record<string, string> = {};
@@ -108,6 +117,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     if (ph.length < 10 || ph.length > 11) errors.phone = "Telefone deve ter 10 ou 11 dígitos";
     const cn = cnpjDigits(form.cnpj);
     if (cn.length > 0 && cn.length !== 14) errors.cnpj = "CNPJ deve ter 14 dígitos";
+    if (!riskAccepted) errors.risk = WHATSAPP_RISK_REQUIRED_MESSAGE;
     setFieldErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -128,6 +138,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
           contact_name: form.contact_name.trim() || undefined,
           plan,
           extra_numbers: extra > 0 ? extra : undefined,
+          whatsapp_risk_accepted: true,
+          whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
         });
         setClientSecret(client_secret);
         setStep("embedded");
@@ -140,6 +152,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
           contact_name: form.contact_name.trim() || undefined,
           plan,
           extra_numbers: extra > 0 ? extra : undefined,
+          whatsapp_risk_accepted: true,
+          whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
         });
         window.location.href = url;
       }
@@ -152,6 +166,10 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
   const handleFallbackRedirect = async () => {
     setError(null);
+    if (!riskAccepted) {
+      setError(WHATSAPP_RISK_REQUIRED_MESSAGE);
+      return;
+    }
     setLoading(true);
     try {
       const extra = plan === "essential" ? 0 : extraNumbers;
@@ -163,6 +181,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         contact_name: form.contact_name.trim() || undefined,
         plan,
         extra_numbers: extra > 0 ? extra : undefined,
+        whatsapp_risk_accepted: true,
+        whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
       });
       window.location.href = url;
     } catch (err) {
@@ -177,6 +197,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       setClientSecret(null);
       setError(null);
       setFieldErrors({});
+      setRiskAccepted(false);
     } else {
       setPlan(initialPlan);
     }
@@ -386,6 +407,29 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                 </p>
                 <p className="text-muted-foreground">
                   Total estimado: R$ {monthlyTotal.toLocaleString("pt-BR")}/mês
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm space-y-2" data-testid="whatsapp-risk-notice">
+                <p className="font-medium text-foreground">Aviso sobre o WhatsApp</p>
+                <p className="text-muted-foreground text-xs sm:text-sm">{WHATSAPP_RISK_NOTICE_TEXT}</p>
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="whatsapp_risk"
+                    checked={riskAccepted}
+                    onCheckedChange={(v) => {
+                      setRiskAccepted(v === true);
+                      setFieldErrors((fe) => ({ ...fe, risk: "" }));
+                    }}
+                    aria-describedby="whatsapp_risk_help"
+                    className="mt-0.5"
+                  />
+                  <Label htmlFor="whatsapp_risk" className="text-sm font-normal leading-snug cursor-pointer">
+                    {WHATSAPP_RISK_CHECKBOX_LABEL}
+                  </Label>
+                </div>
+                <p id="whatsapp_risk_help" className="text-xs text-destructive" role="alert">
+                  {fieldErrors.risk ?? ""}
                 </p>
               </div>
 
