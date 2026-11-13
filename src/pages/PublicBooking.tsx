@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { publicApi } from "@/lib/api";
-import { getTimeSlotsForDay } from "@/lib/slots";
+import { isSlotBookable, getTimeSlotsForDay, type BarberSchedule } from "@/lib/slots";
 import {
   formatPhoneBR,
   formatPhoneDisplay,
@@ -33,37 +33,12 @@ import {
   CalendarDays,
 } from "lucide-react";
 
-function parseTime(t: string): number {
-  const [h, m] = t.split(":").map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-}
-
-function formatMins(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
 function getWhatsAppUrl(phone: string | undefined, message?: string): string {
   if (!phone || !phone.trim()) return "#";
   const digits = phone.replace(/\D/g, "");
   const number = digits.startsWith("55") ? digits : `55${digits}`;
   if (!message || !message.trim()) return `https://wa.me/${number}`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
-}
-
-function isSlotOccupied(
-  slotTime: string,
-  occupied: Array<{ scheduled_time: string; duration_minutes: number }>,
-): boolean {
-  const slotStart = parseTime(slotTime);
-  const slotEnd = slotStart + 30;
-  for (const o of occupied) {
-    const oStart = parseTime(String(o.scheduled_time).slice(0, 5));
-    const oEnd = oStart + (o.duration_minutes ?? 30);
-    if (slotStart < oEnd && slotEnd > oStart) return true;
-  }
-  return false;
 }
 
 const STEPS = ["Serviço", "Barbeiro", "Data e horário", "Seus dados"];
@@ -160,41 +135,28 @@ export default function PublicBooking() {
     if (timeSlots.length === 0) setSelectedTime("");
   }, [timeSlots.length]);
 
-  const availabilityForBarber = barberId
-    ? availability.filter((a) => a.barber_id === barberId)
-    : [];
+  const selectedDuration = serviceIds.reduce((acc, id) => {
+    const sv = services.find((x) => x.id === id);
+    return acc + (sv?.duration_minutes ?? 30);
+  }, 0) || 30;
+  const bookableFor = (barber: { id: string; schedule?: BarberSchedule }, t: string) =>
+    isSlotBookable({
+      slot: t,
+      date: selectedDate,
+      durationMinutes: selectedDuration,
+      occupied: availability.filter((x) => x.barber_id === barber.id),
+      barberSchedule: barber.schedule,
+    });
   const availableSlots = barberId
-    ? timeSlots.filter((t) => !isSlotOccupied(t, availabilityForBarber))
-    : timeSlots.filter((t) =>
-        barbers.some(
-          (b) =>
-            !isSlotOccupied(
-              t,
-              availability.filter((a) => a.barber_id === b.id),
-            ),
-        ),
-      );
+    ? timeSlots.filter((t) => {
+        const b = barbers.find((x) => x.id === barberId);
+        return b ? bookableFor(b, t) : false;
+      })
+    : timeSlots.filter((t) => barbers.some((b) => bookableFor(b, t)));
 
-  function resolveBarberForSlot(
-    slotTime: string,
-    durationMinutes: number,
-  ): string | null {
-    const slotStart = parseTime(slotTime);
-    for (const barber of barbers) {
-      const barberOccupied = availability.filter(
-        (a) => a.barber_id === barber.id,
-      );
-      let conflict = false;
-      for (let m = 0; m < durationMinutes; m += 30) {
-        const t = formatMins(slotStart + m);
-        if (isSlotOccupied(t, barberOccupied)) {
-          conflict = true;
-          break;
-        }
-      }
-      if (!conflict) return barber.id;
-    }
-    return null;
+  function resolveBarberForSlot(slotTime: string, _durationMinutes: number): string | null {
+    const b = barbers.find((x) => bookableFor(x, slotTime));
+    return b?.id ?? null;
   }
 
   if (!slug) {

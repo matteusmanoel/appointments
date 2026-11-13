@@ -83,3 +83,44 @@ export function getTimeSlotsForDay(
   }
   return slots;
 }
+
+export type BarberSchedule = Partial<Record<(typeof DAY_KEYS)[number], { start?: string; end?: string } | null>> | null | undefined;
+
+/**
+ * Filtra horários realmente reservável pelo link público para UM barbeiro:
+ * - sem horários que já passaram (quando a data é hoje);
+ * - dentro do expediente do barbeiro (barbers.schedule);
+ * - cabendo a duração total dos serviços sem bater em outro agendamento
+ *   (antes só o início do slot era checado, então serviços longos podiam sobrepor).
+ * O backend continua sendo a autoridade (validateSlotForPublicReschedule).
+ */
+export function isSlotBookable(opts: {
+  slot: string;
+  date: Date;
+  now?: Date;
+  durationMinutes: number;
+  occupied: Array<{ scheduled_time: string; duration_minutes: number }>;
+  barberSchedule?: BarberSchedule;
+  /** Limite de fechamento da barbearia no dia (minutos); se informado, o serviço precisa terminar até ele. */
+  shopEndMinutes?: number | null;
+}): boolean {
+  const { slot, date, durationMinutes, occupied, barberSchedule } = opts;
+  const now = opts.now ?? new Date();
+  const start = parseTime(slot);
+  const end = start + durationMinutes;
+  const sameDay =
+    date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  if (sameDay && start <= now.getHours() * 60 + now.getMinutes()) return false;
+  const day = barberSchedule?.[DAY_KEYS[date.getDay()]];
+  if (day && typeof day === "object") {
+    if (day.start && start < parseTime(day.start)) return false;
+    if (day.end && end > parseTime(day.end)) return false;
+  }
+  if (opts.shopEndMinutes != null && end > opts.shopEndMinutes) return false;
+  for (const o of occupied) {
+    const oStart = parseTime(String(o.scheduled_time).slice(0, 5));
+    const oEnd = oStart + (o.duration_minutes ?? 30);
+    if (start < oEnd && end > oStart) return false;
+  }
+  return true;
+}
