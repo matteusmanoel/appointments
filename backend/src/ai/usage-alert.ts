@@ -31,10 +31,20 @@ export function usagePeriod(now: Date = new Date()): string {
 
 export type UsageAlertResult = "disabled" | "below" | "duplicate" | "no_recipient" | "sent" | "error";
 
+/** Cache por processo dos (barbearia, mês, limiar) já resolvidos: evita uma consulta por turno depois do limiar. */
+const resolved = new Set<string>();
+
+/** Só para testes. */
+export function resetUsageAlertCacheForTests(): void {
+  resolved.clear();
+}
+
 /**
  * Avisa o dono (e-mail do admin) quando o uso mensal da IA chega a AI_USAGE_ALERT_THRESHOLD_PCT% (padrão 80%) do limite.
  * - Flag desligada: retorna "disabled" sem tocar o banco nem enviar nada.
- * - Dedupe: `ai_usage_alerts (barbershop_id, period, threshold_pct)` único → 1 aviso por mês.
+ * - DEDUPE SÓ DEPOIS DO ENVIO: `ai_usage_alerts (barbershop_id, period, threshold_pct)` só recebe a linha quando o e-mail
+ *   saiu. Falha do SES, `FROM_EMAIL` ausente (o envio lança) e dono sem e-mail não consomem o aviso do mês: o próximo
+ *   turno tenta de novo. Execuções concorrentes são serializadas por advisory lock transacional (segunda = "duplicate").
  * - Nunca lança (o worker de IA não pode falhar por causa do aviso).
  */
 export async function maybeAlertAiUsage(
@@ -45,14 +55,27 @@ export async function maybeAlertAiUsage(
   if (!aiUsageAlertEnabled(env)) return "disabled";
   const pct = aiUsageAlertThresholdPct(env);
   if (!usageReachedThreshold(params.used, params.limit, pct)) return "below";
+  const period = usagePeriod(deps.now);
+  const cacheKey = `${params.barbershopId}:${period}:${pct}`;
+  if (resolved.has(cacheKey)) return "duplicate";
+  const client = await pool.connect();
   try {
-    const claim = await pool.query(
-      `INSERT INTO public.ai_usage_alerts (barbershop_id, period, threshold_pct) VALUES ($1, $2, $3)
-       ON CONFLICT DO NOTHING RETURNING id`,
-      [params.barbershopId, usagePeriod(deps.now), pct],
+    await client.query("BEGIN");
+    const lock = await client.query<{ ok: boolean }>("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS ok", [`ai_usage_alert:${cacheKey}`]);
+    if (!lock.rows[0]?.ok) {
+      await client.query("ROLLBACK");
+      return "duplicate";
+    }
+    const done = await client.query(
+      `SELECT 1 FROM public.ai_usage_alerts WHERE barbershop_id = $1 AND period = $2 AND threshold_pct = $3`,
+      [params.barbershopId, period, pct],
     );
-    if ((claim.rowCount ?? 0) === 0) return "duplicate";
-    const r = await pool.query<{ name: string; email: string | null }>(
+    if ((done.rowCount ?? 0) > 0) {
+      await client.query("ROLLBACK");
+      resolved.add(cacheKey);
+      return "duplicate";
+    }
+    const r = await client.query<{ name: string; email: string | null }>(
       `SELECT b.name,
               (SELECT p.email FROM public.profiles p
                 WHERE p.barbershop_id = b.id AND p.role = 'admin' AND p.email IS NOT NULL
@@ -61,7 +84,10 @@ export async function maybeAlertAiUsage(
       [params.barbershopId],
     );
     const row = r.rows[0];
-    if (!row?.email) return "no_recipient";
+    if (!row?.email) {
+      await client.query("ROLLBACK"); // nada consumido: se um admin com e-mail aparecer, o próximo turno avisa
+      return "no_recipient";
+    }
     await (deps.sender ?? sendAiUsageAlertEmail)({
       to: row.email,
       barbershopName: row.name,
@@ -70,9 +96,18 @@ export async function maybeAlertAiUsage(
       limit: params.limit,
       thresholdPct: pct,
     });
+    await client.query(
+      `INSERT INTO public.ai_usage_alerts (barbershop_id, period, threshold_pct) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+      [params.barbershopId, period, pct],
+    );
+    await client.query("COMMIT");
+    resolved.add(cacheKey);
     return "sent";
   } catch (e) {
-    console.warn("[ai-usage-alert] falha ao avisar o dono:", e instanceof Error ? e.message : e);
+    await client.query("ROLLBACK").catch(() => undefined);
+    console.warn("[ai-usage-alert] falha ao avisar o dono (aviso do mês não consumido; será tentado de novo):", e instanceof Error ? e.message : e);
     return "error";
+  } finally {
+    client.release();
   }
 }

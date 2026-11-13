@@ -1,8 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aiUsageAlertEnabled,
   aiUsageAlertThresholdPct,
   maybeAlertAiUsage,
+  resetUsageAlertCacheForTests,
   usagePeriod,
   usageReachedThreshold,
 } from "../ai/usage-alert.js";
@@ -75,6 +76,8 @@ describe("aviso de uso da IA (banco; remetente injetado, sem envio real)", () =>
   });
 
   const env = { AI_USAGE_ALERT_ENABLED: "true" };
+  const rows = async (id: string) => (await pool.query("SELECT period FROM public.ai_usage_alerts WHERE barbershop_id = $1", [id])).rows;
+  beforeEach(() => resetUsageAlertCacheForTests());
   it("envia 1x por mês ao admin com uso/limite/percentual; repetições no mesmo mês são duplicata; mês novo avisa de novo", async () => {
     const sender = vi.fn(async () => {});
     const now = new Date("2026-11-13T12:00:00Z");
@@ -89,14 +92,68 @@ describe("aviso de uso da IA (banco; remetente injetado, sem envio real)", () =>
     expect(sender).toHaveBeenCalledTimes(2);
   });
 
-  it("falha do remetente não propaga", async () => {
+  it("falha do remetente não propaga E não consome o aviso do mês: o próximo turno reenvia", async () => {
     const boom = vi.fn(async () => {
       throw new Error("ses down");
     });
-    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 400, limit: 500 }, { sender: boom, env, now: new Date("2027-01-10T12:00:00Z") })).toBe("error");
+    const now = new Date("2027-01-10T12:00:00Z");
+    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 400, limit: 500 }, { sender: boom, env, now })).toBe("error");
+    expect((await rows(shopId)).filter((r) => r.period === "2027-01")).toHaveLength(0);
+    const ok = vi.fn(async () => {});
+    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 410, limit: 500 }, { sender: ok, env, now })).toBe("sent");
+    expect(ok).toHaveBeenCalledTimes(1);
+    expect((await rows(shopId)).filter((r) => r.period === "2027-01")).toHaveLength(1);
+    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 420, limit: 500 }, { sender: ok, env, now })).toBe("duplicate");
+    expect(ok).toHaveBeenCalledTimes(1);
   });
 
-  it("sem e-mail de admin → no_recipient (não envia)", async () => {
+  describe("sem FROM_EMAIL", () => {
+    afterEach(() => {
+      delete process.env.FROM_EMAIL;
+    });
+    it("o envio padrão lança: «error», nada consumido (antes: «sent» sem ter enviado)", async () => {
+      delete process.env.FROM_EMAIL;
+      const now = new Date("2027-02-10T12:00:00Z");
+      expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 400, limit: 500 }, { env, now })).toBe("error");
+      expect((await rows(shopId)).filter((r) => r.period === "2027-02")).toHaveLength(0);
+    });
+  });
+
+  it("execuções concorrentes no mesmo mês: um envio só", async () => {
+    const sender = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 150));
+    });
+    const now = new Date("2027-03-10T12:00:00Z");
+    const [a, b] = await Promise.all([
+      maybeAlertAiUsage({ barbershopId: shopId, used: 400, limit: 500 }, { sender, env, now }),
+      maybeAlertAiUsage({ barbershopId: shopId, used: 401, limit: 500 }, { sender, env, now }),
+    ]);
+    expect([a, b].sort()).toEqual(["duplicate", "sent"]);
+    expect(sender).toHaveBeenCalledTimes(1);
+  });
+
+  it("cache por processo: depois de resolvido, turnos seguintes não consultam o banco", async () => {
+    const sender = vi.fn(async () => {});
+    const now = new Date("2027-04-10T12:00:00Z");
+    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 400, limit: 500 }, { sender, env, now })).toBe("sent");
+    const spy = vi.spyOn(pool, "connect");
+    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 450, limit: 500 }, { sender, env, now })).toBe("duplicate");
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("o mês do contador de uso e o do dedupe usam o mesmo fuso (America/Sao_Paulo)", async () => {
+    // 01/12 01:00 UTC ainda é 30/11 22:00 em São Paulo: pertence a novembro nas duas regras
+    const r = await pool.query<{ start: Date }>(
+      `SELECT (date_trunc('month', timestamptz '2026-12-01 01:00+00' AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'America/Sao_Paulo') AS start`,
+    );
+    expect(r.rows[0]!.start.toISOString()).toBe("2026-11-01T03:00:00.000Z");
+    expect(usagePeriod(new Date("2026-12-01T01:00:00Z"))).toBe("2026-11");
+    const src = (await import("node:fs")).readFileSync(new URL("../ai/usage-limits.ts", import.meta.url), "utf8");
+    expect(src).toContain("AT TIME ZONE 'America/Sao_Paulo'");
+  });
+
+  it("sem e-mail de admin → no_recipient (não envia e não consome o aviso do mês)", async () => {
     const r = await pool.query<{ id: string }>(
       `INSERT INTO public.barbershops (name, phone, billing_plan, slug, business_hours)
        VALUES ('Sem admin', '5511999990001', 'pro', $1, '{}'::jsonb) RETURNING id`,
@@ -106,6 +163,7 @@ describe("aviso de uso da IA (banco; remetente injetado, sem envio real)", () =>
       const sender = vi.fn();
       expect(await maybeAlertAiUsage({ barbershopId: r.rows[0]!.id, used: 400, limit: 500 }, { sender, env })).toBe("no_recipient");
       expect(sender).not.toHaveBeenCalled();
+      expect(await rows(r.rows[0]!.id)).toHaveLength(0);
     } finally {
       await pool.query("DELETE FROM public.barbershops WHERE id = $1", [r.rows[0]!.id]);
     }

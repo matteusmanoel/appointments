@@ -247,7 +247,8 @@ export type AiUsageAlertEmailParams = {
 /** Aviso ao dono quando as respostas de IA do mês chegam a X% do limite. Só é chamado com AI_USAGE_ALERT_ENABLED=true (ver ai/usage-alert.ts). */
 export async function sendAiUsageAlertEmail(params: AiUsageAlertEmailParams): Promise<void> {
   const from = process.env.FROM_EMAIL;
-  if (!from) return;
+  // Lança (não retorna em silêncio): o aviso do mês só é consumido quando o envio de fato ocorreu.
+  if (!from) throw new Error("FROM_EMAIL ausente: aviso de uso da IA não enviado");
   const settingsUrl = `${ensureNoTrailingSlash(params.appUrl)}/app/configuracoes`;
   const textBody = `
 Olá,
