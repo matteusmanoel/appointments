@@ -72,3 +72,28 @@ describe("webhooks de WhatsApp (HTTP)", () => {
     expect(ok.status).toBe(200);
   });
 });
+
+describe("GET /api/public/:slug não expõe o id da barbearia", () => {
+  it("a resposta não contém id (o nome da instância do WhatsApp deriva dele)", async () => {
+    const { pool } = await import("../db.js");
+    try {
+      await pool.query("SELECT 1");
+    } catch {
+      return; // sem banco: nada a verificar
+    }
+    const slug = `test-pubid-${Date.now()}`;
+    const r = await pool.query<{ id: string }>(
+      `INSERT INTO public.barbershops (name, phone, billing_plan, slug, business_hours)
+       VALUES ('Teste id público', '5511999990000', 'pro', $1, '{}'::jsonb) RETURNING id`,
+      [slug],
+    );
+    try {
+      const res = await request(app).get(`/api/public/${slug}`);
+      expect(res.status).toBe(200);
+      expect(res.body.id).toBeUndefined();
+      expect(JSON.stringify(res.body)).not.toContain(r.rows[0]!.id);
+    } finally {
+      await pool.query("DELETE FROM public.barbershops WHERE id = $1", [r.rows[0]!.id]);
+    }
+  });
+});

@@ -235,7 +235,7 @@ publicRouter.get("/:slug", async (req: Request, res: Response): Promise<void> =>
     return;
   }
   const r = await pool.query(
-    "SELECT id, name, phone, email, address, business_hours, slug FROM public.barbershops WHERE id = $1",
+    "SELECT name, phone, email, address, business_hours, slug FROM public.barbershops WHERE id = $1",
     [barbershopId]
   );
   res.json(r.rows[0]);
