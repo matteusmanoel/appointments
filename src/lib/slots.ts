@@ -94,6 +94,21 @@ export type BarberSchedule = Partial<Record<(typeof DAY_KEYS)[number], { start?:
  *   (antes só o início do slot era checado, então serviços longos podiam sobrepor).
  * O backend continua sendo a autoridade (validateSlotForPublicReschedule).
  */
+/** Dia do calendário anterior a hoje (ignora a hora). */
+export function isPastDay(date: Date, now: Date = new Date()): boolean {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const t = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return d < t;
+}
+
+/** O erro devolvido pela API indica que o horário foi tomado por outra pessoa (409)? */
+export function isSlotConflictError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  if (status === 409) return true;
+  const msg = err instanceof Error ? err.message : "";
+  return /hor[áa]rio j[áa] ocupado|conflito ao reservar/i.test(msg);
+}
+
 export function isSlotBookable(opts: {
   slot: string;
   date: Date;
@@ -110,6 +125,7 @@ export function isSlotBookable(opts: {
   const end = start + durationMinutes;
   const sameDay =
     date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
+  if (isPastDay(date, now)) return false;
   if (sameDay && start <= now.getHours() * 60 + now.getMinutes()) return false;
   const day = barberSchedule?.[DAY_KEYS[date.getDay()]];
   if (day && typeof day === "object") {

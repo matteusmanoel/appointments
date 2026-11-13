@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { format, addDays } from "date-fns";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { format, addDays, startOfToday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { publicApi } from "@/lib/api";
-import { isSlotBookable, getTimeSlotsForDay, type BarberSchedule } from "@/lib/slots";
+import { isSlotBookable, isSlotConflictError, isPastDay, getTimeSlotsForDay, type BarberSchedule } from "@/lib/slots";
 import {
   formatPhoneBR,
   formatPhoneDisplay,
@@ -62,6 +62,8 @@ export default function PublicBooking() {
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [success, setSuccess] = useState(false);
+  const [conflictNotice, setConflictNotice] = useState(false);
+  const queryClient = useQueryClient();
 
   const {
     data: barbershop,
@@ -110,6 +112,15 @@ export default function PublicBooking() {
       });
     },
     onSuccess: () => setSuccess(true),
+    onError: (err) => {
+      // 409: alguém pegou o horário. Atualiza a disponibilidade, limpa a escolha e volta para a etapa de horário.
+      if (isSlotConflictError(err)) {
+        setSelectedTime("");
+        setConflictNotice(true);
+        setStep(3);
+        void queryClient.invalidateQueries({ queryKey: ["public", "availability", slug] });
+      }
+    },
   });
 
   const timeSlots = getTimeSlotsForDay(
@@ -134,6 +145,12 @@ export default function PublicBooking() {
   useEffect(() => {
     if (timeSlots.length === 0) setSelectedTime("");
   }, [timeSlots.length]);
+
+  // Trocar data, barbeiro ou serviço invalida o horário escolhido (a disponibilidade e a duração mudam).
+  const serviceKey = serviceIds.join(",");
+  useEffect(() => {
+    setSelectedTime("");
+  }, [dateStr, barberId, serviceKey]);
 
   const selectedDuration = serviceIds.reduce((acc, id) => {
     const sv = services.find((x) => x.id === id);
@@ -543,6 +560,7 @@ export default function PublicBooking() {
                   variant="outline"
                   size="icon"
                   onClick={() => setSelectedDate((d) => addDays(d, -1))}
+                  disabled={isPastDay(addDays(selectedDate, -1))}
                   aria-label="Dia anterior"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -550,6 +568,7 @@ export default function PublicBooking() {
                 <DatePicker
                   value={selectedDate}
                   onChange={(d) => d && setSelectedDate(d)}
+                  minDate={startOfToday()}
                   triggerVariant="verbose"
                   className="flex-1 min-w-0 flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
                 />
@@ -562,10 +581,26 @@ export default function PublicBooking() {
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
+              {conflictNotice && (
+                <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                  Esse horário acabou de ser ocupado por outra pessoa. Escolha outro horário abaixo.
+                </p>
+              )}
               {timeSlots.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground py-8 min-h-[200px]">
                   <CalendarIcon className="h-12 w-12" strokeWidth={1.5} />
                   <p className="text-sm">Fechado neste dia.</p>
+                </div>
+              ) : availableSlots.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground py-8 min-h-[200px] text-center">
+                  <CalendarIcon className="h-12 w-12" strokeWidth={1.5} />
+                  <p className="text-sm font-medium text-foreground">Não há horários livres neste dia.</p>
+                  <p className="text-sm">
+                    {barberId ? "Tente outro dia ou escolha outro barbeiro." : "Tente outro dia."}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedDate((d) => addDays(d, 1))}>
+                    Ver o próximo dia
+                  </Button>
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 flex-1 content-start min-h-0">
@@ -578,7 +613,10 @@ export default function PublicBooking() {
                           key={t}
                           variant={selectedTime === t ? "default" : "outline"}
                           className="min-h-11 py-3 text-base font-medium"
-                          onClick={() => setSelectedTime(t)}
+                          onClick={() => {
+                            setSelectedTime(t);
+                            setConflictNotice(false);
+                          }}
                         >
                           {t}
                         </Button>
