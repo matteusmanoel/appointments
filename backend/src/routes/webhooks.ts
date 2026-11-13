@@ -13,6 +13,17 @@ import {
 } from "../integrations/whatsapp/inbound.js";
 import { persistEvolutionSocketState } from "../integrations/whatsapp/evolution-session.js";
 import { LAB_EVOLUTION_INSTANCE } from "../integrations/whatsapp/inbound-allowlist.js";
+import { checkWebhookSecret, getAcceptedMetaAppSecrets, getAcceptedWebhookSecrets, verifyMetaSignature } from "../integrations/whatsapp/webhook-auth.js";
+
+
+/** Fail closed: sem segredo → 503; segredo ausente/errado → 401. Devolve true se a requisição deve ser rejeitada. */
+function rejectUnauthenticated(provider: "uazapi" | "evolution", req: Request, res: Response): boolean {
+  const r = checkWebhookSecret(req, getAcceptedWebhookSecrets());
+  if (r === "ok") return false;
+  if (r === "unconfigured") console.error("[webhook] segredo do webhook %s não configurado (WHATSAPP_WEBHOOK_SECRET); requisição recusada", provider);
+  res.status(r === "unconfigured" ? 503 : 401).send();
+  return true;
+}
 
 const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN ?? "";
 const accessToken = process.env.WHATSAPP_ACCESS_TOKEN ?? "";
@@ -55,6 +66,12 @@ webhooksRouter.get("/whatsapp", (req: Request, res: Response): void => {
 });
 
 webhooksRouter.post("/whatsapp", async (req: Request, res: Response): Promise<void> => {
+  const rawBody = (req as unknown as { rawBody?: string }).rawBody;
+  const metaSecrets = getAcceptedMetaAppSecrets();
+  if (!verifyMetaSignature(rawBody, req.headers["x-hub-signature-256"] as string | undefined, metaSecrets)) {
+    res.status(metaSecrets.length ? 401 : 503).send();
+    return;
+  }
   res.status(200).send(); // acknowledge immediately
   const body = req.body as {
     object?: string;
@@ -294,6 +311,7 @@ export function parseUazapiInbound(body: UazapiWebhookBody): {
 
 /** POST /api/webhooks/uazapi — Uazapi sends events here. Respond 200 then enqueue for worker. */
 webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void> => {
+  if (rejectUnauthenticated("uazapi", req, res)) return;
   const body = req.body as UazapiWebhookBody;
   const event = body?.event ?? "(no event)";
   const parsed = parseUazapiInbound(body);
@@ -356,14 +374,7 @@ webhooksRouter.post("/uazapi", async (req: Request, res: Response): Promise<void
 
 /** POST /api/webhooks/evolution — Evolution v2 messages.upsert + connection.update. */
 webhooksRouter.post("/evolution", async (req: Request, res: Response): Promise<void> => {
-  const secret = process.env.EVOLUTION_API_KEY ?? "";
-  if (secret) {
-    const headerKey = String(req.headers.apikey ?? req.headers["x-api-key"] ?? "");
-    if (headerKey && headerKey !== secret) {
-      res.status(401).send();
-      return;
-    }
-  }
+  if (rejectUnauthenticated("evolution", req, res)) return;
 
   const conn = parseEvolutionConnectionUpdate(req.body);
   if (conn) {

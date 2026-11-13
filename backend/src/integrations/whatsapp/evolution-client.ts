@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { getWebhookSecret, withWebhookToken } from "./webhook-auth.js";
 
 const REQUEST_TIMEOUT_MS = 25_000;
 
@@ -159,25 +160,46 @@ export async function setInstanceSettings(instanceName: string): Promise<unknown
 
 const WEBHOOK_EVENTS = ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"];
 
-export async function setInstanceWebhook(instanceName: string, url: string): Promise<unknown> {
-  try {
-    return await request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, {
-      webhook: {
-        enabled: true,
-        url,
-        webhookByEvents: false,
-        webhookBase64: false,
-        events: WEBHOOK_EVENTS,
-      },
-    });
-  } catch {
-    return request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, {
+/**
+ * Corpo de POST /webhook/set/<instância>. Função pura (testável): o segredo dedicado (WHATSAPP_WEBHOOK_SECRET,
+ * nunca a chave mestra EVOLUTION_API_KEY) vai no CABEÇALHO `apikey` que a Evolution v2 repassa em cada chamada, e
+ * não na URL (URL vaza em logs e no painel da Evolution). Para versões que ignoram `headers`, defina
+ * EVOLUTION_WEBHOOK_TOKEN_IN_URL=true e o segredo também vai em ?token= (menos seguro).
+ */
+export function buildInstanceWebhookBody(rawUrl: string, env: Record<string, string | undefined> = process.env): {
+  webhook: Record<string, unknown>;
+  legacy: Record<string, unknown>;
+} {
+  const secret = getWebhookSecret("evolution", env);
+  const tokenInUrl = (env.EVOLUTION_WEBHOOK_TOKEN_IN_URL ?? "").toLowerCase() === "true";
+  const url = tokenInUrl ? withWebhookToken(rawUrl, secret) : rawUrl;
+  const headers = secret ? { apikey: secret } : undefined;
+  return {
+    webhook: {
+      url,
+      enabled: true,
+      webhookByEvents: false,
+      webhookBase64: false,
+      events: WEBHOOK_EVENTS,
+      ...(headers ? { headers } : {}),
+    },
+    legacy: {
       url,
       enabled: true,
       webhook_by_events: false,
       webhook_base64: false,
       events: WEBHOOK_EVENTS,
-    });
+      ...(headers ? { headers } : {}),
+    },
+  };
+}
+
+export async function setInstanceWebhook(instanceName: string, rawUrl: string): Promise<unknown> {
+  const { webhook, legacy } = buildInstanceWebhookBody(rawUrl);
+  try {
+    return await request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, { webhook });
+  } catch {
+    return request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, legacy);
   }
 }
 

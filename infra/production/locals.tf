@@ -20,7 +20,7 @@ locals {
   lambda_zip  = var.lambda_zip_path != "" ? var.lambda_zip_path : data.archive_file.placeholder.output_path
   lambda_hash = var.lambda_zip_path != "" ? filebase64sha256(var.lambda_zip_path) : data.archive_file.placeholder.output_base64sha256
 
-  common_env = {
+  common_env_base = {
     NODE_ENV                        = "production"
     DATABASE_URL                    = var.database_url
     DATABASE_SSL                    = "true"
@@ -51,4 +51,12 @@ locals {
     N8N_CHAT_TRIGGER_URL            = ""
     TOOLS_API_KEY                   = ""
   }
+
+  # Segredos dos webhooks de WhatsApp (valores vêm de variáveis sem default útil; ver docs/RUNBOOK_WEBHOOK_SECRET.md).
+  common_env = merge(local.common_env_base, {
+    WHATSAPP_WEBHOOK_SECRET          = var.whatsapp_webhook_secret
+    WHATSAPP_WEBHOOK_SECRET_PREVIOUS = var.whatsapp_webhook_secret_previous
+    WHATSAPP_APP_SECRET              = var.whatsapp_app_secret
+    WHATSAPP_VERIFY_TOKEN            = var.whatsapp_verify_token
+  })
 }

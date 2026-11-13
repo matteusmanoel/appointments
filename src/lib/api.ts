@@ -1043,7 +1043,6 @@ export const reportsApi = {
 export const publicApi = {
   getBarbershop: (slug: string) =>
     api<{
-      id: string;
       name: string;
       phone?: string;
       email?: string;

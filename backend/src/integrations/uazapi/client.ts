@@ -1,3 +1,5 @@
+import { getWebhookSecret, withWebhookToken } from "../whatsapp/webhook-auth.js";
+
 const optional = (key: string, def: string): string => process.env[key] ?? def;
 
 const UAZAPI_REQUEST_TIMEOUT_MS = 25_000;
@@ -198,7 +200,8 @@ export async function sendLocation(params: {
  */
 export async function setWebhook(params: { token: string; url: string }): Promise<unknown> {
   const base = getBaseUrl();
-  const url = params.url.replace(/\/$/, "");
+  // Webhook autenticado: a Uazapi não envia cabeçalho próprio, então o segredo vai na URL (?token=).
+  const url = withWebhookToken(params.url.replace(/\/$/, ""), getWebhookSecret("uazapi"));
   const body = JSON.stringify({ url, enabled: true });
   const token = params.token;
 

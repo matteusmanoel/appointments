@@ -17,7 +17,14 @@ app.use(
   })
 );
 app.post("/api/billing/webhook", express.raw({ type: "application/json" }), stripeWebhookHandler);
-const defaultJson = express.json();
+// Guarda o corpo cru só do webhook da Meta (validação de X-Hub-Signature-256).
+const defaultJson = express.json({
+  verify: (req, _res, buf) => {
+    if ((req as { originalUrl?: string }).originalUrl?.startsWith("/api/webhooks/whatsapp")) {
+      (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+    }
+  },
+});
 const uazapiText = express.text({ limit: "2mb", type: "*/*" });
 
 // Uazapi webhook can send large payloads and sometimes with non-JSON content-type.
