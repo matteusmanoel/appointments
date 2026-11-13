@@ -1,4 +1,5 @@
 import { ThemeProvider } from "next-themes";
+import { RouteError } from "@/components/RouteError";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -59,7 +60,7 @@ const RootLayout = () => (
 );
 
 const appChildren = [
-  { index: true, element: <Navigate to="/app/inteligencia" replace /> },
+  { index: true, element: <Navigate to="/app/dashboard" replace /> },
   { path: "link", element: <Navigate to="/app/configuracoes?open=booking" replace /> },
   { path: "dashboard", element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
   { path: "inteligencia", element: <Suspense fallback={<LoadingState fullPage />}><Inteligencia /></Suspense> },
@@ -98,6 +99,7 @@ const router = createBrowserRouter(
   [
     {
       element: <RootLayout />,
+      errorElement: <RouteError />,
       children: [
         { path: "/", element: <Landing /> },
         { path: "/login", element: <Login /> },

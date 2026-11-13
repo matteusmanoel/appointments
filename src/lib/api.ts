@@ -81,8 +81,20 @@ export async function api<T>(
     throw new Error(typeof data?.error === "string" ? data.error : "E-mail ou senha incorretos");
   }
   if (res.status === 204) return undefined as T;
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error ?? res.statusText);
+  const raw = await res.text();
+  let data: { error?: string } & Record<string, unknown> = {};
+  let isJson = true;
+  if (raw.trim()) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      isJson = false;
+    }
+  }
+  if (!res.ok) throw new Error(data?.error ?? (res.statusText || "Erro ao falar com o servidor"));
+  // 200 que não é JSON (ex.: rewrite do SPA devolvendo index.html quando a API está fora do ar) é erro,
+  // não "sucesso vazio": antes virava `{}` e quebrava as telas depois com TypeError.
+  if (!isJson) throw new Error("O servidor não respondeu como esperado. Tente novamente em instantes.");
   return data as T;
 }
 
@@ -1074,7 +1086,7 @@ export const publicApi = {
       notes?: string;
     }
   ) =>
-    api<{ id: string; scheduled_date: string; scheduled_time: string; status: string }>(
+    api<{ id: string; scheduled_date: string; scheduled_time: string; status: string; public_token?: string }>(
       `/api/public/${encodeURIComponent(slug)}/appointments`,
       { method: "POST", body: JSON.stringify(body) }
     ),

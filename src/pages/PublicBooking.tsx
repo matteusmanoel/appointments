@@ -87,6 +87,7 @@ export default function PublicBooking() {
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [success, setSuccess] = useState(false);
+  const [publicToken, setPublicToken] = useState<string | null>(null);
 
   const {
     data: barbershop,
@@ -125,7 +126,7 @@ export default function PublicBooking() {
         resolveBarberForSlot(selectedTime, totalDuration) ||
         barbers[0]?.id;
       if (!barberToUse) throw new Error("Nenhum barbeiro disponível.");
-      await publicApi.createAppointment(slug!, {
+      const created = await publicApi.createAppointment(slug!, {
         service_ids: serviceIds,
         barber_id: barberToUse,
         scheduled_date: dateStr,
@@ -133,6 +134,7 @@ export default function PublicBooking() {
         client_name: clientName,
         client_phone: clientPhone,
       });
+      setPublicToken(created?.public_token ?? null);
     },
     onSuccess: () => setSuccess(true),
   });
@@ -230,7 +232,7 @@ export default function PublicBooking() {
             Agendamento solicitado!
           </h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Você receberá uma confirmação em breve. Status: Pendente.
+            Pedido recebido. Aguardando confirmação da barbearia.
           </p>
           <p className="text-sm text-foreground">
             {format(selectedDate, "EEEE, d 'de' MMMM", { locale: ptBR })} às{" "}
@@ -239,6 +241,30 @@ export default function PublicBooking() {
           <p className="text-sm text-muted-foreground mt-1">
             {barbershop.name}
           </p>
+          {publicToken && (
+            <div className="mt-4 rounded-lg border bg-muted/40 p-3 text-left space-y-2" data-testid="links-gerenciar">
+              <p className="text-sm font-medium text-foreground">Precisa mudar ou cancelar?</p>
+              <p className="text-xs text-muted-foreground">
+                Guarde estes links: cancelamento e reagendamento valem até 2 horas antes do horário.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={`/reagendar/${publicToken}`}>Reagendar</Link>
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={`/cancelar/${publicToken}`}>Cancelar</Link>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="button"
+                  onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/reagendar/${publicToken}`)}
+                >
+                  Copiar link
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="mt-4 space-y-2">
             {barbershop.phone ? (
               <Button
