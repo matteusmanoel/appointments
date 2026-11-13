@@ -5,9 +5,11 @@ import {
   firstInvalidField,
   checkoutErrorMessage,
   CHECKOUT_FALLBACK_ERROR,
+  CHECKOUT_FIELD_DOM_ID,
 } from "./checkout-validation";
+import { WHATSAPP_RISK_REQUIRED_MESSAGE } from "./whatsapp-risk-notice";
 
-const ok = { barbershop_name: "Barbearia do João", cnpj: "", phone: "11987654321", email: "joao@email.com" };
+const ok = { barbershop_name: "Barbearia do João", cnpj: "", phone: "11987654321", email: "joao@email.com", whatsapp_risk_accepted: true };
 
 describe("validação do checkout (botão nunca fica cinza sem motivo)", () => {
   it("formulário válido não tem erros; CNPJ é opcional", () => {
@@ -16,8 +18,8 @@ describe("validação do checkout (botão nunca fica cinza sem motivo)", () => {
   });
 
   it("formulário vazio devolve uma mensagem por campo obrigatório e o primeiro inválido é o nome", () => {
-    const errors = validateCheckoutForm({ barbershop_name: "", cnpj: "", phone: "", email: "" });
-    expect(Object.keys(errors).sort()).toEqual(["barbershop_name", "email", "phone"]);
+    const errors = validateCheckoutForm({ barbershop_name: "", cnpj: "", phone: "", email: "", whatsapp_risk_accepted: false });
+    expect(Object.keys(errors).sort()).toEqual(["barbershop_name", "email", "phone", "risk"]);
     expect(firstInvalidField(errors)).toBe("barbershop_name");
   });
 
@@ -26,6 +28,19 @@ describe("validação do checkout (botão nunca fica cinza sem motivo)", () => {
     expect(validateCheckoutField("phone", { ...ok, phone: "987654321" })).toMatch(/DDD/);
     expect(validateCheckoutField("email", { ...ok, email: "joao@email" })).toMatch(/inválido/i);
     expect(firstInvalidField(validateCheckoutForm({ ...ok, phone: "1", email: "x" }))).toBe("phone");
+  });
+});
+
+describe("aceite do aviso de risco do WhatsApp faz parte da validação (botão nunca fica cinza sem motivo)", () => {
+  it("formulário válido sem o aceite devolve a mensagem de aceite e o foco vai para a caixa", () => {
+    const errors = validateCheckoutForm({ ...ok, whatsapp_risk_accepted: false });
+    expect(errors).toEqual({ risk: WHATSAPP_RISK_REQUIRED_MESSAGE });
+    expect(firstInvalidField(errors)).toBe("risk");
+    expect(CHECKOUT_FIELD_DOM_ID.risk).toBe("whatsapp_risk");
+    expect(validateCheckoutForm({ ...ok, whatsapp_risk_accepted: undefined })).toEqual({ risk: WHATSAPP_RISK_REQUIRED_MESSAGE });
+  });
+  it("o aceite é o último na ordem: campo inválido vem antes", () => {
+    expect(firstInvalidField(validateCheckoutForm({ ...ok, phone: "1", whatsapp_risk_accepted: false }))).toBe("phone");
   });
 });
 

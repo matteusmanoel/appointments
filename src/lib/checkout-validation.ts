@@ -1,14 +1,27 @@
+import { WHATSAPP_RISK_REQUIRED_MESSAGE } from "./whatsapp-risk-notice";
+
 export type CheckoutForm = {
   barbershop_name: string;
   cnpj: string;
   phone: string;
   email: string;
   contact_name?: string;
+  /** Aceite do aviso de risco do WhatsApp (obrigatório antes de pagar). */
+  whatsapp_risk_accepted?: boolean;
 };
-export type CheckoutField = "barbershop_name" | "cnpj" | "phone" | "email";
+export type CheckoutField = "barbershop_name" | "cnpj" | "phone" | "email" | "risk";
 
 /** Ordem em que os campos aparecem no formulário (para focar o primeiro inválido). */
-export const CHECKOUT_FIELD_ORDER: CheckoutField[] = ["barbershop_name", "cnpj", "phone", "email"];
+export const CHECKOUT_FIELD_ORDER: CheckoutField[] = ["barbershop_name", "cnpj", "phone", "email", "risk"];
+
+/** id do elemento no DOM de cada campo (o aceite é a caixa `whatsapp_risk`). */
+export const CHECKOUT_FIELD_DOM_ID: Record<CheckoutField, string> = {
+  barbershop_name: "barbershop_name",
+  cnpj: "cnpj",
+  phone: "phone",
+  email: "email",
+  risk: "whatsapp_risk",
+};
 
 export function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -30,6 +43,8 @@ export function validateCheckoutField(field: CheckoutField, form: CheckoutForm):
       const n = digits(form.cnpj).length;
       return n === 0 || n === 14 ? "" : "CNPJ deve ter 14 dígitos (ou deixe em branco)";
     }
+    case "risk":
+      return form.whatsapp_risk_accepted === true ? "" : WHATSAPP_RISK_REQUIRED_MESSAGE;
   }
 }
 

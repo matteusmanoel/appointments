@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   formatPhoneBR,
@@ -24,12 +25,19 @@ import {
 import { billingApi, type BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
 import {
+  CHECKOUT_FIELD_DOM_ID,
   checkoutErrorMessage,
   firstInvalidField,
   validateCheckoutField,
   validateCheckoutForm,
   type CheckoutField,
 } from "@/lib/checkout-validation";
+import {
+  WHATSAPP_RISK_CHECKBOX_LABEL,
+  WHATSAPP_RISK_NOTICE_TEXT,
+  WHATSAPP_RISK_NOTICE_VERSION,
+  WHATSAPP_RISK_REQUIRED_MESSAGE,
+} from "@/lib/whatsapp-risk-notice";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -54,6 +62,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [plan, setPlan] = useState<BillingPlan>(initialPlan);
   const [extraNumbers, setExtraNumbers] = useState(0);
+  const [riskAccepted, setRiskAccepted] = useState(false);
   const [form, setForm] = useState({
     barbershop_name: "",
     cnpj: "",
@@ -83,12 +92,12 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     : 0;
 
   const validateAndSetErrors = (): boolean => {
-    const errors = validateCheckoutForm(form);
+    const errors = validateCheckoutForm({ ...form, whatsapp_risk_accepted: riskAccepted });
     setFieldErrors(errors as Record<string, string>);
     const first = firstInvalidField(errors);
     if (first) {
       // Leva o dono até o primeiro campo com problema (o botão nunca fica "morto").
-      const el = document.getElementById(first);
+      const el = document.getElementById(CHECKOUT_FIELD_DOM_ID[first]);
       el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
       el?.focus?.({ preventScroll: true });
     }
@@ -115,6 +124,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
           contact_name: form.contact_name.trim() || undefined,
           plan,
           extra_numbers: extra > 0 ? extra : undefined,
+          whatsapp_risk_accepted: true,
+          whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
         });
         setClientSecret(client_secret);
         setStep("embedded");
@@ -127,6 +138,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
           contact_name: form.contact_name.trim() || undefined,
           plan,
           extra_numbers: extra > 0 ? extra : undefined,
+          whatsapp_risk_accepted: true,
+          whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
         });
         window.location.href = url;
       }
@@ -139,6 +152,10 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
   const handleFallbackRedirect = async () => {
     setError(null);
+    if (!riskAccepted) {
+      setError(WHATSAPP_RISK_REQUIRED_MESSAGE);
+      return;
+    }
     setLoading(true);
     try {
       const extra = plan === "essential" ? 0 : extraNumbers;
@@ -150,6 +167,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         contact_name: form.contact_name.trim() || undefined,
         plan,
         extra_numbers: extra > 0 ? extra : undefined,
+        whatsapp_risk_accepted: true,
+        whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
       });
       window.location.href = url;
     } catch (err) {
@@ -164,6 +183,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       setClientSecret(null);
       setError(null);
       setFieldErrors({});
+      setRiskAccepted(false);
     } else {
       setPlan(initialPlan);
     }
@@ -378,6 +398,35 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                 <p className="text-muted-foreground">
                   Total estimado: R$ {monthlyTotal.toLocaleString("pt-BR")}/mês
                 </p>
+              </div>
+
+              <div
+                className={`rounded-lg border bg-muted/20 px-3 py-2.5 text-sm space-y-2 ${fieldErrors.risk ? "border-destructive" : "border-border"}`}
+                data-testid="whatsapp-risk-notice"
+              >
+                <p className="font-medium text-foreground">Aviso sobre o WhatsApp</p>
+                <p id="whatsapp_risk_text" className="text-muted-foreground text-sm">{WHATSAPP_RISK_NOTICE_TEXT}</p>
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="whatsapp_risk"
+                    checked={riskAccepted}
+                    onCheckedChange={(v) => {
+                      setRiskAccepted(v === true);
+                      setFieldErrors((fe) => ({ ...fe, risk: "" }));
+                    }}
+                    aria-describedby="whatsapp_risk_text whatsapp_risk_error"
+                    aria-invalid={!!fieldErrors.risk}
+                    className="mt-0.5 h-5 w-5"
+                  />
+                  <Label htmlFor="whatsapp_risk" className="text-sm font-normal leading-snug cursor-pointer">
+                    {WHATSAPP_RISK_CHECKBOX_LABEL}
+                  </Label>
+                </div>
+                {fieldErrors.risk && (
+                  <p id="whatsapp_risk_error" className="text-sm text-destructive" role="alert">
+                    {fieldErrors.risk}
+                  </p>
+                )}
               </div>
 
               {error && <p className="text-sm text-destructive">{error}</p>}
