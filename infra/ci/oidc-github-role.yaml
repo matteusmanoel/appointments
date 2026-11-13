@@ -12,7 +12,7 @@ Parameters:
   GitHubRef:
     Type: String
     Default: "refs/heads/main"
-    Description: "Ref allowed to assume role (e.g. refs/heads/main)"
+    Description: "Ref allowed to assume role (e.g. refs/heads/main). Antes este parâmetro existia mas NÃO era usado na condição."
 
 Resources:
   GitHubOIDCProvider:
@@ -39,8 +39,11 @@ Resources:
             Condition:
               StringEquals:
                 "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-              StringLike:
-                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubRepo}:*"
+                "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubRepo}:ref:${GitHubRef}"
+              # ESTREITADO (proposta, não aplicada): antes era StringLike "repo:${GitHubRepo}:*" — qualquer branch, PR ou
+              # tag do repositório (inclusive `pull_request`) podia assumir o role de deploy.
+              # Agora só o ref indicado (padrão refs/heads/main), com igualdade exata.
+              # Se um job usar `environment: producao`, o sub vira repo:OWNER/REPO:environment:producao: ajuste aqui.
 
   GitHubOIDCRolePolicy:
     Type: AWS::IAM::Policy
