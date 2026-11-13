@@ -38,6 +38,17 @@ describe("webhook-auth (unit)", () => {
     expect(getAcceptedMetaAppSecrets({ WHATSAPP_APP_SECRET: "a", WHATSAPP_APP_SECRET_PREVIOUS: "b" })).toEqual(["a", "b"]);
     expect(getAcceptedMetaAppSecrets({ WHATSAPP_APP_SECRET_PREVIOUS: "b" })).toEqual([]);
   });
+  it("aceita também os cabeçalhos x-api-key e x-webhook-secret; rejeita valor errado neles", () => {
+    expect(checkWebhookSecret({ headers: { "x-api-key": "s3" }, query: {} }, "s3")).toBe("ok");
+    expect(checkWebhookSecret({ headers: { "x-webhook-secret": "s3" }, query: {} }, "s3")).toBe("ok");
+    expect(checkWebhookSecret({ headers: { "x-api-key": "outro" }, query: {} }, "s3")).toBe("unauthorized");
+    expect(checkWebhookSecret({ headers: { "x-webhook-secret": "" }, query: {} }, "s3")).toBe("unauthorized");
+  });
+  it("withWebhookToken preserva a query que a URL já tem e substitui um ?token= antigo", () => {
+    expect(withWebhookToken("https://x.test/w?a=1", "abc")).toBe("https://x.test/w?a=1&token=abc");
+    expect(withWebhookToken("https://x.test/w?token=velho&a=1", "novo")).toBe("https://x.test/w?token=novo&a=1");
+    expect(withWebhookToken("https://x.test/w", "")).toBe("https://x.test/w"); // sem segredo: URL intacta
+  });
   it("withWebhookToken acrescenta o token", () => {
     expect(withWebhookToken("https://x.test/api/webhooks/uazapi", "abc")).toBe("https://x.test/api/webhooks/uazapi?token=abc");
     expect(withWebhookToken("https://x.test/a", "")).toBe("https://x.test/a");

@@ -132,3 +132,52 @@ describe("handler Lambda: corpo em base64 (API Gateway) preserva a assinatura da
     expect(r.statusCode).toBe(503);
   });
 });
+
+describe("handler Lambda: evento no formato 1.0 do API Gateway (o que o Terraform de produção usa: payload_format_version = 1.0)", () => {
+  const saved = { ...process.env };
+  beforeEach(() => {
+    process.env.WHATSAPP_APP_SECRET = "app-secret";
+    process.env.WHATSAPP_WEBHOOK_SECRET = "segredo-uazapi";
+  });
+  afterEach(() => {
+    process.env = { ...saved };
+  });
+  const call = async (e: unknown) => {
+    const { handler } = await import("../lambda.js");
+    return (handler as unknown as (e: unknown, c: unknown) => Promise<{ statusCode: number }>)(e, {});
+  };
+  const ip = () => `10.8.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+  function event1(path: string, body: string, headers: Record<string, string>, query: Record<string, string> | null = null, base64 = false) {
+    const h = { "content-type": "application/json", "x-forwarded-for": ip(), ...headers };
+    return {
+      version: "1.0",
+      resource: path,
+      path,
+      httpMethod: "POST",
+      headers: h,
+      multiValueHeaders: Object.fromEntries(Object.entries(h).map(([k, v]) => [k, [v]])),
+      queryStringParameters: query,
+      multiValueQueryStringParameters: query ? Object.fromEntries(Object.entries(query).map(([k, v]) => [k, [v]])) : null,
+      requestContext: { httpMethod: "POST", path, identity: { sourceIp: "10.8.0.1" } },
+      isBase64Encoded: base64,
+      body: base64 ? Buffer.from(body, "utf8").toString("base64") : body,
+    };
+  }
+  const sig = (b: string) => "sha256=" + crypto.createHmac("sha256", "app-secret").update(b).digest("hex");
+
+  it("Meta: assinatura válida → 200 (corpo texto e base64); adulterado → 401", async () => {
+    const body = JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "1", text: "olá, açaí 🙂" }] });
+    expect((await call(event1("/api/webhooks/whatsapp", body, { "x-hub-signature-256": sig(body) }))).statusCode).toBe(200);
+    expect((await call(event1("/api/webhooks/whatsapp", body, { "x-hub-signature-256": sig(body) }, null, true))).statusCode).toBe(200);
+    expect((await call(event1("/api/webhooks/whatsapp", body.replace("açaí", "acai"), { "x-hub-signature-256": sig(body) }, null, true))).statusCode).toBe(401);
+  });
+
+  it("Uazapi: ?token= em queryStringParameters (formato 1.0) autentica; errado → 401; sem segredo configurado → 503", async () => {
+    const body = JSON.stringify({ EventType: "ping" });
+    expect((await call(event1("/api/webhooks/uazapi", body, {}, { token: "segredo-uazapi" }))).statusCode).not.toBe(401);
+    expect((await call(event1("/api/webhooks/uazapi", body, {}, { token: "errado" }))).statusCode).toBe(401);
+    expect((await call(event1("/api/webhooks/uazapi", body, {}))).statusCode).toBe(401);
+    delete process.env.WHATSAPP_WEBHOOK_SECRET;
+    expect((await call(event1("/api/webhooks/uazapi", body, {}, { token: "segredo-uazapi" }))).statusCode).toBe(503);
+  });
+});

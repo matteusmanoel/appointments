@@ -20,6 +20,17 @@ Sem `WHATSAPP_WEBHOOK_SECRET` os webhooks respondem **503** (fail closed). **Nã
 - **Uazapi**: não envia cabeçalho próprio; o segredo vai em `?token=` na URL registrada.
 - **Meta**: HMAC `X-Hub-Signature-256` sobre o corpo cru (também com corpo em base64 no API Gateway: o corpo é decodificado antes do cálculo).
 
+## Antes de produção: o `terraform plan`/`apply` barra segredo vazio
+
+`whatsapp_webhook_secret` tem uma `validation` que **falha o `plan`/`apply`** quando `lambda_zip_path` está definido (zip real) e o segredo está vazio ou tem menos de 16 caracteres. Isso evita publicar a Lambda e derrubar a entrada de mensagens (503 em todos os webhooks) por esquecer o `TF_VAR_whatsapp_webhook_secret`. Notas:
+- `terraform validate` **não** executa a trava (ela precisa dos valores); quem a pega é o `plan`. O plan só com o placeholder (`lambda_zip_path` vazio) segue livre.
+- `whatsapp_app_secret` e `whatsapp_verify_token` ficam opcionais (só valem para o provedor Meta; produção usa Uazapi).
+- **Rode este runbook inteiro (segredo → publicar → reconfigurar instâncias) ANTES de apontar tráfego de produção**; não faça o `apply` com o segredo e deixe para reconfigurar depois.
+
+### Janela de indisponibilidade esperada
+Entre publicar a Lambda com o segredo e reconfigurar as instâncias existentes, os webhooks dessas instâncias recebem 401 (a URL antiga não traz o segredo). Para encurtar: (1) teste primeiro numa barbearia (3b); (2) se a Lambda de produção ainda não tem `EVOLUTION_API_KEY`/o código novo, o código antigo ignora o header e o `?token=` novos, então **rodar o script com `--apply` ANTES de publicar a Lambda nova elimina a janela** para a Evolution; para a Uazapi o `?token=` extra na URL é ignorado pelo código antigo, então o mesmo vale; (3) mensagens recebidas na janela não são reentregues pelo provedor: confira o histórico depois.
+- O keepalive da Evolution compara só URL e eventos (não o header): após uma **rotação** o header registrado pode ficar velho com a URL igual, e a Lambda de produção nem executa o keepalive. Por isso a rotação exige o script (`--apply`), mesmo com o keepalive ligado.
+
 ## Primeira ativação (instâncias existentes ainda apontam para a URL antiga)
 
 1. Gerar o segredo: `openssl rand -hex 32` (guardar no gerenciador de segredos; **não** no repositório).
@@ -36,7 +47,7 @@ CONFIRM_RECONFIGURE=yes npx tsx scripts/reconfigure-whatsapp-webhooks.ts --apply
 CONFIRM_RECONFIGURE=yes npx tsx scripts/reconfigure-whatsapp-webhooks.ts --apply
 ```
 
-O script só toca instâncias da NavalhIA (prefixo `navalhia-` ou legado `nh-`); `--include-foreign` desliga o filtro (não use em host compartilhado). O keepalive da Evolution também repara o webhook sozinho (a URL registrada com `?token=` antigo não bate com a esperada e é reescrita).
+O script só toca instâncias da NavalhIA (prefixo `navalhia-` ou legado `nh-`); `--include-foreign` desliga o filtro (não use em host compartilhado). O keepalive da Evolution repara a URL e os eventos do webhook (não o header; ver «Janela de indisponibilidade»).
 
 ## Rotação sem perda de mensagens
 
