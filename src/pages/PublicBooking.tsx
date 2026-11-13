@@ -97,11 +97,11 @@ export default function PublicBooking() {
         const s = services.find((x) => x.id === id);
         return acc + (s?.duration_minutes ?? 30);
       }, 0);
-      const barberToUse =
-        barberId ||
-        resolveBarberForSlot(selectedTime, totalDuration) ||
-        barbers[0]?.id;
-      if (!barberToUse) throw new Error("Nenhum barbeiro disponível.");
+      const barberToUse = barberId || resolveBarberForSlot(selectedTime, totalDuration);
+      // Sem barbeiro livre para esse horário: trata como horário ocupado (volta ao passo 3), nunca manda o POST para outro barbeiro.
+      if (!barberToUse) {
+        throw Object.assign(new Error("Esse horário não está mais disponível."), { status: 409 });
+      }
       await publicApi.createAppointment(slug!, {
         service_ids: serviceIds,
         barber_id: barberToUse,
@@ -122,6 +122,15 @@ export default function PublicBooking() {
       }
     },
   });
+
+  // O erro do passo 4 não sobrevive a uma troca de passo: depois de um 409 o cliente volta ao passo 3 e,
+  // ao confirmar de novo, não pode ver a mensagem velha.
+  const { reset: resetCreate } = createMutation;
+  useEffect(() => {
+    if (step !== 4) resetCreate();
+  }, [step, resetCreate]);
+  // 409 (horário ocupado) é tratado no passo 3; no passo 4 só aparecem os demais erros.
+  const showCreateError = createMutation.isError && !isSlotConflictError(createMutation.error);
 
   const timeSlots = getTimeSlotsForDay(
     barbershop?.business_hours,
@@ -762,8 +771,8 @@ export default function PublicBooking() {
                 {createMutation.isPending ? "Enviando..." : "Confirmar"}
               </Button>
             </div>
-            {createMutation.isError && (
-              <p className="text-sm text-destructive">
+            {showCreateError && (
+              <p role="alert" className="text-sm text-destructive">
                 {createMutation.error instanceof Error
                   ? createMutation.error.message
                   : "Erro ao agendar."}
