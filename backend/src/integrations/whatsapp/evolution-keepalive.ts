@@ -1,4 +1,5 @@
 import { pool } from "../../db.js";
+import { getWebhookSecret, withWebhookToken } from "./webhook-auth.js";
 import * as evo from "./evolution-client.js";
 import { evolutionWebhookUrl, persistEvolutionSocketState } from "./evolution-session.js";
 import { shouldOpenWhatsAppSocket, shouldRestoreDroppedSession, shouldSkipEvolutionProbe, webhookNeedsRepair } from "./evolution-policy.js";
@@ -34,7 +35,9 @@ async function repairWebhook(instanceName: string, expectedUrl: string): Promise
     found = null;
   }
   const parsed = parseWebhookFind(found);
-  if (!webhookNeedsRepair({ ...parsed, expectedUrl })) return;
+  // A URL registrada carrega ?token=<segredo>; comparar com a URL já autenticada para reparar webhooks antigos.
+  const authedUrl = withWebhookToken(expectedUrl, getWebhookSecret("evolution"));
+  if (!webhookNeedsRepair({ ...parsed, expectedUrl: authedUrl })) return;
   await evo.setInstanceWebhook(instanceName, expectedUrl);
   try {
     await evo.setInstanceSettings(instanceName);

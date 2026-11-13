@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { getWebhookSecret, withWebhookToken } from "./webhook-auth.js";
 
 const REQUEST_TIMEOUT_MS = 25_000;
 
@@ -159,7 +160,11 @@ export async function setInstanceSettings(instanceName: string): Promise<unknown
 
 const WEBHOOK_EVENTS = ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"];
 
-export async function setInstanceWebhook(instanceName: string, url: string): Promise<unknown> {
+export async function setInstanceWebhook(instanceName: string, rawUrl: string): Promise<unknown> {
+  // O webhook é autenticado: segredo na URL (?token=) e no cabeçalho `apikey` (a Evolution v2 repassa `headers`).
+  const secret = getWebhookSecret("evolution");
+  const url = withWebhookToken(rawUrl, secret);
+  const headers = secret ? { apikey: secret } : undefined;
   try {
     return await request("POST", `/webhook/set/${encodeURIComponent(instanceName)}`, {
       webhook: {
@@ -168,6 +173,7 @@ export async function setInstanceWebhook(instanceName: string, url: string): Pro
         webhookByEvents: false,
         webhookBase64: false,
         events: WEBHOOK_EVENTS,
+        ...(headers ? { headers } : {}),
       },
     });
   } catch {
@@ -177,6 +183,7 @@ export async function setInstanceWebhook(instanceName: string, url: string): Pro
       webhook_by_events: false,
       webhook_base64: false,
       events: WEBHOOK_EVENTS,
+      ...(headers ? { headers } : {}),
     });
   }
 }
