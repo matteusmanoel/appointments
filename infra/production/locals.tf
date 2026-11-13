@@ -17,8 +17,13 @@ locals {
 
   uazapi_webhook_public_url = "${local.api_url_custom}/api/webhooks/uazapi"
 
-  lambda_zip  = var.lambda_zip_path != "" ? var.lambda_zip_path : data.archive_file.placeholder.output_path
-  lambda_hash = var.lambda_zip_path != "" ? filebase64sha256(var.lambda_zip_path) : data.archive_file.placeholder.output_base64sha256
+  lambda_functions = ["api", "worker_ai", "worker_scheduled", "worker_knowledge"]
+
+  # Zip por função: lambda_zip_paths[fn] → lambda_zip_path (zip único legado) → placeholder.
+  lambda_zip_real = { for fn in local.lambda_functions : fn => lookup(var.lambda_zip_paths, fn, var.lambda_zip_path) }
+  lambda_is_real  = { for fn, z in local.lambda_zip_real : fn => z != "" }
+  lambda_zip      = { for fn, z in local.lambda_zip_real : fn => z != "" ? z : data.archive_file.placeholder.output_path }
+  lambda_hash     = { for fn, z in local.lambda_zip_real : fn => z != "" ? filebase64sha256(z) : data.archive_file.placeholder.output_base64sha256 }
 
   common_env = {
     NODE_ENV                        = "production"

@@ -1,3 +1,4 @@
+import { notifyAiJobScheduled } from "../../queue/ai-queue.js";
 import { pool } from "../../db.js";
 import { setConversationPaused } from "../../ai/runtime-pause.js";
 import { canonicalizeBrPhoneDigits, brPhoneMatchKeys } from "../../lib/phone-match.js";
@@ -329,6 +330,7 @@ async function bumpOrEnqueueJob(params: {
     [params.conversationId, quietSecs, JSON.stringify(payloadJson)],
   );
   if ((bumped.rowCount ?? 0) > 0) {
+    await notifyAiJobScheduled(quietSecs, { barbershopId: params.barbershopId, conversationId: params.conversationId });
     console.info(
       "[%s] debounced jobId=%s conversationId=%s barbershopId=%s quietSecs=%s",
       params.logPrefix,
@@ -366,6 +368,7 @@ async function bumpOrEnqueueJob(params: {
     [params.barbershopId, params.conversationId, JSON.stringify(payloadJson), quietSecs],
   );
   if (jobInsert.rows[0]?.id) {
+    await notifyAiJobScheduled(quietSecs, { barbershopId: params.barbershopId, conversationId: params.conversationId });
     console.info(
       "[%s] enqueued jobId=%s conversationId=%s barbershopId=%s quietSecs=%s",
       params.logPrefix,

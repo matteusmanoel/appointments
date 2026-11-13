@@ -357,8 +357,8 @@ resource "aws_lambda_function" "api" {
   role             = aws_iam_role.api.arn
   runtime          = "nodejs20.x"
   handler          = "dist/lambda.handler"
-  filename         = local.lambda_zip
-  source_code_hash = local.lambda_hash
+  filename         = local.lambda_zip["api"]
+  source_code_hash = local.lambda_hash["api"]
   timeout          = 30
   memory_size      = 256
 
@@ -366,10 +366,19 @@ resource "aws_lambda_function" "api" {
     variables = merge(local.common_env, {
       DATABASE_POOL_MAX = "5"
       PORT              = "3000"
+      AI_JOBS_QUEUE_URL = aws_sqs_queue.ai_jobs.url
     })
   }
 
   depends_on = [aws_iam_role_policy.api, aws_cloudwatch_log_group.api]
+
+  # Trava: apply sem zip real sobrescreveria o código em produção com o placeholder.
+  lifecycle {
+    precondition {
+      condition     = local.lambda_is_real["api"] || var.allow_placeholder_deploy
+      error_message = "Sem zip real para api (lambda_zip_paths/lambda_zip_path): o apply substituiria a Lambda por um placeholder. Gere os zips (cd backend && npm run bundle:lambdas) ou, só em plan/conta vazia, use -var allow_placeholder_deploy=true."
+    }
+  }
 }
 
 resource "aws_lambda_function" "worker_ai" {
@@ -377,8 +386,8 @@ resource "aws_lambda_function" "worker_ai" {
   role             = aws_iam_role.worker_ai.arn
   runtime          = "nodejs20.x"
   handler          = "dist/workers/lambda-ai.handler"
-  filename         = local.lambda_zip
-  source_code_hash = local.lambda_hash
+  filename         = local.lambda_zip["worker_ai"]
+  source_code_hash = local.lambda_hash["worker_ai"]
   timeout          = 180
   memory_size      = 512
 
@@ -392,6 +401,14 @@ resource "aws_lambda_function" "worker_ai" {
   }
 
   depends_on = [aws_iam_role_policy.worker_ai, aws_cloudwatch_log_group.worker_ai]
+
+  # Trava: apply sem zip real sobrescreveria o código em produção com o placeholder.
+  lifecycle {
+    precondition {
+      condition     = local.lambda_is_real["worker_ai"] || var.allow_placeholder_deploy
+      error_message = "Sem zip real para worker_ai (lambda_zip_paths/lambda_zip_path): o apply substituiria a Lambda por um placeholder. Gere os zips (cd backend && npm run bundle:lambdas) ou, só em plan/conta vazia, use -var allow_placeholder_deploy=true."
+    }
+  }
 }
 
 resource "aws_lambda_function" "worker_scheduled" {
@@ -399,8 +416,8 @@ resource "aws_lambda_function" "worker_scheduled" {
   role             = aws_iam_role.worker_scheduled.arn
   runtime          = "nodejs20.x"
   handler          = "dist/workers/lambda-scheduled.handler"
-  filename         = local.lambda_zip
-  source_code_hash = local.lambda_hash
+  filename         = local.lambda_zip["worker_scheduled"]
+  source_code_hash = local.lambda_hash["worker_scheduled"]
   timeout          = 60
   memory_size      = 256
 
@@ -413,6 +430,14 @@ resource "aws_lambda_function" "worker_scheduled" {
   }
 
   depends_on = [aws_iam_role_policy.worker_scheduled, aws_cloudwatch_log_group.worker_scheduled]
+
+  # Trava: apply sem zip real sobrescreveria o código em produção com o placeholder.
+  lifecycle {
+    precondition {
+      condition     = local.lambda_is_real["worker_scheduled"] || var.allow_placeholder_deploy
+      error_message = "Sem zip real para worker_scheduled (lambda_zip_paths/lambda_zip_path): o apply substituiria a Lambda por um placeholder. Gere os zips (cd backend && npm run bundle:lambdas) ou, só em plan/conta vazia, use -var allow_placeholder_deploy=true."
+    }
+  }
 }
 
 resource "aws_lambda_function" "worker_knowledge" {
@@ -420,8 +445,8 @@ resource "aws_lambda_function" "worker_knowledge" {
   role             = aws_iam_role.worker_knowledge.arn
   runtime          = "nodejs20.x"
   handler          = "dist/workers/lambda-knowledge.handler"
-  filename         = local.lambda_zip
-  source_code_hash = local.lambda_hash
+  filename         = local.lambda_zip["worker_knowledge"]
+  source_code_hash = local.lambda_hash["worker_knowledge"]
   timeout          = 300
   memory_size      = 512
 
@@ -432,6 +457,14 @@ resource "aws_lambda_function" "worker_knowledge" {
   }
 
   depends_on = [aws_iam_role_policy.worker_knowledge, aws_cloudwatch_log_group.worker_knowledge]
+
+  # Trava: apply sem zip real sobrescreveria o código em produção com o placeholder.
+  lifecycle {
+    precondition {
+      condition     = local.lambda_is_real["worker_knowledge"] || var.allow_placeholder_deploy
+      error_message = "Sem zip real para worker_knowledge (lambda_zip_paths/lambda_zip_path): o apply substituiria a Lambda por um placeholder. Gere os zips (cd backend && npm run bundle:lambdas) ou, só em plan/conta vazia, use -var allow_placeholder_deploy=true."
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
