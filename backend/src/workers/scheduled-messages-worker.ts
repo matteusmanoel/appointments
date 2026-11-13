@@ -1,4 +1,5 @@
 import "../load-env.js";
+import { getSubscriptionAccess } from "../billing-access.js";
 import { pool } from "../db.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 import { recordAgendaChange } from "../agenda/record-agenda-change.js";
@@ -478,6 +479,12 @@ async function processOne(): Promise<boolean> {
 
       if (!sendBody) {
         await markSkipped(id, "Mensagem vazia");
+        continue;
+      }
+
+      const subscription = await getSubscriptionAccess(barbershopId);
+      if (!subscription.allowed) {
+        await markSkipped(id, "Assinatura inativa: envio automático pausado");
         continue;
       }
 

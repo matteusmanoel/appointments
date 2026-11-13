@@ -78,7 +78,23 @@ export function MainLayout({ children }: MainLayoutProps) {
           "transition-[padding-left] duration-200 ease-in-out motion-reduce:transition-none",
         )}
       >
-        <div className="w-full p-4 md:py-8 md:pr-8 md:pl-0">{children}</div>
+        <div className="w-full p-4 md:py-8 md:pr-8 md:pl-0">
+          {profile?.billing_alert && (
+            <div
+              role="alert"
+              className={cn(
+                "mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm",
+                profile.billing_alert.level === "blocked"
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : "border-yellow-500/40 bg-yellow-500/10 text-yellow-600",
+              )}
+            >
+              <span>{profile.billing_alert.message}</span>
+              <a href="/app/planos" className="font-medium underline underline-offset-2">Ver plano e pagamento</a>
+            </div>
+          )}
+          {children}
+        </div>
       </main>
     </div>
   );

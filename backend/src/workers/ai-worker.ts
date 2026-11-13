@@ -13,6 +13,7 @@ import { logTurnTrace, maskPhone, previewError, previewText, type AgentTurnTrace
 import { persistTurnSheet } from "../ai/turn-sheet-store.js";
 import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
+import { getSubscriptionAccess } from "../billing-access.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
 import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
@@ -525,8 +526,14 @@ async function processOneJob(): Promise<boolean> {
       reply = FALLBACK_MESSAGE;
       turnSink.replyText = reply;
     } else {
+      const access = await getSubscriptionAccess(barbershopId);
       const usage = await getUsageAndLimit(barbershopId);
-      if (usage.hardExceeded) {
+      if (!access.allowed) {
+        console.warn("[ai-worker] assinatura inativa barbershopId=%s; IA pausada", barbershopId);
+        turnSink.state = "subscription_blocked";
+        reply = "";
+        turnSink.replyText = reply;
+      } else if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         turnSink.state = "hard_limit";
         reply = "";

@@ -11,6 +11,9 @@ function isUndefinedTableOrColumn(e: unknown): boolean {
  * Keep this idempotent and conservative.
  */
 export async function ensureCriticalSchema(): Promise<void> {
+  for (const col of ["subscription_status_changed_at", "subscription_current_period_end", "subscription_event_at"]) {
+    await pool.query(`ALTER TABLE public.barbershops ADD COLUMN IF NOT EXISTS ${col} timestamptz`).catch(() => {});
+  }
   // Endurecimento de autenticação/cobrança (ver supabase/migrations/20261113120000_auth_hardening.sql).
   await pool
     .query(

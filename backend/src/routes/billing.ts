@@ -143,16 +143,64 @@ async function handleStripeEvent(event: Stripe.Event): Promise<void> {
   }
   if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
     const subscription = event.data.object as Stripe.Subscription;
-    await pool.query(
-      `UPDATE public.barbershops SET subscription_status = $1 WHERE stripe_subscription_id = $2`,
-      [subscription.status, subscription.id]
-    ).catch(() => {});
+    const priceId = subscription.items?.data?.[0]?.price?.id ?? null;
+    const plan = planFromPriceId(priceId);
+    const periodEnd = (subscription as unknown as { current_period_end?: number }).current_period_end ?? null;
+    const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
+    // Ignora evento atrasado (mais velho que o último aplicado) e propaga falha: o Stripe reenvia.
+    const r = await pool.query(
+      `UPDATE public.barbershops
+       SET subscription_status_changed_at = CASE WHEN subscription_status IS DISTINCT FROM $1 THEN now() ELSE subscription_status_changed_at END,
+           subscription_status = $1,
+           subscription_current_period_end = COALESCE(to_timestamp($3), subscription_current_period_end),
+           billing_plan = COALESCE($4, billing_plan),
+           subscription_event_at = to_timestamp($5),
+           updated_at = now()
+       WHERE stripe_subscription_id = $2
+         AND (subscription_event_at IS NULL OR subscription_event_at <= to_timestamp($5))`,
+      [status, subscription.id, periodEnd, plan, event.created]
+    );
+    if ((r.rowCount ?? 0) === 0) {
+      const exists = await pool.query("SELECT 1 FROM public.barbershops WHERE stripe_subscription_id = $1", [subscription.id]);
+      // Barbearia ainda não provisionada (evento chegou antes do checkout.session.completed): erro → Stripe reenvia.
+      if (exists.rows.length === 0) throw new Error(`subscription ${subscription.id} sem barbearia (aguardando provisionamento)`);
+    }
+    return;
   }
-  // Aviso de assinatura fora do produto por enquanto (ADR 0003).
-  // if (event.type === "invoice.payment_failed") {
-  //   const invoice = event.data.object as Stripe.Invoice;
-  //   await handleInvoicePaymentFailed(invoice);
-  // }
+  if (event.type === "invoice.payment_failed") {
+    const invoice = event.data.object as Stripe.Invoice;
+    const customerId = typeof invoice.customer === "string" ? invoice.customer : (invoice.customer?.id ?? "");
+    if (!customerId) return;
+    // Inicia a tolerância (BILLING_GRACE_DAYS) só na primeira falha; falhas seguintes não renovam o prazo.
+    await pool.query(
+      `UPDATE public.barbershops
+       SET subscription_status = 'past_due', subscription_status_changed_at = now(), updated_at = now()
+       WHERE stripe_customer_id = $1 AND COALESCE(subscription_status, 'active') IN ('active', 'trialing')`,
+      [customerId]
+    );
+    return;
+  }
+  if (event.type === "invoice.paid" || event.type === "invoice.payment_succeeded") {
+    const invoice = event.data.object as Stripe.Invoice;
+    const customerId = typeof invoice.customer === "string" ? invoice.customer : (invoice.customer?.id ?? "");
+    if (!customerId) return;
+    await pool.query(
+      `UPDATE public.barbershops
+       SET subscription_status = 'active', subscription_status_changed_at = now(), updated_at = now()
+       WHERE stripe_customer_id = $1 AND subscription_status IN ('past_due', 'unpaid', 'incomplete')`,
+      [customerId]
+    );
+    return;
+  }
+}
+
+/** Mapeia o price id do Stripe para o plano do produto (null se desconhecido: não altera o plano). */
+export function planFromPriceId(priceId: string | null): "essential" | "pro" | "premium" | null {
+  if (!priceId) return null;
+  if (config.stripePriceIdEssential && priceId === config.stripePriceIdEssential) return "essential";
+  if (config.stripePriceIdPro && priceId === config.stripePriceIdPro) return "pro";
+  if (config.stripePriceIdPremium && priceId === config.stripePriceIdPremium) return "premium";
+  return null;
 }
 
 async function handleInvoicePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
