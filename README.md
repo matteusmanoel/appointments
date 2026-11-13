@@ -78,6 +78,10 @@ Seções de configuração:
 - Pagamentos/comissões
 - Segurança e conta
 
+## WhatsApp: provedor padrão
+
+O provedor padrão é `evolution` (antes era `uazapi`). Defina `WHATSAPP_PROVIDER` explicitamente; o startup avisa em log quando a variável falta. Detalhes, avisos e checklist: [docs/WHATSAPP_PROVIDER.md](docs/WHATSAPP_PROVIDER.md).
+
 ## Arquitetura (como o projeto está organizado)
 
 ### Fluxo principal da aplicação

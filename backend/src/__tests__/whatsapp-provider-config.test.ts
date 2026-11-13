@@ -37,10 +37,50 @@ describe("provider de WhatsApp configurável", () => {
       expect.arrayContaining([expect.stringContaining("EVOLUTION_API_URL"), expect.stringContaining("EVOLUTION_API_KEY")]),
     );
     expect(
-      whatsappConfigProblems({ EVOLUTION_API_URL: "https://evo.example.com", EVOLUTION_API_KEY: "k", APP_URL: "https://x" }),
+      whatsappConfigProblems({ EVOLUTION_API_URL: "https://evo.example.com", EVOLUTION_API_KEY: "k", APP_URL: "https://x", WHATSAPP_WEBHOOK_SECRET: "s" }),
     ).toEqual([]);
     expect(whatsappConfigProblems({ WHATSAPP_PROVIDER: "uazapi" })).toEqual(
       expect.arrayContaining([expect.stringContaining("UAZAPI_BASE_URL")]),
     );
+  });
+});
+
+import { providerDefaultNotice, startupWhatsappWarnings } from "../integrations/whatsapp/provider-config.js";
+
+describe("aviso de mudança do provider padrão e segredos de webhook", () => {
+  it("sem WHATSAPP_PROVIDER: avisa que o padrão passou de uazapi para evolution", () => {
+    const n = providerDefaultNotice({});
+    expect(n).toContain('padrão "evolution"');
+    expect(n).toContain("uazapi");
+    expect(providerDefaultNotice({ WHATSAPP_PROVIDER: "lixo" })).toContain("inválido");
+  });
+  it("com provider explícito não há aviso de padrão", () => {
+    expect(providerDefaultNotice({ WHATSAPP_PROVIDER: "evolution" })).toBeNull();
+    expect(providerDefaultNotice({ WHATSAPP_PROVIDER: "UAZAPI" })).toBeNull();
+  });
+  it("texto de EVOLUTION_API_KEY vazio é preciso: não diz que o webhook depende da chave", () => {
+    const msg = whatsappConfigProblems({}).find((p) => p.includes("EVOLUTION_API_KEY"))!;
+    expect(msg).toContain("autentica a chamada à API");
+    expect(msg).not.toContain("falham fechados");
+  });
+  it("avisa WHATSAPP_WEBHOOK_SECRET ausente (variável do PR #1), e que a chave mestra não serve", () => {
+    const p = whatsappConfigProblems({ WHATSAPP_PROVIDER: "uazapi", UAZAPI_BASE_URL: "u", UAZAPI_ADMIN_TOKEN: "t" });
+    expect(p).toHaveLength(1);
+    expect(p[0]).toContain("WHATSAPP_WEBHOOK_SECRET");
+    expect(p[0]).toContain("EVOLUTION_API_KEY");
+    expect(whatsappConfigProblems({ WHATSAPP_PROVIDER: "uazapi", UAZAPI_BASE_URL: "u", UAZAPI_ADMIN_TOKEN: "t", WHATSAPP_WEBHOOK_SECRET: "s" })).toEqual([]);
+  });
+  it("Meta em uso exige WHATSAPP_APP_SECRET e WHATSAPP_VERIFY_TOKEN; sem Meta não incomoda", () => {
+    const base = { WHATSAPP_PROVIDER: "uazapi", UAZAPI_BASE_URL: "u", UAZAPI_ADMIN_TOKEN: "t", WHATSAPP_WEBHOOK_SECRET: "s" };
+    expect(whatsappConfigProblems(base)).toEqual([]);
+    const meta = whatsappConfigProblems({ ...base, WHATSAPP_ACCESS_TOKEN: "x" });
+    expect(meta.join("|")).toContain("WHATSAPP_APP_SECRET");
+    expect(meta.join("|")).toContain("WHATSAPP_VERIFY_TOKEN");
+    expect(whatsappConfigProblems({ ...base, WHATSAPP_ACCESS_TOKEN: "x", WHATSAPP_APP_SECRET: "a", WHATSAPP_VERIFY_TOKEN: "v" })).toEqual([]);
+  });
+  it("startupWhatsappWarnings junta aviso de padrão e problemas", () => {
+    const lines = startupWhatsappWarnings({});
+    expect(lines[0]).toContain("não definido");
+    expect(lines.length).toBeGreaterThan(2);
   });
 });
