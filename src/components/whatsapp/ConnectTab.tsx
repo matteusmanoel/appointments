@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Check, Loader2, AlertCircle, ShieldAlert, XCircle, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { whatsappApi } from "@/lib/api";
+import { friendlyConnectionError } from "@/lib/whatsapp-errors";
+import { ConfirmDialog } from "@/components/shared";
 import { LoadingState } from "@/components/LoadingState";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -115,6 +117,7 @@ export function ConnectTab({
   /** Percentual restante (100 → 0) para barra regressiva ao aguardar pareamento */
   const [connectingRemainingPct, setConnectingRemainingPct] = useState(100);
   /** Após fim da barra: exibir o reset ao usuário */
+  const [confirmDisconnectOpen, setConfirmDisconnectOpen] = useState(false);
   const [refetchResult, setRefetchResult] = useState<"success" | "error" | null>(null);
   const [refetchResultMessage, setRefetchResultMessage] = useState<string | null>(null);
   const expiredRef = useRef(onPairingExpired);
@@ -305,7 +308,7 @@ export function ConnectTab({
                 </p>
               )}
               {connection?.last_error && (
-                <p className="text-sm text-destructive">{connection.last_error}</p>
+                <p className="text-sm text-destructive">{friendlyConnectionError(connection.last_error)}</p>
               )}
               {webhookWarning && (
                 <p className="text-xs text-amber-600 dark:text-amber-500">{webhookWarning}</p>
@@ -335,7 +338,7 @@ export function ConnectTab({
                 <Button
                   size="sm"
                   variant="destructive"
-                  onClick={onDisconnect}
+                  onClick={() => setConfirmDisconnectOpen(true)}
                   disabled={disconnectPending}
                 >
                   {disconnectPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -380,7 +383,7 @@ export function ConnectTab({
               {connection?.last_error && (
                 <p className="text-sm text-destructive flex items-center gap-1.5">
                   <AlertCircle className="h-4 w-4 shrink-0" />
-                  {connection.last_error}
+                  {friendlyConnectionError(connection.last_error)}
                 </p>
               )}
               <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -401,6 +404,14 @@ export function ConnectTab({
                   {startPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Conectar WhatsApp
                 </Button>
+                {!canConnect && !startPending && (
+                  <p className="w-full text-xs text-muted-foreground">
+                    Marque as duas caixas de confirmação acima para continuar.
+                  </p>
+                )}
+                <p className="w-full text-xs text-muted-foreground">
+                  Número (opcional): preencha só se preferir conectar por código em vez de QR Code.
+                </p>
               </div>
             </>
           )}
@@ -522,7 +533,9 @@ export function ConnectTab({
                   className="w-64 h-64 max-w-full object-contain rounded-xl border border-border bg-background p-2 shadow-sm"
                 />
               ) : (
-                <div className="w-64 h-64 max-w-full bg-muted animate-pulse rounded-xl border border-border" />
+                <div className="w-64 h-64 max-w-full bg-muted animate-pulse rounded-xl border border-border flex items-center justify-center p-4 text-center">
+                  <span className="text-sm text-muted-foreground">Gerando seu QR Code…</span>
+                </div>
               )}
               {statusData?.pairingCode && (
                 <p className="text-sm text-muted-foreground text-center w-full">
@@ -604,6 +617,15 @@ export function ConnectTab({
           </CardContent>
         </Card>
       )}
+      <ConfirmDialog
+        open={confirmDisconnectOpen}
+        onOpenChange={setConfirmDisconnectOpen}
+        title="Desconectar o WhatsApp?"
+        description="A secretária para de responder seus clientes até você ler um novo QR Code."
+        confirmLabel="Desconectar"
+        variant="destructive"
+        onConfirm={() => onDisconnect()}
+      />
     </div>
   );
 }

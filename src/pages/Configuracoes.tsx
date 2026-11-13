@@ -41,6 +41,7 @@ import {
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
 import { ConfirmDialog, EntityFormDialog } from "@/components/shared";
 import { LoadingState } from "@/components/LoadingState";
+import { confirmHours } from "@/lib/business-hours-setup";
 import { toastError, toastSuccess, withToast } from "@/lib/toast-helpers";
 import {
   Form,
@@ -593,10 +594,12 @@ export default function Configuracoes() {
   };
 
   const onSubmitHours = async () => {
-    await withToast(patchMutation.mutateAsync({ business_hours: hoursState }), {
+    const saved = await withToast(patchMutation.mutateAsync({ business_hours: hoursState }), {
       successMessage: "Horário salvo.",
       errorMessage: "Erro ao salvar horário.",
     });
+    // Salvar é a confirmação do dono (vale também se ele mantiver o padrão).
+    if (saved !== undefined) confirmHours(barbershop?.id);
   };
 
   const setDayHours = (

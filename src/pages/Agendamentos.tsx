@@ -62,6 +62,7 @@ import {
   EntityMultiSelectWithCreate,
 } from "@/components/shared";
 import { EmptyState } from "@/components/EmptyState";
+import { ErrorState } from "@/components/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import {
@@ -551,7 +552,12 @@ export default function Agendamentos() {
       ? format(endOfMonth(selectedDate), "yyyy-MM-dd")
       : undefined;
 
-  const { data: appointments = [], isLoading } = useQuery({
+  const {
+    data: appointments = [],
+    isLoading,
+    isError: appointmentsError,
+    refetch: refetchAppointments,
+  } = useQuery({
     queryKey: [
       "appointments",
       dateStr,
@@ -633,7 +639,12 @@ export default function Agendamentos() {
     return map;
   }, [yearAppointments]);
 
-  const { data: listAppointmentsRaw = [], isLoading: listLoading } = useQuery({
+  const {
+    data: listAppointmentsRaw = [],
+    isLoading: listLoading,
+    isError: listError,
+    refetch: refetchList,
+  } = useQuery({
     queryKey: [
       "appointments",
       "list",
@@ -1490,6 +1501,13 @@ export default function Agendamentos() {
             <div className="flex-1 min-h-0 flex flex-col">
               {gradeViewMode === "day" && (
                 <>
+                  {appointmentsError && !isLoading && (
+                    <ErrorState
+                      className="mb-3"
+                      message="Não conseguimos carregar a agenda. Confira a internet e tente de novo. Enquanto isso, os horários abaixo podem não mostrar os atendimentos."
+                      onRetry={() => void refetchAppointments()}
+                    />
+                  )}
                   {isLoading && (
                     <AgendamentosGradeDaySkeleton
                       barberCount={Math.max(barbers.length, 3)}
@@ -1835,6 +1853,12 @@ export default function Agendamentos() {
               />
               {listLoading ? (
                 <AgendamentosListSkeleton />
+              ) : listError ? (
+                <ErrorState
+                  className="flex-1"
+                  message="Não conseguimos carregar a agenda. Confira a internet e tente de novo."
+                  onRetry={() => void refetchList()}
+                />
               ) : listAppointments.length === 0 ? (
                 <div className="stat-card flex flex-1 min-h-0 flex-col gap-3 items-center justify-center py-12">
                   <EmptyState

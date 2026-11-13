@@ -4,10 +4,11 @@ import { CheckCircle2, Circle, Settings, Scissors, Users, MessageCircle, Lock } 
 import { hasPro } from "@/lib/plan";
 import type { Profile } from "@/contexts/AuthContext";
 import { CheckoutModal } from "@/components/CheckoutModal";
+import { confirmHours, hoursStepDone, summarizeBusinessHours } from "@/lib/business-hours-setup";
 
 type SetupChecklistProps = {
   profile: Profile | null;
-  barbershop: { name?: string; business_hours?: unknown; slug?: string | null } | null | undefined;
+  barbershop: { id?: string; name?: string; business_hours?: unknown; slug?: string | null } | null | undefined;
   servicesCount: number;
   barbersCount: number;
   whatsappConnected: boolean;
@@ -35,6 +36,7 @@ export function SetupChecklist({
   error,
 }: SetupChecklistProps) {
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [, forceRender] = useState(0);
 
   if (loading) {
     return (
@@ -65,7 +67,9 @@ export function SetupChecklist({
   const configDone =
     !!barbershop?.name?.trim() &&
     hasBusinessHours(barbershop.business_hours) &&
+    hoursStepDone(barbershop.business_hours, barbershop.id) &&
     !!barbershop?.slug?.trim();
+  const hoursSummary = summarizeBusinessHours(barbershop?.business_hours);
   const servicesDone = servicesCount >= 1;
   const barbersDone = barbersCount >= 1;
   const isPro = hasPro(profile);
@@ -139,6 +143,21 @@ export function SetupChecklist({
                   <Icon className="h-4 w-4" />
                   {step.label} →
                 </Link>
+              )}
+              {step.to === "/app/configuracoes?open=hours" && !step.done && hoursSummary && (
+                <span className="ml-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  Hoje: {hoursSummary}.
+                  <button
+                    type="button"
+                    className="font-medium text-primary hover:underline"
+                    onClick={() => {
+                      confirmHours(barbershop?.id);
+                      forceRender((n) => n + 1);
+                    }}
+                  >
+                    Está certo, confirmar
+                  </button>
+                </span>
               )}
             </li>
           );

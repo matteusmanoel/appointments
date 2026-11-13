@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, useMemo } from "react";
+import { ErrorState } from "@/components/ErrorState";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { StatCard } from "@/components/dashboard/StatCard";
@@ -75,7 +76,11 @@ export default function Dashboard() {
     range?.from && range?.to ? format(range.to, "yyyy-MM-dd") : null;
   const today = todayISO();
 
-  const { data: appointments = [] } = useQuery({
+  const {
+    data: appointments = [],
+    isError: appointmentsError,
+    refetch: refetchAppointments,
+  } = useQuery({
     queryKey: ["appointments", "dashboard", fromStr ?? today, toStr ?? today],
     queryFn: () =>
       fromStr && toStr
@@ -182,11 +187,17 @@ export default function Dashboard() {
               {isRange
                 ? "Resumo do período selecionado."
                 : "Agenda organizada para hoje."}{" "}
-              Você tem{" "}
-              <span className="font-medium text-foreground">
-                {countPeriod} atendimentos
-              </span>{" "}
-              confirmados.
+              {appointmentsError ? (
+                "Não foi possível carregar os atendimentos agora."
+              ) : (
+                <>
+                  Você tem{" "}
+                  <span className="font-medium text-foreground">
+                    {countPeriod} atendimentos
+                  </span>{" "}
+                  confirmados.
+                </>
+              )}
             </p>
           </div>
           <div className="mt-2 w-full md:mt-0 md:w-auto">
@@ -198,6 +209,14 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {appointmentsError && (
+        <ErrorState
+          className="mb-6"
+          message="Não conseguimos carregar a agenda. Confira a internet e tente de novo; os números abaixo podem estar incompletos."
+          onRetry={() => void refetchAppointments()}
+        />
+      )}
 
       {/* Status: WhatsApp + Automações */}
       <div className="mb-6 flex flex-wrap items-center gap-4 rounded-lg border border-border/50 bg-muted/30 p-4">
