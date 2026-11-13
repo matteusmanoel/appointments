@@ -13,6 +13,26 @@ export class AuthError extends Error {
   }
 }
 
+/** Erro HTTP da API com o status, para a UI decidir a mensagem (ex.: 401 de credencial vs. 5xx/rede). */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/**
+ * 401 que significa "dado informado errado", não "sessão expirada": não pode deslogar nem redirecionar.
+ * Login/registro, e a troca de senha quando a senha atual está errada (backend: "Senha atual incorreta").
+ */
+function isFormCredentialRejection(path: string, serverMessage: unknown): boolean {
+  if (/\/api\/auth\/(login|register)\b/.test(path)) return true;
+  if (/\/api\/auth\/password\b/.test(path) && typeof serverMessage === "string" && /senha atual/i.test(serverMessage)) return true;
+  return false;
+}
+
 export const getToken = (): string | null => localStorage.getItem("token");
 
 export function setToken(token: string): void {
@@ -70,19 +90,18 @@ export async function api<T>(
   clearTimeout(timeoutId);
 
   if (res.status === 401) {
-    const isCredentialRequest = /\/api\/auth\/(login|register)\b/.test(path);
-    if (!isCredentialRequest) {
+    const data = await res.json().catch(() => ({}));
+    if (!isFormCredentialRejection(path, data?.error)) {
       clearToken();
       localStorage.removeItem("profile");
       window.location.href = "/login";
       throw new AuthError("Sessão expirada");
     }
-    const data = await res.json().catch(() => ({}));
-    throw new Error(typeof data?.error === "string" ? data.error : "E-mail ou senha incorretos");
+    throw new ApiError(typeof data?.error === "string" ? data.error : "E-mail ou senha incorretos", 401);
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error ?? res.statusText);
+  if (!res.ok) throw new ApiError(data?.error ?? res.statusText, res.status);
   return data as T;
 }
 

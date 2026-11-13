@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { authApi } from "@/lib/api";
 import { toastSuccess, toastError } from "@/lib/toast-helpers";
+import { loginErrorMessage } from "@/lib/auth-errors";
 import { Info } from "lucide-react";
 
 export default function Login() {
@@ -37,15 +38,7 @@ export default function Login() {
       const from = (location.state as { from?: { pathname: string } })?.from?.pathname;
       navigate(from && from.startsWith("/app") ? from : "/app", { replace: true });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "";
-      const apiDown = /fetch|network|demorou|Failed|ECONNREFUSED/i.test(msg);
-      toastError(
-        "Não foi possível entrar",
-        err,
-        apiDown
-          ? "A API não está respondendo em :3003. Suba o backend e tente de novo."
-          : "E-mail ou senha incorretos. Verifique e tente novamente.",
-      );
+      toastError("Não foi possível entrar", err, loginErrorMessage(err));
     }
   };
 
@@ -95,7 +88,8 @@ export default function Login() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@navalhia.com.br"
+              placeholder="seu@email.com"
+              autoComplete="email"
               required
               className="mt-1"
             />
@@ -104,6 +98,7 @@ export default function Login() {
             <Label htmlFor="password">Senha <span className="text-destructive">*</span></Label>
             <PasswordInput
               id="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => {

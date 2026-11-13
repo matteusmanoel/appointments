@@ -27,6 +27,7 @@ import {
   FileCode2,
 } from "lucide-react";
 import {
+  ApiError,
   accountApi,
   authApi,
   barbershopsApi,
@@ -664,7 +665,9 @@ export default function Configuracoes() {
       toastError(
         "Não foi possível alterar a senha.",
         e,
-        "Verifique a senha atual.",
+        e instanceof ApiError && e.status === 401
+          ? "Senha atual incorreta. Confira e tente de novo."
+          : "Verifique a senha atual e tente de novo.",
       );
     },
   });

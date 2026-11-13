@@ -23,23 +23,18 @@ import {
 } from "@/lib/input-masks";
 import { billingApi, type BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
+import {
+  checkoutErrorMessage,
+  firstInvalidField,
+  validateCheckoutField,
+  validateCheckoutForm,
+  type CheckoutField,
+} from "@/lib/checkout-validation";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
 const EXTRA_NUMBER_PRICE = 39;
 const MAX_EXTRA_NUMBERS = 10;
-
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function phoneDigits(value: string): string {
-  return value.replace(/\D/g, "");
-}
-
-function cnpjDigits(value: string): string {
-  return value.replace(/\D/g, "");
-}
 
 type Props = {
   open: boolean;
@@ -87,35 +82,27 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     ? planInfo.priceValue + effectiveExtraNumbers * EXTRA_NUMBER_PRICE
     : 0;
 
-  const isFormValid = useMemo(() => {
-    const name = form.barbershop_name.trim();
-    const emailVal = form.email.trim();
-    const phoneVal = form.phone.trim();
-    const cnpjVal = form.cnpj.trim();
-    if (!name.length) return false;
-    if (!isValidEmail(emailVal)) return false;
-    if (phoneDigits(phoneVal).length < 10 || phoneDigits(phoneVal).length > 11) return false;
-    if (cnpjVal.length > 0 && cnpjDigits(cnpjVal).length !== 14) return false;
-    return true;
-  }, [form.barbershop_name, form.email, form.phone, form.cnpj]);
-
   const validateAndSetErrors = (): boolean => {
-    const errors: Record<string, string> = {};
-    if (!form.barbershop_name.trim()) errors.barbershop_name = "Nome é obrigatório";
-    if (!form.email.trim()) errors.email = "E-mail é obrigatório";
-    else if (!isValidEmail(form.email.trim())) errors.email = "E-mail inválido";
-    const ph = phoneDigits(form.phone);
-    if (ph.length < 10 || ph.length > 11) errors.phone = "Telefone deve ter 10 ou 11 dígitos";
-    const cn = cnpjDigits(form.cnpj);
-    if (cn.length > 0 && cn.length !== 14) errors.cnpj = "CNPJ deve ter 14 dígitos";
-    setFieldErrors(errors);
-    return Object.keys(errors).length === 0;
+    const errors = validateCheckoutForm(form);
+    setFieldErrors(errors as Record<string, string>);
+    const first = firstInvalidField(errors);
+    if (first) {
+      // Leva o dono até o primeiro campo com problema (o botão nunca fica "morto").
+      const el = document.getElementById(first);
+      el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      el?.focus?.({ preventScroll: true });
+    }
+    return !first;
+  };
+
+  const validateOnBlur = (field: CheckoutField) => {
+    setFieldErrors((prev) => ({ ...prev, [field]: validateCheckoutField(field, form) }));
   };
 
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!validateAndSetErrors() || !isFormValid) return;
+    if (!validateAndSetErrors()) return;
     setLoading(true);
     try {
       const extra = plan === "essential" ? 0 : extraNumbers;
@@ -144,7 +131,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         window.location.href = url;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar checkout");
+      setError(checkoutErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -166,7 +153,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       });
       window.location.href = url;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar checkout");
+      setError(checkoutErrorMessage(err));
       setLoading(false);
     }
   };
@@ -312,6 +299,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   }}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.barbershop_name}
+                  onBlur={() => validateOnBlur("barbershop_name")}
                 />
                 {fieldErrors.barbershop_name && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.barbershop_name}</p>
@@ -326,6 +314,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   onChange={handleCnpjChange}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.cnpj}
+                  onBlur={() => validateOnBlur("cnpj")}
                 />
                 {fieldErrors.cnpj && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.cnpj}</p>
@@ -341,6 +330,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   onChange={handlePhoneChange}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.phone}
+                  onBlur={() => validateOnBlur("phone")}
                 />
                 {fieldErrors.phone && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.phone}</p>
@@ -360,6 +350,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   }}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.email}
+                  onBlur={() => validateOnBlur("email")}
                 />
                 {fieldErrors.email && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.email}</p>
@@ -393,7 +384,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
               <Button
                 type="submit"
                 className="w-full min-h-[44px] text-base sm:text-sm"
-                disabled={loading || !isFormValid}
+                disabled={loading}
               >
                 {loading ? "Preparando..." : "Ir para pagamento"}
               </Button>
