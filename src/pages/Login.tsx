@@ -28,6 +28,25 @@ export default function Login() {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const isFirstAccess = searchParams.get("first_access") === "1";
+  const resetToken = searchParams.get("reset_token");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetToken) return;
+    setResetLoading(true);
+    try {
+      await authApi.resetPassword(resetToken, resetPassword);
+      toastSuccess("Senha redefinida. Entre com a nova senha.");
+      setResetPassword("");
+      navigate("/login", { replace: true });
+    } catch (err) {
+      toastError("Não foi possível redefinir a senha", err, "O link expirou ou já foi usado. Peça um novo em «Esqueci minha senha».");
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,7 +75,7 @@ export default function Login() {
     setForgotLoading(true);
     try {
       await authApi.forgotPassword(trimmed);
-      toastSuccess("Enviamos uma senha temporária para este e-mail. Confira a caixa de entrada e o spam.");
+      toastSuccess("Se houver uma conta com este e-mail, enviamos um link para redefinir a senha (vale 30 minutos). Confira também o spam.");
       setForgotOpen(false);
       setForgotEmail("");
     } catch (err) {
@@ -131,12 +150,30 @@ export default function Login() {
         </form>
       </div>
 
+      <Dialog open={!!resetToken} onOpenChange={(o) => { if (!o) navigate("/login", { replace: true }); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Definir nova senha</DialogTitle>
+            <DialogDescription>Escolha uma nova senha (mínimo 8 caracteres). O link só pode ser usado uma vez.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleResetSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="reset-password">Nova senha</Label>
+              <PasswordInput id="reset-password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} minLength={8} required className="mt-1" />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={resetLoading}>{resetLoading ? "Salvando..." : "Salvar nova senha"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Recuperar senha</DialogTitle>
             <DialogDescription>
-              Informe o e-mail da sua conta. Se existir, enviaremos uma senha temporária. No próximo login você poderá definir uma nova senha.
+              Informe o e-mail da sua conta. Se existir, enviaremos um link de uso único para você definir uma nova senha.
             </DialogDescription>
           </DialogHeader>
           {isFirstAccess && (
@@ -166,7 +203,7 @@ export default function Login() {
                 Cancelar
               </Button>
               <Button type="submit" disabled={forgotLoading}>
-                {forgotLoading ? "Enviando..." : "Enviar senha temporária"}
+                {forgotLoading ? "Enviando..." : "Enviar link"}
               </Button>
             </DialogFooter>
           </form>
