@@ -21,3 +21,16 @@ describe("deploy.yml legado", () => {
     expect(guards.length).toBe(jobs.length);
   });
 });
+
+describe("role OIDC do GitHub (infra/ci/oidc-github-role.yaml)", () => {
+  const tpl = readFileSync(resolve(here, "../../../infra/ci/oidc-github-role.yaml"), "utf8");
+  const active = tpl.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  it("não confia em repo:<repo>:* (qualquer branch/PR)", () => {
+    expect(active).not.toMatch(/repo:\$\{GitHubRepo\}:\*/);
+    expect(active).not.toMatch(/StringLike/);
+  });
+  it("só o ref do parâmetro GitHubRef (padrão refs/heads/main), com StringEquals", () => {
+    expect(active).toMatch(/StringEquals:[\s\S]*:sub": !Sub "repo:\$\{GitHubRepo\}:ref:\$\{GitHubRef\}"/);
+    expect(active).toMatch(/GitHubRef:\s+Type: String\s+Default: "refs\/heads\/main"/);
+  });
+});
