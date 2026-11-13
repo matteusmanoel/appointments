@@ -29,7 +29,7 @@ variable "api_subdomain" {
 
 variable "attach_custom_domains" {
   type        = bool
-  description = "true somente depois dos CNAMEs de validação ACM existirem na Cloudflare e os certificados estarem ISSUED."
+  description = "true somente depois dos CNAMEs de validação ACM existirem na Cloudflare e os certificados estarem ISSUED. false (padrão): não cria ACM (cdn/api), identidade SES de domínio, nem domínio customizado no API Gateway."
   default     = false
 }
 
@@ -47,14 +47,36 @@ variable "budget_limit_usd" {
 
 variable "from_email" {
   type        = string
-  description = "Remetente SES. Deve ser um endereço @domain_name após a verificação DKIM."
+  description = "Remetente SES quando attach_custom_domains=true (endereço @domain_name após DKIM). Sem domínio próprio, FROM_EMAIL usa ses_sender_email se este não for vazio."
   default     = "no-reply@navalhia.com"
+}
+
+variable "ses_sender_email" {
+  type        = string
+  description = "Identidade SES de e-mail (verificação individual, não de domínio). Sem default de propósito: informe no tfvars (vazio = não cria a identidade). Usada quando attach_custom_domains=false. Em sandbox, só destinatários também verificados recebem; os demais ficam pendentes."
+
+  validation {
+    condition     = var.ses_sender_email == "" || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.ses_sender_email))
+    error_message = "ses_sender_email deve ser vazio ou um endereço de e-mail."
+  }
+}
+
+variable "app_public_url" {
+  type        = string
+  description = "URL pública do front quando attach_custom_domains=false (ex.: https://appointments-psi-five.vercel.app). Vazio com o flag false deixa APP_URL vazio (não cai em app.navalhia.com). Com o flag true, é ignorada."
+  default     = ""
+}
+
+variable "api_public_url" {
+  type        = string
+  description = "URL pública da API quando attach_custom_domains=false. Preencha APÓS o primeiro apply com o output api_gateway_url. Não referencie aws_apigatewayv2_api.http.api_endpoint neste módulo: ciclo API Gateway ↔ Lambda. Com o flag true, é ignorada."
+  default     = ""
 }
 
 variable "cors_origin" {
   type        = string
-  description = "Origens CORS da API, separadas por vírgula."
-  default     = "https://app.navalhia.com,https://navalhia.com"
+  description = "Origens CORS da API, separadas por vírgula. Sem domínio próprio: URL de produção da Vercel; depois do 1º apply, acrescente https://<cloudfront_domain>."
+  default     = "https://appointments-psi-five.vercel.app"
 }
 
 variable "log_retention_days" {

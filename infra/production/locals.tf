@@ -10,13 +10,33 @@ locals {
   cdn_aliases = var.attach_custom_domains ? [local.app_fqdn, local.apex] : []
   api_aliases = var.attach_custom_domains ? [local.api_fqdn] : []
 
-  app_url        = "https://${local.app_fqdn}"
-  api_url_custom = "https://${local.api_fqdn}"
+  # Contagens (iguais aos `count` dos recursos). Use no `terraform console` para provar
+  # que, com attach_custom_domains=false, ACM / identidade SES de domínio / domínio da API = 0.
+  acm_cdn_count             = var.attach_custom_domains ? 1 : 0
+  acm_api_count             = var.attach_custom_domains ? 1 : 0
+  ses_domain_identity_count = var.attach_custom_domains ? 1 : 0
+  ses_sender_identity_count = (!var.attach_custom_domains && var.ses_sender_email != "") ? 1 : 0
+  apigw_custom_domain_count = var.attach_custom_domains ? 1 : 0
+
+  # Sem domínio próprio: APP_URL vem de app_public_url (Vercel). Não cair no FQDN customizado.
+  app_url         = var.attach_custom_domains ? "https://${local.app_fqdn}" : trimsuffix(var.app_public_url, "/")
+  api_public_base = var.attach_custom_domains ? "https://${local.api_fqdn}" : trimsuffix(var.api_public_url, "/")
 
   cors_origin = var.cors_origin
 
-  uazapi_webhook_public_url    = "${local.api_url_custom}/api/webhooks/uazapi"
-  evolution_webhook_public_url = "${local.api_url_custom}/api/webhooks/evolution"
+  # api_public_url vazio (1º apply) deixa os webhooks em branco de propósito — preencha após o output api_gateway_url.
+  # Não use aws_apigatewayv2_api.http.api_endpoint aqui: ciclo API Gateway ↔ env da Lambda.
+  uazapi_webhook_public_url    = local.api_public_base != "" ? "${local.api_public_base}/api/webhooks/uazapi" : ""
+  evolution_webhook_public_url = local.api_public_base != "" ? "${local.api_public_base}/api/webhooks/evolution" : ""
+
+  # Sem domínio: remetente = identidade de e-mail individual (ses_sender_email), se preenchida.
+  from_email = var.attach_custom_domains ? var.from_email : (var.ses_sender_email != "" ? var.ses_sender_email : var.from_email)
+
+  ses_identity_arns = compact(concat(
+    local.ses_domain_identity_count == 1 ? [aws_sesv2_email_identity.domain[0].arn] : [],
+    local.ses_sender_identity_count == 1 ? [aws_sesv2_email_identity.sender[0].arn] : [],
+    ["arn:aws:ses:${var.aws_region}:${local.account_id}:identity/${local.from_email}"]
+  ))
 
   lambda_functions = ["api", "worker_ai", "worker_scheduled", "worker_knowledge"]
 
@@ -35,7 +55,7 @@ locals {
     APP_ENCRYPTION_KEY              = var.app_encryption_key
     APP_URL                         = local.app_url
     CORS_ORIGIN                     = local.cors_origin
-    FROM_EMAIL                      = var.from_email
+    FROM_EMAIL                      = local.from_email
     WHATSAPP_PROVIDER               = var.whatsapp_provider
     WHATSAPP_INSTANCE_PREFIX        = var.whatsapp_instance_prefix
     UAZAPI_BASE_URL                 = var.uazapi_base_url

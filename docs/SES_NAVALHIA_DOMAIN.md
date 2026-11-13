@@ -1,5 +1,20 @@
 # SES e domínio navalhia.com.br
 
+## Produção sem domínio próprio (us-east-2, padrão atual)
+
+O stack Terraform de produção (`infra/production`, região `us-east-2`) sobe com `attach_custom_domains=false`. Nesse modo:
+
+- **Não** se cria identidade SES de domínio (`aws_sesv2_email_identity.domain`) nem registros DKIM.
+- Informe `ses_sender_email` no `terraform.tfvars` (a variável **não tem default**). Vazio = o Terraform não cria identidade de remetente. Preenchido = cria `aws_sesv2_email_identity.sender` e a Lambda usa esse endereço como `FROM_EMAIL`.
+- A verificação é **individual**: o SES envia um link para o inbox de `ses_sender_email`. Sem clicar no link, a identidade não envia.
+- A conta está em **sandbox** (limite baixo; só entrega para identidades verificadas). E-mail para destinatários **não verificados permanece pendente** (não chega) até você verificar também o destinatário ou solicitar *Production access* no console SES (`us-east-2`).
+
+Quando houver domínio próprio, volte a `attach_custom_domains=true` e use os tokens DKIM do output `ses_dkim_tokens` (o bloco histórico abaixo refere-se a um setup anterior em `us-east-1` / `navalhia.com.br` e não é o que o Terraform de produção cria hoje).
+
+---
+
+## Histórico (navalhia.com.br / us-east-1)
+
 Configuração do Amazon SES para envio de e-mails (onboarding com senha temporária) usando o domínio **navalhia.com.br**.
 
 ## Status
