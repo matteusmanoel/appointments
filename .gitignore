@@ -86,3 +86,4 @@ infra/production/backend.s3.tf.bak
 chats
 backend/.lab/
 .firecrawl/
+backend/build/

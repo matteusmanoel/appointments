@@ -184,6 +184,6 @@ variable "stripe_price_id_followup_credit" {
 
 variable "lambda_zip_path" {
   type        = string
-  description = "Zip real do backend (dist + node_modules). Vazio usa placeholder só para plan/validate."
+  description = "Zip único (legado) usado por TODAS as funções. Prefira lambda_zip_paths (um zip por função, gerado por `npm run bundle:lambdas`). Vazio + lambda_zip_paths vazio = placeholder (só plan/validate)."
   default     = ""
 }
