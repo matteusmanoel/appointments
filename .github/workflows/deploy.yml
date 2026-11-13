@@ -1,4 +1,11 @@
-# Deploy API + workers (Lambda) and static (S3 + CloudFront) on push to main.
+# >>> DESATIVADO (legado) <<<
+# Este workflow publicava via CloudFormation na conta AWS antiga (us-east-1) a cada push na main.
+# A infraestrutura atual é o Terraform em infra/ (outra conta e região); deixar este gatilho ativo faria
+# cada merge na main tentar publicar na stack antiga e/ou divergir do Terraform.
+# Gatilho `push` REMOVIDO: só roda manualmente (workflow_dispatch) e exige confirmar digitando "legado".
+# Para reativar de vez: restaure `push: branches: [main]` abaixo (decisão do dono do projeto).
+#
+# Deploy API + workers (Lambda) and static (S3 + CloudFront) — antes: on push to main.
 # Requires: AWS OIDC role (infra/ci/oidc-github-role.yaml) and GitHub secrets:
 #   AWS_ROLE_ARN, ARTIFACT_BUCKET, DATABASE_URL, JWT_SECRET, VITE_API_URL
 # Optional: CORS_ORIGIN, JWT_EXPIRES_IN, STRIPE_*, FROM_EMAIL, APP_URL (for API)
@@ -6,8 +13,12 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Fluxo legado (CloudFormation us-east-1). Digite "legado" para continuar.'
+        required: true
+        default: ""
 
 permissions:
   id-token: write
@@ -19,6 +30,7 @@ env:
 jobs:
   deploy-api:
     name: Deploy API
+    if: ${{ inputs.confirmar == 'legado' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -71,6 +83,7 @@ jobs:
 
   deploy-static:
     name: Deploy static
+    if: ${{ inputs.confirmar == 'legado' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
