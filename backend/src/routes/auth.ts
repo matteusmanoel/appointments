@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { config } from "../config.js";
@@ -28,7 +29,7 @@ const firstPasswordBody = z.object({
 function generateTempPassword(): string {
   const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
   let s = "";
-  for (let i = 0; i < 12; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 12; i++) s += chars[crypto.randomInt(chars.length)];
   return s;
 }
 
@@ -155,6 +156,24 @@ authRouter.post("/login", async (req: Request, res: Response): Promise<void> => 
   }
 });
 
+const RESET_TOKEN_TTL_MIN = 30;
+const resetPasswordBody = z.object({
+  token: z.string().min(32).max(200),
+  new_password: z.string().min(8, "Nova senha deve ter no mínimo 8 caracteres"),
+});
+const hashToken = (t: string): string => crypto.createHash("sha256").update(t).digest("hex");
+
+const resetPasswordRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: "Too many requests" },
+  standardHeaders: true,
+});
+
+/**
+ * Recuperação de senha por token de uso único (30 min). Nada muda na conta até o token ser usado.
+ * Resposta idêntica (204) para e-mail existente ou não, para não revelar quem é cliente.
+ */
 authRouter.post("/forgot-password", forgotPasswordRateLimit, async (req: Request, res: Response): Promise<void> => {
   const parsed = forgotPasswordBody.safeParse(req.body);
   if (!parsed.success) {
@@ -162,41 +181,88 @@ authRouter.post("/forgot-password", forgotPasswordRateLimit, async (req: Request
     return;
   }
   const email = parsed.data.email.trim().toLowerCase();
-  const r = await pool.query<{ id: string; password_hash: string | null }>(
-    "SELECT id, password_hash FROM public.profiles WHERE LOWER(TRIM(email)) = $1 LIMIT 1",
-    [email]
-  );
-  if (r.rows.length === 0) {
-    res.status(404).json({ error: "Nenhuma conta encontrada para este e-mail." });
-    return;
-  }
-  const row = r.rows[0];
-  const profileId = row.id;
-  const oldHash = row.password_hash;
-  const tempPassword = generateTempPassword();
-  const newHash = await bcrypt.hash(tempPassword, 10);
-  await pool.query(
-    "UPDATE public.profiles SET password_hash = $1, must_change_password = true, updated_at = now() WHERE id = $2",
-    [newHash, profileId]
-  );
-  if (config.fromEmail) {
-    try {
-      await sendPasswordResetEmail({
-        to: parsed.data.email,
-        appUrl: config.appUrl.replace(/\/$/, ""),
-        tempPassword,
-      });
-    } catch (err) {
-      console.error("[auth/forgot-password] email send failed:", err);
-      if (oldHash != null) {
+  try {
+    const r = await pool.query<{ id: string }>(
+      "SELECT id FROM public.profiles WHERE LOWER(TRIM(email)) = $1 LIMIT 1",
+      [email]
+    );
+    const profileId = r.rows[0]?.id;
+    if (profileId) {
+      // Limite por conta (compartilhado via banco, vale também em Lambda): no máx. 3 pedidos / 15 min.
+      const recent = await pool.query<{ n: string }>(
+        "SELECT count(*)::int AS n FROM public.password_reset_tokens WHERE profile_id = $1 AND created_at > now() - interval '15 minutes'",
+        [profileId]
+      );
+      if (Number(recent.rows[0]?.n ?? 0) < 3) {
+        const token = crypto.randomBytes(32).toString("hex");
         await pool.query(
-          "UPDATE public.profiles SET password_hash = $1, must_change_password = false, updated_at = now() WHERE id = $2",
-          [oldHash, profileId]
-        ).catch((e) => console.error("[auth/forgot-password] rollback failed:", e));
+          "UPDATE public.password_reset_tokens SET used_at = now() WHERE profile_id = $1 AND used_at IS NULL",
+          [profileId]
+        );
+        await pool.query(
+          `INSERT INTO public.password_reset_tokens (profile_id, token_hash, expires_at)
+           VALUES ($1, $2, now() + ($3 || ' minutes')::interval)`,
+          [profileId, hashToken(token), String(RESET_TOKEN_TTL_MIN)]
+        );
+        if (config.fromEmail) {
+          const appUrl = config.appUrl.replace(/\/$/, "");
+          try {
+            await sendPasswordResetEmail({
+              to: parsed.data.email,
+              appUrl,
+              resetUrl: `${appUrl}/login?reset_token=${token}`,
+            });
+          } catch (err) {
+            console.error("[auth/forgot-password] email send failed:", err);
+          }
+        }
       }
     }
+  } catch (err) {
+    console.error("[auth/forgot-password] error:", err);
   }
   res.status(204).send();
+});
+
+authRouter.post("/reset-password", resetPasswordRateLimit, async (req: Request, res: Response): Promise<void> => {
+  const parsed = resetPasswordBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Link inválido ou senha muito curta (mínimo 8 caracteres)." });
+    return;
+  }
+  const { token, new_password } = parsed.data;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const used = await client.query<{ profile_id: string }>(
+      `UPDATE public.password_reset_tokens SET used_at = now()
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+       RETURNING profile_id`,
+      [hashToken(token)]
+    );
+    if (used.rows.length === 0) {
+      await client.query("ROLLBACK");
+      res.status(400).json({ error: "Link inválido ou expirado. Peça um novo em «Esqueci minha senha»." });
+      return;
+    }
+    const hash = await bcrypt.hash(new_password, 10);
+    await client.query(
+      "UPDATE public.profiles SET password_hash = $1, must_change_password = false, updated_at = now() WHERE id = $2",
+      [hash, used.rows[0]!.profile_id]
+    );
+    await client.query(
+      "UPDATE public.password_reset_tokens SET used_at = now() WHERE profile_id = $1 AND used_at IS NULL",
+      [used.rows[0]!.profile_id]
+    );
+    await client.query("COMMIT");
+    res.status(204).send();
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[auth/reset-password] error:", e);
+    res.status(500).json({ error: "Erro ao redefinir a senha." });
+  } finally {
+    client.release();
+  }
 });
 
 authRouter.patch("/password", requireJwt, async (req: Request, res: Response): Promise<void> => {

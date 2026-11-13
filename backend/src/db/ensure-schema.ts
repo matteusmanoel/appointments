@@ -11,6 +11,38 @@ function isUndefinedTableOrColumn(e: unknown): boolean {
  * Keep this idempotent and conservative.
  */
 export async function ensureCriticalSchema(): Promise<void> {
+  // Endurecimento de autenticação/cobrança (ver supabase/migrations/20261113120000_auth_hardening.sql).
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.password_reset_tokens (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        profile_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+        token_hash text NOT NULL UNIQUE,
+        expires_at timestamptz NOT NULL,
+        used_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.stripe_events (
+        event_id text PRIMARY KEY,
+        type text NOT NULL,
+        received_at timestamptz NOT NULL DEFAULT now(),
+        processed_at timestamptz
+      )`
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.checkout_session_exchanges (
+        stripe_session_id text PRIMARY KEY,
+        consumed_at timestamptz NOT NULL DEFAULT now()
+      )`
+    )
+    .catch(() => {});
+
   // Conversation runtime: pause handoff + optional account-wide selected barbershop.
   await pool
     .query(

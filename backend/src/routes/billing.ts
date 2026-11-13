@@ -2,6 +2,7 @@ import { Request, Response, Router } from "express";
 import Stripe from "stripe";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "node:crypto";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { config } from "../config.js";
@@ -18,6 +19,9 @@ export async function cancelStripeSubscription(subscriptionId: string | null): P
     console.warn("Stripe subscription cancel warning:", e);
   });
 }
+
+/** Janela (s) em que o session_id do checkout ainda pode ser trocado por acesso. */
+const SESSION_EXCHANGE_MAX_AGE_SEC = 24 * 3600;
 
 const planSchema = z.enum(["essential", "pro", "premium"]);
 
@@ -85,12 +89,44 @@ export function stripeWebhookHandler(req: Request, res: Response): void {
     res.status(400).send(`Webhook signature verification failed: ${message}`);
     return;
   }
-  void handleStripeEvent(event).then(() => {
+  void processStripeEventOnce(event).then(() => {
     res.status(200).send();
   }).catch((e) => {
     console.error("Stripe webhook handler error:", e);
     res.status(500).send("Internal error");
   });
+}
+
+/**
+ * Idempotência por event.id: reentregas de um evento já processado respondem 200 sem reexecutar.
+ * Se o processamento falhar, processed_at fica nulo e a reentrega do Stripe reprocessa.
+ */
+async function processStripeEventOnce(event: Stripe.Event): Promise<void> {
+  let claimed = false;
+  try {
+    await pool.query(
+      "INSERT INTO public.stripe_events (event_id, type) VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING",
+      [event.id, event.type]
+    );
+    const r = await pool.query<{ processed_at: string | null }>(
+      "SELECT processed_at FROM public.stripe_events WHERE event_id = $1",
+      [event.id]
+    );
+    if (r.rows[0]?.processed_at) {
+      console.info("[billing] evento %s já processado; ignorando reentrega", event.id);
+      return;
+    }
+    claimed = true;
+  } catch (e) {
+    // Tabela ausente (migration não aplicada): segue sem idempotência, mas avisa alto.
+    console.warn("[billing] stripe_events indisponível; processando sem idempotência:", e);
+  }
+  await handleStripeEvent(event);
+  if (claimed) {
+    await pool
+      .query("UPDATE public.stripe_events SET processed_at = now() WHERE event_id = $1", [event.id])
+      .catch(() => {});
+  }
 }
 
 async function handleStripeEvent(event: Stripe.Event): Promise<void> {
@@ -280,7 +316,7 @@ async function provisionFromCheckoutSession(session: Stripe.Checkout.Session): P
     }
 
     // Ensure an admin profile exists for this barbershop + email (idempotent).
-    await client.query(
+    const profileInsert = await client.query(
       `INSERT INTO public.profiles (user_id, barbershop_id, full_name, email, phone, password_hash, role, must_change_password)
        SELECT gen_random_uuid(), $1, $2, $3, $4, $5, 'admin', true
        WHERE NOT EXISTS (
@@ -322,11 +358,12 @@ async function provisionFromCheckoutSession(session: Stripe.Checkout.Session): P
     await client.query(
       `INSERT INTO public.checkout_onboarding (stripe_session_id, email, barbershop_name, temporary_password)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (stripe_session_id) DO UPDATE SET temporary_password = EXCLUDED.temporary_password`,
+       ON CONFLICT (stripe_session_id) DO NOTHING`,
       [session.id, customerEmail, barbershopName, tempPassword]
     );
     await client.query("COMMIT");
-    if (config.fromEmail) {
+    // Reentrega do webhook não reenvia boas-vindas (a senha/chave novas não valeriam para o perfil existente).
+    if (config.fromEmail && (profileInsert.rowCount ?? 0) > 0) {
       try {
         await sendOnboardingEmail({
           to: customerEmail,
@@ -350,7 +387,7 @@ async function provisionFromCheckoutSession(session: Stripe.Checkout.Session): P
 function generateTempPassword(): string {
   const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
   let s = "";
-  for (let i = 0; i < 12; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 12; i++) s += chars[crypto.randomInt(chars.length)];
   return s;
 }
 
@@ -556,6 +593,14 @@ billingRouter.get("/session", async (req: Request, res: Response): Promise<void>
       res.status(400).json({ error: "Sessão inválida (mode diferente de subscription)" });
       return;
     }
+    if (session.payment_status !== "paid" && session.payment_status !== "no_payment_required") {
+      res.status(400).json({ error: "Pagamento ainda não foi confirmado" });
+      return;
+    }
+    if (Date.now() / 1000 - (session.created ?? 0) > SESSION_EXCHANGE_MAX_AGE_SEC) {
+      res.status(410).json({ error: "Este link expirou. Entre com seu e-mail e senha." });
+      return;
+    }
     const email = (session.customer_email || session.customer_details?.email || "").toString().trim().toLowerCase();
     const stripeCustomerId = typeof session.customer === "string" ? session.customer : session.customer?.id;
     if (!email || !stripeCustomerId) {
@@ -632,13 +677,23 @@ billingRouter.get("/session", async (req: Request, res: Response): Promise<void>
       profileRow.rows = retryProfile.rows;
     }
 
+    // Troca de uso único: o mesmo session_id (que fica na URL/histórico) nunca emite um 2º JWT.
+    const claim = await pool.query(
+      "INSERT INTO public.checkout_session_exchanges (stripe_session_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING stripe_session_id",
+      [sessionId]
+    );
+    if ((claim.rowCount ?? 0) === 0) {
+      res.status(410).json({ error: "Este link já foi utilizado. Entre com seu e-mail e senha." });
+      return;
+    }
     const payload: JwtPayload = {
       profileId: profileRow.rows[0].id,
       barbershopId,
       role: profileRow.rows[0].role,
       email,
     };
-    const token = jwt.sign(payload, config.jwtSecret, { expiresIn: config.jwtExpiresIn } as jwt.SignOptions);
+    // JWT curto: serve para o primeiro acesso (a troca de senha é obrigatória: must_change_password).
+    const token = jwt.sign(payload, config.jwtSecret, { expiresIn: "2h" } as jwt.SignOptions);
 
     // Best-effort cleanup of legacy one-time password storage (avoid leaking temp password).
     void pool

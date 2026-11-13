@@ -178,7 +178,8 @@ Guarde esta chave em local seguro; ela não será exibida novamente no painel.
 export type PasswordResetEmailParams = {
   to: string;
   appUrl: string;
-  tempPassword: string;
+  /** Link de uso único (expira em 30 min) para definir a nova senha. */
+  resetUrl: string;
 };
 
 export async function sendPasswordResetEmail(params: PasswordResetEmailParams): Promise<void> {
@@ -186,16 +187,17 @@ export async function sendPasswordResetEmail(params: PasswordResetEmailParams): 
   if (!from) return;
 
   const baseUrl = ensureNoTrailingSlash(params.appUrl);
-  const loginUrl = `${baseUrl}/login`;
+  void baseUrl;
+  const resetUrl = params.resetUrl;
 
   const textBody = `
 Olá,
 
 Você solicitou a recuperação de senha da sua conta NavalhIA.
 
-Senha temporária: ${params.tempPassword}
+Para definir uma nova senha, abra o link abaixo (vale por 30 minutos e só pode ser usado uma vez):
 
-Acesse o painel em ${loginUrl} e faça login com esta senha. Na primeira vez você será solicitado a definir uma nova senha.
+${resetUrl}
 
 Se você não pediu a recuperação de senha, ignore este e-mail. Sua senha atual continua válida.
 `.trim();
@@ -203,8 +205,7 @@ Se você não pediu a recuperação de senha, ignore este e-mail. Sua senha atua
   const bodyHtml = `
     <p style="margin: 0 0 12px 0;">Olá,</p>
     <p style="margin: 0 0 16px 0;">Você solicitou a recuperação de senha da sua conta NavalhIA.</p>
-    <p style="margin: 0 0 8px 0;"><strong style="color: ${BRAND.text};">Senha temporária:</strong> <code style="background: ${BRAND.border}; padding: 4px 8px; border-radius: 4px; font-size: 15px;">${escapeHtml(params.tempPassword)}</code></p>
-    <p style="margin: 0 0 16px 0;">Use o botão abaixo para acessar o painel. Na primeira vez você será solicitado a definir uma nova senha.</p>
+    <p style="margin: 0 0 16px 0;">Use o botão abaixo para definir uma nova senha. O link vale por 30 minutos e só pode ser usado uma vez.</p>
   `.trim();
 
   const footerHtml = `
@@ -215,8 +216,8 @@ Se você não pediu a recuperação de senha, ignore este e-mail. Sua senha atua
     baseUrl: params.appUrl,
     title: "Recuperação de senha",
     bodyHtml,
-    buttonText: "Acessar painel",
-    buttonUrl: loginUrl,
+    buttonText: "Definir nova senha",
+    buttonUrl: resetUrl,
     footerHtml,
   });
 

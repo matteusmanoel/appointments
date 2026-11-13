@@ -60,28 +60,56 @@ describe("POST /api/auth/forgot-password", () => {
       .expect(204);
   });
 
-  it("returns 404 when no account exists for email", async () => {
+  it("returns 204 (mesma resposta) quando não existe conta para o e-mail — sem enumeração", async () => {
     if (!dbAvailable) return;
-    const res = await request(app)
+    await request(app)
       .post("/api/auth/forgot-password")
       .send({ email: "nonexistent@example.com" })
-      .expect(404);
-    expect(res.body?.error).toMatch(/conta/i);
+      .expect(204);
   });
 
-  it("returns 204 for existing email and sets must_change_password", async () => {
+  it("existing email: 204, NÃO altera a senha e cria token de uso único", async () => {
     if (!dbAvailable || !testEmail) return;
     await request(app)
       .post("/api/auth/forgot-password")
       .send({ email: testEmail })
       .expect(204);
 
-    const r = await pool.query<{ must_change_password: boolean; password_hash: string }>(
-      "SELECT must_change_password, password_hash FROM public.profiles WHERE email = $1",
+    const r = await pool.query<{ must_change_password: boolean; password_hash: string; id: string }>(
+      "SELECT id, must_change_password, password_hash FROM public.profiles WHERE email = $1",
       [testEmail]
     );
     expect(r.rows.length).toBe(1);
-    expect(r.rows[0].must_change_password).toBe(true);
-    expect(r.rows[0].password_hash).not.toBe(originalPasswordHash);
+    expect(r.rows[0].password_hash).toBe(originalPasswordHash);
+    const t = await pool.query("SELECT 1 FROM public.password_reset_tokens WHERE profile_id = $1 AND used_at IS NULL", [r.rows[0].id]);
+    expect(t.rows.length).toBe(1);
+  });
+
+  it("reset-password: token inválido → 400; token válido troca a senha uma única vez", async () => {
+    if (!dbAvailable || !testEmail) return;
+    await request(app).post("/api/auth/reset-password").send({ token: "x".repeat(64), new_password: "novaSenha123" }).expect(400);
+    const crypto = await import("node:crypto");
+    const prof = await pool.query<{ id: string }>("SELECT id FROM public.profiles WHERE email = $1", [testEmail]);
+    const token = crypto.randomBytes(32).toString("hex");
+    await pool.query(
+      "INSERT INTO public.password_reset_tokens (profile_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 minutes')",
+      [prof.rows[0].id, crypto.createHash("sha256").update(token).digest("hex")]
+    );
+    await request(app).post("/api/auth/reset-password").send({ token, new_password: "curta" }).expect(400);
+    await request(app).post("/api/auth/reset-password").send({ token, new_password: "novaSenha123" }).expect(204);
+    await request(app).post("/api/auth/login").send({ email: testEmail, password: "novaSenha123" }).expect(200);
+    await request(app).post("/api/auth/reset-password").send({ token, new_password: "outraSenha456" }).expect(400);
+  });
+
+  it("reset-password: token expirado → 400", async () => {
+    if (!dbAvailable || !testEmail) return;
+    const crypto = await import("node:crypto");
+    const prof = await pool.query<{ id: string }>("SELECT id FROM public.profiles WHERE email = $1", [testEmail]);
+    const token = crypto.randomBytes(32).toString("hex");
+    await pool.query(
+      "INSERT INTO public.password_reset_tokens (profile_id, token_hash, expires_at) VALUES ($1, $2, now() - interval '1 minute')",
+      [prof.rows[0].id, crypto.createHash("sha256").update(token).digest("hex")]
+    );
+    await request(app).post("/api/auth/reset-password").send({ token, new_password: "novaSenha789" }).expect(400);
   });
 });
