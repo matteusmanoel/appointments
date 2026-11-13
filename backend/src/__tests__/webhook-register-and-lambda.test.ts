@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildInstanceWebhookBody, setInstanceWebhook } from "../integrations/whatsapp/evolution-client.js";
 import { setWebhook } from "../integrations/uazapi/client.js";
+import { webhookErrorText } from "../integrations/whatsapp/webhook-auth.js";
 
 const MASTER = "chave-mestra-evolution";
 const DEDICATED = "segredo-dedicado-webhook";
@@ -77,6 +78,34 @@ describe("registro do webhook: payload de setInstanceWebhook / setWebhook", () =
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.url).toBe(`https://api.test/api/webhooks/uazapi?token=${DEDICATED}`);
     expect(JSON.stringify(body)).not.toContain(MASTER);
+  });
+
+  it("Uazapi 405: mensagem, last_error, detail da resposta e saída do script não contêm o segredo", async () => {
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      calls.push({ url: String(url), init: init as RequestInit });
+      return new Response("Method Not Allowed", { status: 405 });
+    });
+    const publicUrl = "https://api.test/api/webhooks/uazapi";
+    await expect(setWebhook({ token: "inst-token", url: publicUrl })).rejects.toThrow(/405/);
+    let thrown: unknown;
+    try {
+      await setWebhook({ token: "inst-token", url: publicUrl });
+    } catch (e) {
+      thrown = e;
+    }
+    const message = (thrown as Error).message;
+    expect(message).toContain(publicUrl);
+    expect(message).not.toContain("?token=");
+    expect(message).not.toContain(DEDICATED);
+    expect(message).not.toContain(MASTER);
+
+    const detail = webhookErrorText(thrown);
+    const lastError = `Webhook não configurado: ${detail}`.slice(0, 500);
+    const scriptOut = `  ! shop-id uazapi: ${detail}`;
+    for (const s of [detail, lastError, scriptOut]) {
+      expect(s).not.toContain(DEDICATED);
+      expect(s).not.toContain(MASTER);
+    }
   });
 });
 

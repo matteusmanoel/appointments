@@ -48,6 +48,49 @@ export function withWebhookToken(url: string, secret: string): string {
   return u.toString();
 }
 
+/**
+ * Máscara segura para logs/saída de script: nunca ecoa caracteres do segredo.
+ * Mostra só o tamanho e os 6 primeiros hex do SHA-256 (ou o nome, se o chamador prefixar).
+ */
+export function maskWebhookSecret(secret: string): string {
+  if (!secret) return "(vazio)";
+  const digest = crypto.createHash("sha256").update(secret, "utf8").digest("hex").slice(0, 6);
+  return `sha256:${digest}… (${secret.length} chars)`;
+}
+
+function collectedSecrets(env: Env): string[] {
+  const values = [
+    ...(env.WHATSAPP_WEBHOOK_SECRET ?? "").trim() ? [(env.WHATSAPP_WEBHOOK_SECRET ?? "").trim()] : [],
+    ...(env.WHATSAPP_WEBHOOK_SECRET_PREVIOUS ?? "").trim() ? [(env.WHATSAPP_WEBHOOK_SECRET_PREVIOUS ?? "").trim()] : [],
+    ...(env.WHATSAPP_APP_SECRET ?? "").trim() ? [(env.WHATSAPP_APP_SECRET ?? "").trim()] : [],
+    ...(env.WHATSAPP_APP_SECRET_PREVIOUS ?? "").trim() ? [(env.WHATSAPP_APP_SECRET_PREVIOUS ?? "").trim()] : [],
+    ...getAcceptedWebhookSecrets(env),
+    ...getAcceptedMetaAppSecrets(env),
+  ];
+  return [...new Set(values.filter(Boolean))].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Remove `token=…` (query ou percent-encoded) e qualquer valor conhecido de segredo
+ * antes de log, resposta HTTP, last_error ou saída de script.
+ */
+export function redactWebhookSecrets(text: string, env: Env = process.env): string {
+  let out = text
+    .replace(/([?&]token=)[^&\s"'`]*/gi, "$1[redacted]")
+    .replace(/([?&]token%3D)[^&\s"'`]*/gi, "$1[redacted]");
+  for (const secret of collectedSecrets(env)) {
+    out = out.split(secret).join("[redacted]");
+    const encoded = encodeURIComponent(secret);
+    if (encoded !== secret) out = out.split(encoded).join("[redacted]");
+  }
+  return out;
+}
+
+/** Mensagem de erro segura para log, resposta e last_error. */
+export function webhookErrorText(err: unknown, env: Env = process.env): string {
+  return redactWebhookSecrets(err instanceof Error ? err.message : String(err), env);
+}
+
 export type WebhookAuthResult = "ok" | "unconfigured" | "unauthorized";
 
 /**
