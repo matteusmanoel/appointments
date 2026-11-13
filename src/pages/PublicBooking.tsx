@@ -87,6 +87,7 @@ export default function PublicBooking() {
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [success, setSuccess] = useState(false);
+  const [copiedLink, setCopiedLink] = useState<"reschedule" | "cancel" | "error" | null>(null);
   const [publicToken, setPublicToken] = useState<string | null>(null);
 
   const {
@@ -209,13 +210,23 @@ export default function PublicBooking() {
   if (errorShop || (barbershop === undefined && !loadingShop)) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <p className="text-destructive">NavalhIA não encontrada.</p>
+        <p className="text-destructive">Barbearia não encontrada.</p>
       </div>
     );
   }
   if (loadingShop || !barbershop) {
     return <LoadingState fullPage />;
   }
+
+  const copyManageLink = async (kind: "reschedule" | "cancel") => {
+    try {
+      const path = kind === "reschedule" ? "reagendar" : "cancelar";
+      await navigator.clipboard.writeText(`${window.location.origin}/${path}/${publicToken}`);
+      setCopiedLink(kind);
+    } catch {
+      setCopiedLink("error");
+    }
+  };
 
   if (success) {
     const whatsappUrl = getWhatsAppUrl(
@@ -258,11 +269,24 @@ export default function PublicBooking() {
                   size="sm"
                   variant="ghost"
                   type="button"
-                  onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/reagendar/${publicToken}`)}
+                  onClick={() => void copyManageLink("reschedule")}
                 >
-                  Copiar link
+                  Copiar link de reagendar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="button"
+                  onClick={() => void copyManageLink("cancel")}
+                >
+                  Copiar link de cancelar
                 </Button>
               </div>
+              <p role="status" aria-live="polite" className="min-h-4 text-xs text-muted-foreground" data-testid="copy-feedback">
+                {copiedLink === "reschedule" && "Link de reagendar copiado."}
+                {copiedLink === "cancel" && "Link de cancelar copiado."}
+                {copiedLink === "error" && "Não foi possível copiar. Use os botões Reagendar e Cancelar acima e guarde o endereço da página."}
+              </p>
             </div>
           )}
           <div className="mt-4 space-y-2">
@@ -277,17 +301,8 @@ export default function PublicBooking() {
                 </a>
               </Button>
             ) : (
-              <>
-                <Button variant="secondary" className="w-full" asChild>
-                  <Link to="/app/configuracoes">
-                    <MessageCircle className="w-4 h-4 mr-2" />
-                    Configurar WhatsApp
-                  </Link>
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  Cadastre o telefone em Configurações para ativar o link.
-                </p>
-              </>
+              // Cliente final não configura nada: sem telefone da barbearia, só o aviso de que ela vai confirmar.
+              <p className="text-sm text-muted-foreground">A barbearia vai confirmar o seu horário.</p>
             )}
           </div>
         </div>
@@ -361,14 +376,7 @@ export default function PublicBooking() {
                     Agendar via WhatsApp
                   </a>
                 </Button>
-              ) : (
-                <Button variant="secondary" asChild>
-                  <Link to="/app/configuracoes">
-                    <MessageCircle className="w-4 h-4 mr-1.5" />
-                    Configurar WhatsApp
-                  </Link>
-                </Button>
-              )}
+              ) : null}
             </span>
           </div>
         </header>

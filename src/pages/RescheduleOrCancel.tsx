@@ -30,6 +30,12 @@ function isSlotOccupied(
   return false;
 }
 
+/** 404/410 (e 400 de token malformado) = o agendamento não existe mais; o resto (rede, 5xx, 429) é falha temporária. */
+function isNotFoundError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  return status === 404 || status === 410 || status === 400;
+}
+
 /** Mesmo prazo do backend (public.ts RESCHEDULE_CUTOFF_MINUTES). */
 const CUTOFF_MINUTES = 120;
 
@@ -49,6 +55,7 @@ export default function RescheduleOrCancel() {
     data: appointment,
     isLoading: loadingAppointment,
     error: errorAppointment,
+    refetch: refetchAppointment,
   } = useQuery({
     queryKey: ["public", "appointment", token],
     queryFn: () => publicApi.getAppointmentByToken(token!),
@@ -120,11 +127,25 @@ export default function RescheduleOrCancel() {
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         {loadingAppointment && <LoadingState />}
         {errorAppointment && (
-          <div className="text-center">
-            <p className="text-destructive">Agendamento não encontrado ou já cancelado.</p>
-            <Button asChild variant="outline" className="mt-4">
-              <Link to="/">Ir para a página inicial</Link>
-            </Button>
+          <div className="text-center" role="alert">
+            {isNotFoundError(errorAppointment) ? (
+              <p className="text-destructive">Agendamento não encontrado ou já cancelado.</p>
+            ) : (
+              // Rede ruim ou erro do servidor não pode parecer «agendamento cancelado».
+              <p className="text-destructive" data-testid="erro-carregar">
+                Não conseguimos carregar o seu agendamento agora. Tente de novo.
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {!isNotFoundError(errorAppointment) && (
+                <Button type="button" onClick={() => void refetchAppointment()}>
+                  Tentar de novo
+                </Button>
+              )}
+              <Button asChild variant="outline">
+                <Link to="/">Ir para a página inicial</Link>
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -211,6 +232,18 @@ export default function RescheduleOrCancel() {
             )}
           </div>
         )}
+
+        <p className="text-xs text-muted-foreground" data-testid="trocar-acao">
+          {isCancel ? (
+            <>
+              Prefere mudar o horário? <Link className="underline" to={`/reagendar/${token}`}>Reagendar em vez de cancelar</Link>.
+            </>
+          ) : (
+            <>
+              Quer cancelar? <Link className="underline" to={`/cancelar/${token}`}>Cancelar este agendamento</Link>.
+            </>
+          )}
+        </p>
 
         {isCancel ? (
           <div className="space-y-4">
