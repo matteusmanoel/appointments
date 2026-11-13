@@ -20,8 +20,25 @@ export const FUNCTIONS = {
   worker_ai: { entry: "src/workers/lambda-ai.ts", outfile: "dist/workers/lambda-ai.mjs" },
   worker_scheduled: { entry: "src/workers/lambda-scheduled.ts", outfile: "dist/workers/lambda-scheduled.mjs" },
   // pdf-parse é carregado via createRequire em runtime: não dá para empacotar, vai como node_modules/pdf-parse no zip.
-  worker_knowledge: { entry: "src/workers/lambda-knowledge.ts", outfile: "dist/workers/lambda-knowledge.mjs", external: ["pdf-parse"], copyModules: ["pdf-parse"] },
+  // Ele depende de pdfjs-dist (ESM carregado por import() em runtime) e de @napi-rs/canvas (binário nativo): sem eles o
+  // worker de conhecimento quebra no primeiro PDF ("Cannot find module 'pdfjs-dist'"). O Lambda é nodejs20.x em x86_64
+  // (Amazon Linux 2023, glibc) → só o binário @napi-rs/canvas-linux-x64-gnu. Se a arquitetura mudar para arm64,
+  // troque por @napi-rs/canvas-linux-arm64-gnu (o check `verifyKnowledgeZip` falha se o binário certo não estiver no zip).
+  worker_knowledge: {
+    entry: "src/workers/lambda-knowledge.ts",
+    outfile: "dist/workers/lambda-knowledge.mjs",
+    external: ["pdf-parse"],
+    copyModules: ["pdf-parse", "pdfjs-dist", "@napi-rs/canvas", "@napi-rs/canvas-linux-x64-gnu"],
+  },
 };
+
+// Arquivos de node_modules copiados que não fazem falta em runtime (mapas de fonte, tipos, viewer web).
+export function pruneModuleFile(src) {
+  const p = src.split("\\").join("/");
+  if (p.endsWith(".map")) return false;
+  if (/\/node_modules\/pdfjs-dist\/(types|web|legacy\/web)(\/|$)/.test(p)) return false;
+  return true;
+}
 
 const banner = [
   'import { createRequire as __cr } from "node:module";',
@@ -30,6 +47,20 @@ const banner = [
 
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(join(dir, d.name)) : [join(dir, d.name)]));
+}
+
+/** Falha o build se o worker de conhecimento ficar sem alguma dependência que o PDF exige em runtime. */
+function verifyKnowledgeZipDir(dir) {
+  const need = [
+    "node_modules/pdf-parse/package.json",
+    "node_modules/pdfjs-dist/package.json",
+    "node_modules/pdfjs-dist/build/pdf.mjs",
+    "node_modules/pdfjs-dist/build/pdf.worker.mjs",
+    "node_modules/@napi-rs/canvas/package.json",
+    "node_modules/@napi-rs/canvas-linux-x64-gnu/package.json",
+  ];
+  const missing = need.filter((f) => !existsSync(join(dir, f)));
+  if (missing.length) throw new Error(`worker_knowledge incompleto, faltam: ${missing.join(", ")}`);
 }
 
 const only = process.argv.slice(2).filter((a) => !a.startsWith("-"));
@@ -54,8 +85,9 @@ for (const [name, cfg] of Object.entries(FUNCTIONS)) {
   for (const m of cfg.copyModules ?? []) {
     const src = join(root, "node_modules", m);
     if (!existsSync(src)) throw new Error(`node_modules/${m} não encontrado (rode npm ci)`);
-    cpSync(src, join(dir, "node_modules", m), { recursive: true });
+    cpSync(src, join(dir, "node_modules", m), { recursive: true, filter: pruneModuleFile });
   }
+  if (name === "worker_knowledge") verifyKnowledgeZipDir(dir);
   // zip determinístico: mtime fixo + ordem estável + sem atributos extras → mesmo conteúdo = mesmo hash
   const fixed = new Date("2020-01-01T00:00:00Z");
   const files = walk(dir).sort();

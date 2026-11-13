@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "migrate": "node --experimental-vm-modules node_modules/.bin/db-migrate",
     "bundle:lambdas": "node scripts/bundle-lambdas.mjs",
+    "verify:knowledge-zip": "node scripts/verify-knowledge-zip.mjs",
     "seed": "node dist/scripts/seed.js",
     "seed:dev": "tsx src/scripts/seed.ts",
     "seed:demo": "node dist/scripts/seed-demo.js",
