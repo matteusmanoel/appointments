@@ -25,6 +25,11 @@ export const DB_TIMEOUTS = {
   directStatementTimeoutMillis: num(process.env.DATABASE_DIRECT_STATEMENT_TIMEOUT_MS, 120_000),
 };
 
+/** true se a URL parece apontar para um pooler de transação (Neon `-pooler`, porta 6543, `pgbouncer=true`). Nunca loga a URL. */
+export function looksLikePooler(url: string): boolean {
+  return /(-pooler\.|:6543\/|:6543\?|pgbouncer=true)/i.test(url);
+}
+
 type PoolRole = "pooled" | "direct";
 
 /** Monta as opções do pg.Pool (função pura, testável). */
@@ -70,5 +75,13 @@ export const directPool: pg.Pool =
   config.databaseUrlDirect === config.databaseUrl
     ? pool
     : new pg.Pool(buildPoolConfig(config.databaseUrlDirect, "direct"));
+
+// Fallback seguro: sem DATABASE_URL_DIRECT os workers reutilizam o pool principal (compatível com Postgres local),
+// mas se ele é um pooler os advisory locks de sessão não valem. Avisa UMA vez (sem imprimir a URL); a API tolera.
+if (directPool === pool && looksLikePooler(config.databaseUrl) && process.env.NODE_ENV !== "test") {
+  console.warn(
+    "[db] DATABASE_URL parece um pooler e DATABASE_URL_DIRECT não está definida: pg_advisory_lock de sessão (sweeps, dispatch-gate) não é confiável. Defina DATABASE_URL_DIRECT (host sem -pooler).",
+  );
+}
 
 export type Row = pg.QueryResultRow;

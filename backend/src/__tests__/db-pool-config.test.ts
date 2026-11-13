@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPoolConfig, DB_TIMEOUTS, pool, directPool } from "../db.js";
+import { buildPoolConfig, DB_TIMEOUTS, pool, directPool, looksLikePooler } from "../db.js";
 
 describe("db pools", () => {
   const url = "postgres://u:p%40ss@ep-x-pooler.us-east-2.aws.neon.tech:5432/neondb?sslmode=require";
@@ -30,5 +30,13 @@ describe("db pools", () => {
 
   it("sem DATABASE_URL_DIRECT, directPool reaproveita o pool (mesmo comportamento de antes)", () => {
     if (!process.env.DATABASE_URL_DIRECT) expect(directPool).toBe(pool);
+  });
+
+  it("looksLikePooler reconhece Neon -pooler, porta 6543 e pgbouncer=true; conexão direta não", () => {
+    expect(looksLikePooler(url)).toBe(true);
+    expect(looksLikePooler("postgres://u:p@h:6543/db")).toBe(true);
+    expect(looksLikePooler("postgres://u:p@h:5432/db?pgbouncer=true")).toBe(true);
+    expect(looksLikePooler(url.replace("-pooler", ""))).toBe(false);
+    expect(looksLikePooler("postgres://u:p@127.0.0.1:5432/db")).toBe(false);
   });
 });

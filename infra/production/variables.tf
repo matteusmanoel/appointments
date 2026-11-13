@@ -72,9 +72,36 @@ variable "database_url" {
 
 variable "database_url_direct" {
   type        = string
-  description = "Postgres SEM pooler (conexão direta, SSL) para os workers: advisory locks de sessão e jobs longos. Declarada sem valor; informe via TF_VAR_database_url_direct. Vazio = os workers reutilizam DATABASE_URL. Ver docs/DB_CONEXOES_NEON.md."
+  description = "Postgres SEM pooler (conexão direta, SSL) para os workers: advisory locks de sessão e jobs longos. Declarada sem valor; informe via TF_VAR_database_url_direct. Vazio só é aceito se DATABASE_URL NÃO for um pooler (ou se allow_workers_on_pooler=true). Ver docs/DB_CONEXOES_NEON.md."
   sensitive   = true
   default     = ""
+
+  # Avaliada no `terraform plan`/`apply` (precisa dos valores; `terraform validate` não executa). Nunca imprime os valores.
+  validation {
+    condition = (
+      var.database_url_direct != "" ||
+      var.database_url == "" || # segredo vazio é barrado pelo guard de segredos vazios (outro tema)
+      var.allow_workers_on_pooler ||
+      !can(regex("(?i)(-pooler\\.|:6543/|:6543\\?|pgbouncer=true)", var.database_url))
+    )
+    error_message = "DATABASE_URL parece apontar para um pooler (-pooler / porta 6543 / pgbouncer) e database_url_direct está vazio: os workers usam pg_advisory_lock de SESSÃO, que vaza ou some atrás de pooler de transação. Informe TF_VAR_database_url_direct (host sem -pooler) ou, sabendo do risco, allow_workers_on_pooler=true. Ver docs/DB_CONEXOES_NEON.md."
+  }
+
+  validation {
+    condition     = var.database_url_direct == "" || can(regex("^postgres(ql)?://", var.database_url_direct))
+    error_message = "database_url_direct deve começar com postgres:// ou postgresql://."
+  }
+
+  validation {
+    condition     = var.database_url_direct == "" || !can(regex("(?i)(-pooler\\.|:6543/|:6543\\?|pgbouncer=true)", var.database_url_direct))
+    error_message = "database_url_direct NÃO pode ser um pooler (-pooler / porta 6543 / pgbouncer=true): precisa ser a conexão direta (ep-xxxx sem -pooler)."
+  }
+}
+
+variable "allow_workers_on_pooler" {
+  type        = bool
+  description = "Escape consciente: permite database_url_direct vazio mesmo com DATABASE_URL de pooler (advisory locks de sessão podem vazar; ver docs/DB_CONEXOES_NEON.md). Padrão false."
+  default     = false
 }
 
 variable "jwt_secret" {
