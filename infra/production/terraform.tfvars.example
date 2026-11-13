@@ -22,10 +22,10 @@ stripe_webhook_secret   = ""
 stripe_price_id         = ""
 stripe_price_id_essential = ""
 stripe_price_id_pro     = ""
+
+# Segredos dos webhooks de WhatsApp: NÃO coloque valores aqui. Use TF_VAR_whatsapp_webhook_secret,
+# TF_VAR_whatsapp_app_secret e TF_VAR_whatsapp_verify_token (e, só durante rotação, TF_VAR_whatsapp_webhook_secret_previous).
 stripe_price_id_premium = ""
 stripe_price_id_extra_number = ""
 stripe_price_id_followup_credit = ""
 lambda_zip_path         = ""
-
-# Segredos dos webhooks de WhatsApp: NÃO coloque valores aqui. Use TF_VAR_whatsapp_webhook_secret,
-# TF_VAR_whatsapp_app_secret e TF_VAR_whatsapp_verify_token (e, só durante rotação, TF_VAR_whatsapp_webhook_secret_previous).
