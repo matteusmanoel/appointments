@@ -1,8 +1,9 @@
 import type { PoolClient } from "pg";
 import { pool } from "../db.js";
 import { config } from "../config.js";
-import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 import { setPaymentPendingFlag } from "../ai/memory/client-memory.js";
+import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { brPhoneMatchKeys, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
 import {
   buildBirthdayMessage,
   buildFollowUp30d,
@@ -223,7 +224,6 @@ const FOLLOWUP_30D_SWEEP_ADVISORY_LOCK_ID = 20260222140000;
 const FOLLOWUP_NO_APPOINTMENT_SWEEP_ADVISORY_LOCK_ID = 20260401121000;
 const BIRTHDAY_SWEEP_ADVISORY_LOCK_ID = 20260401122000;
 const OPENING_SUMMARY_SWEEP_ADVISORY_LOCK_ID = 20260401123000;
-const PLAN_BILLING_SWEEP_ADVISORY_LOCK_ID = 20260406160001;
 const NO_SHOW_SWEEP_ADVISORY_LOCK_ID = 20260919120000;
 
 /**
@@ -575,130 +575,123 @@ export async function runDailyOpeningSummarySweepWithLock(): Promise<void> {
   }
 }
 
-// ─── Plan billing sweep ───────────────────────────────────────────────────────
-
-export async function runDailyPlanBillingSweep(): Promise<void> {
-  const todayStr = new Date().toISOString().slice(0, 10);
-  let subs: Array<{
-    id: string;
-    barbershop_id: string;
-    client_name: string | null;
-    client_phone: string;
-    plan_name: string;
-    price: string;
-    billing_cycle: string;
-    billing_day: number;
-    next_billing_date: string;
-    pix_key: string | null;
-    barbershop_name: string;
-    barbershop_address: string | null;
-    timezone: string;
-  }>;
-
-  try {
-    const r = await pool.query(
-      `SELECT s.id, s.barbershop_id, s.billing_day, s.next_billing_date,
-              c.name AS client_name, c.phone AS client_phone,
-              p.name AS plan_name, p.price, p.billing_cycle,
-              b.pix_key, b.name AS barbershop_name, b.address AS barbershop_address,
-              COALESCE(ais.timezone, 'America/Sao_Paulo') AS timezone
-       FROM public.client_plan_subscriptions s
-       JOIN public.clients c ON c.id = s.client_id
-       JOIN public.barbershop_plans p ON p.id = s.plan_id
-       JOIN public.barbershops b ON b.id = s.barbershop_id
-       LEFT JOIN public.barbershop_ai_settings ais ON ais.barbershop_id = s.barbershop_id
-       WHERE s.status = 'active' AND s.next_billing_date = $1::date`,
-      [todayStr]
+/**
+ * After the scheduled time, pending/confirmed appointments that were not completed
+ * become no_show. The slot is already past — occupancyOpened notifies waitlist.
+ */
+export async function runNoShowSweep(): Promise<void> {
+  const { recordAgendaChangeFromAppointment } = await import("../agenda/record-agenda-change.js");
+  const due = await pool.query<{ id: string; barbershop_id: string }>(
+    `SELECT a.id, a.barbershop_id
+     FROM public.appointments a
+     LEFT JOIN public.barbershop_ai_settings ais ON ais.barbershop_id = a.barbershop_id
+     WHERE a.status IN ('pending', 'confirmed')
+       AND ((a.scheduled_date::date + a.scheduled_time::time)
+            AT TIME ZONE COALESCE(ais.timezone, 'America/Sao_Paulo'))
+           < now() - interval '15 minutes'`
+  );
+  for (const row of due.rows) {
+    const upd = await pool.query(
+      `UPDATE public.appointments SET status = 'no_show', updated_at = now()
+       WHERE id = $1 AND status IN ('pending', 'confirmed')
+       RETURNING id`,
+      [row.id]
     );
-    subs = r.rows;
-  } catch (e) {
-    console.error("[plan-billing-sweep] query error:", e);
-    return;
-  }
-
-  for (const sub of subs) {
-    try {
-      const amount = Number(sub.price);
-      const city = (sub.barbershop_address ?? "").split(",").pop()?.trim() || "Brasil";
-
-      if (!sub.pix_key) {
-        console.warn("[plan-billing-sweep] barbershop %s has no pix_key — skipping sub %s", sub.barbershop_id, sub.id);
-        continue;
-      }
-
-      const session = await getWhatsAppOrNull(sub.barbershop_id);
-      if (!session) {
-        console.warn("[plan-billing-sweep] no whatsapp session for barbershop %s — skipping sub %s", sub.barbershop_id, sub.id);
-        continue;
-      }
-
-      const clientPhone = sub.client_phone.replace(/\D/g, "");
-
-      const textMsg = buildPlanPaymentMessage({
-        clientName: sub.client_name ?? undefined,
-        planName: sub.plan_name,
-        amount,
-        dueDate: sub.next_billing_date,
-        billingDay: sub.billing_day,
-      });
-
-      await session.sendText(clientPhone, textMsg);
-      await session.sendPixRequest?.({
-        to: clientPhone,
-        amount,
-        description: `Plano ${sub.plan_name} — NavalhIA`,
-        pixKey: sub.pix_key,
-        name: sub.barbershop_name,
-        city,
-      });
-
-      const chargeInsert = await pool.query<{ id: string }>(
-        `INSERT INTO public.plan_pix_charges (subscription_id, barbershop_id, amount, due_date, status, sent_at)
-         VALUES ($1, $2, $3::numeric, $4::date, 'sent', now())
-         ON CONFLICT DO NOTHING
-         RETURNING id`,
-        [sub.id, sub.barbershop_id, sub.price, sub.next_billing_date]
-      );
-
-      let nextDate: Date;
-      const [y, m, d] = sub.next_billing_date.split("-").map(Number);
-      nextDate = new Date(y!, m! - 1, d!);
-      if (sub.billing_cycle === "monthly") {
-        nextDate.setMonth(nextDate.getMonth() + 1);
-      } else if (sub.billing_cycle === "quarterly") {
-        nextDate.setMonth(nextDate.getMonth() + 3);
-      } else {
-        nextDate.setFullYear(nextDate.getFullYear() + 1);
-      }
-      const nextStr = nextDate.toISOString().slice(0, 10);
-
-      await pool.query(
-        `UPDATE public.client_plan_subscriptions SET next_billing_date = $1, updated_at = now() WHERE id = $2`,
-        [nextStr, sub.id]
-      );
-
-      console.info(
-        "[plan-billing-sweep] sent sub=%s barbershop=%s amount=%.2f charge=%s next=%s",
-        sub.id, sub.barbershop_id, amount, chargeInsert.rows[0]?.id ?? "dup", nextStr
-      );
-      void setPaymentPendingFlag(sub.barbershop_id, sub.client_phone, amount).catch(() => {});
-    } catch (e) {
-      console.error("[plan-billing-sweep] error sub=%s:", sub.id, e);
-    }
+    if ((upd.rowCount ?? 0) === 0) continue;
+    await recordAgendaChangeFromAppointment({
+      barbershopId: row.barbershop_id,
+      appointmentId: row.id,
+      type: "no_show",
+      actor: "system",
+    });
   }
 }
 
-export async function runDailyPlanBillingSweepWithLock(): Promise<void> {
+export type ReminderAppointment = {
+  status: string;
+  clientName?: string;
+  date: string;
+  time: string;
+  serviceNames?: string;
+  barberName?: string;
+  totalPrice?: number;
+};
+
+/** Live appointment fields used to render a reminder at send time. */
+export async function loadReminderAppointment(appointmentId: string): Promise<ReminderAppointment | null> {
+  const appRow = await pool.query<{
+    status: string;
+    price: number | null;
+    client_name: string | null;
+    barber_name: string | null;
+    scheduled_date: string;
+    scheduled_time: string;
+    service_names: string | null;
+  }>(
+    `SELECT a.status,
+            a.price::float8 AS price,
+            a.scheduled_date::text AS scheduled_date,
+            a.scheduled_time::text AS scheduled_time,
+            c.name AS client_name,
+            b.name AS barber_name,
+            COALESCE(
+              (
+                SELECT string_agg(COALESCE(aps.service_name, s.name), ', ' ORDER BY aps.position)
+                FROM public.appointment_services aps
+                LEFT JOIN public.services s ON s.id = aps.service_id
+                WHERE aps.appointment_id = a.id
+              ),
+              (SELECT name FROM public.services WHERE id = a.service_id)
+            ) AS service_names
+     FROM public.appointments a
+     JOIN public.clients c ON c.id = a.client_id
+     JOIN public.barbers b ON b.id = a.barber_id
+     WHERE a.id = $1`,
+    [appointmentId],
+  );
+  const appt = appRow.rows[0];
+  if (!appt) return null;
+  return {
+    status: appt.status,
+    clientName: appt.client_name ?? undefined,
+    date: String(appt.scheduled_date ?? "").slice(0, 10),
+    time: String(appt.scheduled_time ?? "").slice(0, 5),
+    serviceNames: appt.service_names ?? undefined,
+    barberName: appt.barber_name ?? undefined,
+    totalPrice: appt.price != null && Number.isFinite(Number(appt.price)) ? Number(appt.price) : undefined,
+  };
+}
+
+/** So the next client reply sees the reminder that was actually sent. */
+export async function appendReminderTranscript(params: {
+  barbershopId: string;
+  phone: string;
+  body: string;
+}): Promise<void> {
+  const keys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(params.phone) ?? params.phone.replace(/\D/g, ""));
+  await pool.query(
+    `INSERT INTO public.ai_messages (conversation_id, role, content)
+     SELECT c.id, 'assistant', $3
+     FROM public.ai_conversations c
+     WHERE c.barbershop_id = $1 AND c.channel = 'whatsapp'
+       AND regexp_replace(c.external_thread_id, '[^0-9]', '', 'g') = ANY($2::text[])
+     ORDER BY c.updated_at DESC
+     LIMIT 1`,
+    [params.barbershopId, keys, params.body],
+  );
+}
+
+export async function runNoShowSweepWithLock(): Promise<void> {
   const client = await pool.connect();
   try {
     const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
       "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
-      [PLAN_BILLING_SWEEP_ADVISORY_LOCK_ID]
+      [NO_SHOW_SWEEP_ADVISORY_LOCK_ID]
     );
     if (!lockResult.rows[0]?.pg_try_advisory_lock) return;
-    await runDailyPlanBillingSweep();
+    await runNoShowSweep();
   } finally {
-    await client.query("SELECT pg_advisory_unlock($1)", [PLAN_BILLING_SWEEP_ADVISORY_LOCK_ID]);
+    await client.query("SELECT pg_advisory_unlock($1)", [NO_SHOW_SWEEP_ADVISORY_LOCK_ID]);
     client.release();
   }
 }
@@ -837,53 +830,6 @@ export async function runOverduePlanBillingReminderSweepWithLock(): Promise<void
     await runOverduePlanBillingReminderSweep();
   } finally {
     await client.query("SELECT pg_advisory_unlock($1)", [OVERDUE_BILLING_REMINDER_ADVISORY_LOCK_ID]);
-    client.release();
-  }
-}
-
-/**
- * After the scheduled time, pending/confirmed appointments that were not completed
- * become no_show. The slot is already past — occupancyOpened notifies waitlist.
- */
-export async function runNoShowSweep(): Promise<void> {
-  const { recordAgendaChangeFromAppointment } = await import("../agenda/record-agenda-change.js");
-  const due = await pool.query<{ id: string; barbershop_id: string }>(
-    `SELECT a.id, a.barbershop_id
-     FROM public.appointments a
-     LEFT JOIN public.barbershop_ai_settings ais ON ais.barbershop_id = a.barbershop_id
-     WHERE a.status IN ('pending', 'confirmed')
-       AND ((a.scheduled_date::date + a.scheduled_time::time)
-            AT TIME ZONE COALESCE(ais.timezone, 'America/Sao_Paulo'))
-           < now() - interval '15 minutes'`
-  );
-  for (const row of due.rows) {
-    const upd = await pool.query(
-      `UPDATE public.appointments SET status = 'no_show', updated_at = now()
-       WHERE id = $1 AND status IN ('pending', 'confirmed')
-       RETURNING id`,
-      [row.id]
-    );
-    if ((upd.rowCount ?? 0) === 0) continue;
-    await recordAgendaChangeFromAppointment({
-      barbershopId: row.barbershop_id,
-      appointmentId: row.id,
-      type: "no_show",
-      actor: "system",
-    });
-  }
-}
-
-export async function runNoShowSweepWithLock(): Promise<void> {
-  const client = await pool.connect();
-  try {
-    const lockResult = await client.query<{ pg_try_advisory_lock: boolean }>(
-      "SELECT pg_try_advisory_lock($1) AS pg_try_advisory_lock",
-      [NO_SHOW_SWEEP_ADVISORY_LOCK_ID]
-    );
-    if (!lockResult.rows[0]?.pg_try_advisory_lock) return;
-    await runNoShowSweep();
-  } finally {
-    await client.query("SELECT pg_advisory_unlock($1)", [NO_SHOW_SWEEP_ADVISORY_LOCK_ID]);
     client.release();
   }
 }

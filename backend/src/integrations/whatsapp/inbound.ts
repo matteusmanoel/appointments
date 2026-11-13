@@ -15,6 +15,7 @@ import { getWhatsAppOrNull } from "./index.js";
 import { scheduleClientPhotoSync } from "../../clients/sync-contact-photo.js";
 import { config } from "../../config.js";
 import { clampInboundQuietSeconds } from "./inbound-turn.js";
+import { logTurnTrace, maskPhone, previewText } from "../../ai/turn-trace.js";
 
 async function getHandoffPauseHours(barbershopId: string): Promise<number> {
   try {
@@ -193,6 +194,14 @@ export async function enqueueInboundMessage(params: {
   );
   if (inserted.rows.length === 0) {
     console.info("[%s] duplicate providerEventId=%s skipped", logPrefix, providerEventId);
+    logTurnTrace({
+      phase: "inbound",
+      action: "duplicate",
+      provider,
+      barbershopId,
+      providerEventId,
+      phone: maskPhone(canonicalPhone),
+    });
     return;
   }
 
@@ -328,6 +337,17 @@ async function bumpOrEnqueueJob(params: {
       params.barbershopId,
       quietSecs,
     );
+    logTurnTrace({
+      phase: "inbound",
+      action: "debounced",
+      providerEventId: params.providerEventId ?? null,
+      jobId: bumped.rows[0]?.id ?? null,
+      conversationId: params.conversationId,
+      barbershopId: params.barbershopId,
+      phone: maskPhone(params.fromPhone),
+      textPreview: previewText(params.text),
+      quietSecs,
+    });
     return;
   }
   const jobInsert = await pool.query<{ id: string }>(
@@ -354,6 +374,17 @@ async function bumpOrEnqueueJob(params: {
       params.barbershopId,
       quietSecs,
     );
+    logTurnTrace({
+      phase: "inbound",
+      action: "enqueued",
+      providerEventId: params.providerEventId ?? null,
+      jobId: jobInsert.rows[0].id,
+      conversationId: params.conversationId,
+      barbershopId: params.barbershopId,
+      phone: maskPhone(params.fromPhone),
+      textPreview: previewText(params.text),
+      quietSecs,
+    });
     return;
   }
   console.info(
@@ -362,6 +393,15 @@ async function bumpOrEnqueueJob(params: {
     params.conversationId,
     params.barbershopId,
   );
+  logTurnTrace({
+    phase: "inbound",
+    action: "absorbed",
+    providerEventId: params.providerEventId ?? null,
+    conversationId: params.conversationId,
+    barbershopId: params.barbershopId,
+    phone: maskPhone(params.fromPhone),
+    textPreview: previewText(params.text),
+  });
 }
 
 export { bumpOrEnqueueJob };

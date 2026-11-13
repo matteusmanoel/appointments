@@ -364,6 +364,8 @@ export default function Integracoes() {
   const [testText, setTestText] = useState("");
   const [whatsappPhone, setWhatsappPhone] = useState("");
   const [waPolicyAccepted, setWaPolicyAccepted] = useState(false);
+  /** Pareamento só depois do Conectar. Status "connecting" gravado não dispara o QR. */
+  const [pairingActive, setPairingActive] = useState(false);
   const [portalLoading, setPortalLoading] = useState(false);
 
   const canUseWhatsAppAndNotifications = hasPro(profile);
@@ -399,11 +401,10 @@ export default function Integracoes() {
     queryFn: () => whatsappApi.status(),
     enabled:
       canUseWhatsAppAndNotifications &&
-      (whatsappConnection?.status === "connecting" ||
-        whatsappConnection?.status === "connected"),
+      (pairingActive || whatsappConnection?.status === "connected"),
     retry: false,
     refetchInterval: (query) =>
-      query.state.data?.status === "connecting" && !query.state.error
+      pairingActive && query.state.data?.status !== "connected" && !query.state.error
         ? 3000
         : false,
   });
@@ -451,6 +452,7 @@ export default function Integracoes() {
   const whatsappStartMutation = useMutation({
     mutationFn: (phone?: string) => whatsappApi.start(phone),
     onSuccess: (data) => {
+      setPairingActive(data?.status !== "connected");
       queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp"] });
       queryClient.invalidateQueries({
         queryKey: ["integrations", "whatsapp", "status"],
@@ -458,18 +460,24 @@ export default function Integracoes() {
       if (data?.webhook_warning) setWebhookWarning(data.webhook_warning);
       else setWebhookWarning("");
     },
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao conectar"),
+    onError: (e) => {
+      setPairingActive(false);
+      toastError(e instanceof Error ? e.message : "Erro ao conectar");
+    },
   });
 
   const whatsappDisconnectMutation = useMutation({
-    mutationFn: () => whatsappApi.disconnect(),
-    onSuccess: () => {
+    mutationFn: (_quiet?: boolean) => whatsappApi.disconnect(),
+    onSuccess: (_data, quiet) => {
+      setPairingActive(false);
+      whatsappStartMutation.reset();
       queryClient.invalidateQueries({ queryKey: ["integrations", "whatsapp"] });
-      toastSuccess("WhatsApp desconectado.");
+      queryClient.removeQueries({ queryKey: ["integrations", "whatsapp", "status"] });
+      if (!quiet) toastSuccess("WhatsApp desconectado.");
     },
-    onError: (e) =>
-      toastError(e instanceof Error ? e.message : "Erro ao desconectar"),
+    onError: (e, quiet) => {
+      if (!quiet) toastError(e instanceof Error ? e.message : "Erro ao desconectar");
+    },
   });
 
   const whatsappSendTestMutation = useMutation({
@@ -537,7 +545,17 @@ export default function Integracoes() {
     <ConnectTab
       loading={whatsappLoading}
       connection={whatsappConnection ?? null}
-      statusData={whatsappStatusQuery.data ?? null}
+      statusData={
+        pairingActive || whatsappStartMutation.isPending
+          ? {
+              status: whatsappStatusQuery.data?.status ?? whatsappStartMutation.data?.status ?? "connecting",
+              connected: whatsappStatusQuery.data?.connected,
+              qr: whatsappStatusQuery.data?.qr ?? whatsappStartMutation.data?.qr,
+              pairingCode:
+                whatsappStatusQuery.data?.pairingCode ?? whatsappStartMutation.data?.pairingCode,
+            }
+          : (whatsappStatusQuery.data ?? null)
+      }
       usage={whatsappUsage ?? null}
       webhookWarning={webhookWarning}
       testTo={testTo}
@@ -548,8 +566,17 @@ export default function Integracoes() {
       setWhatsappPhone={setWhatsappPhone}
       onAssume={() => whatsappAssumeMutation.mutate()}
       onResume={() => whatsappResumeMutation.mutate()}
-      onStart={(phone) => whatsappStartMutation.mutate(phone)}
-      onDisconnect={() => whatsappDisconnectMutation.mutate()}
+      onStart={(phone) => {
+        setPairingActive(false);
+        whatsappStartMutation.mutate(phone);
+      }}
+      onDisconnect={() => whatsappDisconnectMutation.mutate(false)}
+      pairingActive={pairingActive || whatsappStartMutation.isPending}
+      onPairingExpired={() => {
+        setPairingActive(false);
+        whatsappStartMutation.reset();
+        whatsappDisconnectMutation.mutate(true);
+      }}
       onSendTest={(params) => whatsappSendTestMutation.mutate(params)}
       onOpenBillingPortal={
         canUseWhatsAppAndNotifications ? handleOpenBillingPortal : undefined
@@ -565,7 +592,6 @@ export default function Integracoes() {
       parsePhoneBR={parsePhoneBR}
       hasAcceptedPolicy={waPolicyAccepted}
       barbershopId={profile?.barbershop_id ?? null}
-      onRefetchStatus={whatsappStatusQuery.refetch}
       connectionTimeoutSeconds={60}
       numberMode={
         numberModeData

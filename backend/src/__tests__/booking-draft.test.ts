@@ -7,6 +7,9 @@ import {
   applyTurnToDraft,
   draftIsCloseable,
   emptyBookingDraft,
+  concreteAlternativeToLock,
+  firstLockableSlot,
+  shouldComposeNamedBarberCard,
   lockOfferedSlot,
   mergeBookingDraft,
   parseBookingDraft,
@@ -14,6 +17,7 @@ import {
   pickRequestedBarber,
   resolveBarberFromText,
   resolveMultipleServicesFromText,
+  resolveCheckServiceIds,
   resolveServiceFromText,
 } from "../ai/booking-draft.js";
 
@@ -109,6 +113,13 @@ describe("resolveServiceFromText", () => {
     expect(r.match?.id).toBe(COMBO.id);
   });
 
+  it("corte de barba names both parts of the combo", () => {
+    const said = resolveServiceFromText("Marca pra mim um corte de barba com o Lucas amanhã então.", catalog);
+    expect(said.match?.id).toBe(COMBO.id);
+    expect(said.ambiguous).toBeUndefined();
+    expect(resolveServiceFromText("corte com barba", catalog).match?.id).toBe(COMBO.id);
+  });
+
   it("equivalent phrasing also maps to the combo", () => {
     expect(resolveServiceFromText("quero o combo", catalog).match?.id).toBe(COMBO.id);
     expect(resolveServiceFromText("corte + barba com o Lucas", catalog).match?.id).toBe(COMBO.id);
@@ -157,6 +168,20 @@ describe("composeOccupiedSlot", () => {
     expect(out).toMatch(/te aviso/i);
     expect(out).not.toMatch(/Eduardo/);
   });
+
+  it("offers another time of the same barber before the waitlist", () => {
+    const out = composeOccupiedSlot({
+      barberName: "Lucas Lima",
+      timeHHmm: "10:00",
+      alternatives: [{ time: "11:00", barber_name: "Lucas Lima" }],
+      sameTimeOthers: [{ barber_name: "Eduardo Gustavo" }],
+      holdRequestedBarber: true,
+    });
+    expect(out).toMatch(/11h/);
+    expect(out).toMatch(/Quer esse/);
+    expect(out).not.toMatch(/Eduardo/);
+    expect(out).not.toMatch(/te aviso/i);
+  });
 });
 
 describe("composeHoursOverflow / closed", () => {
@@ -170,7 +195,7 @@ describe("composeHoursOverflow / closed", () => {
     expect(out).toMatch(/Eduardo/);
     expect(out).not.toMatch(/preenchido/);
     expect(out).not.toMatch(/19h/);
-    expect(composeUnavailableReply({
+    const explained = composeUnavailableReply({
       reason: "hours_overflow",
       barberName: "Eduardo Gustavo",
       timeHHmm: "18:30",
@@ -178,7 +203,23 @@ describe("composeHoursOverflow / closed", () => {
       lastFitTime: "18:00",
       lastFitBarberName: "Eduardo Gustavo",
       isToday: false,
-    })).toBe(out);
+    });
+    expect(explained).toMatch(/18h30 não cabe/);
+    expect(explained).toMatch(/18h/);
+    expect(explained).not.toMatch(/preenchido/);
+  });
+
+  it("names the opening time when the request was before the shop opens", () => {
+    const out = composeHoursOverflow({
+      lastFitTime: "09:00",
+      lastFitBarberName: "Eduardo Gustavo",
+      isToday: false,
+      requestedTime: "08:00",
+      opensAt: "09:00",
+    });
+    expect(out).toMatch(/Abrimos às 9h/);
+    expect(out).toMatch(/primeiro horário/);
+    expect(out).not.toMatch(/preenchido/);
   });
 
   it("names the opening time when the request was before the shop opens", () => {
@@ -464,5 +505,137 @@ describe("resolveMultipleServicesFromText", () => {
 
   it("a single service mentioned returns an empty array (caller falls back to resolveServiceFromText)", () => {
     expect(resolveMultipleServicesFromText("Quero só a barba", catalog)).toEqual([]);
+  });
+});
+
+describe("resolveCheckServiceIds", () => {
+  it("keeps the booked combo when the turn only says corte", () => {
+    const resolved = resolveCheckServiceIds({
+      namedAmbiguous: true,
+      upcomingServiceIds: [COMBO.id],
+    });
+    expect(resolved).toEqual({ serviceIds: [COMBO.id] });
+  });
+
+  it("uses the service named in this turn", () => {
+    const resolved = resolveCheckServiceIds({
+      namedMatchId: CORTE.id,
+      namedAmbiguous: false,
+      upcomingServiceIds: [COMBO.id],
+    });
+    expect(resolved).toEqual({ serviceIds: [CORTE.id] });
+  });
+
+  it("asks when corte is ambiguous and nothing is booked", () => {
+    const resolved = resolveCheckServiceIds({ namedAmbiguous: true });
+    expect(resolved).toEqual({ ask: "ambiguous" });
+  });
+});
+
+describe("concrete alternative stays on the draft", () => {
+  it("locks the single free hour and keeps the service", () => {
+    const offer = concreteAlternativeToLock({
+      date: "2026-10-03",
+      reason: "occupied",
+      requestedTime: "18:00",
+      requestedBarberId: LUCAS,
+      requestedBarberName: "Lucas Lima",
+      holdRequestedBarber: true,
+      alternatives: [{ time: "17:00", barber_id: LUCAS, barber_name: "Lucas Lima" }],
+    });
+    expect(offer?.time).toBe("17:00");
+    const draft = lockOfferedSlot(
+      mergeBookingDraft(emptyBookingDraft(), {
+        service_ids: [COMBO.id],
+        service_name: COMBO.name,
+        status: "collecting",
+      }),
+      { date: offer!.date, time: offer!.time, barber_id: offer!.barber_id, status: "awaiting_name" },
+    );
+    expect(draft.status).toBe("awaiting_name");
+    expect(draft.service_ids).toEqual([COMBO.id]);
+    expect(draft.time).toBe("17:00");
+    expect(draftIsCloseable(draft)).toBe(true);
+    const withAppointment = lockOfferedSlot(draft, {
+      date: "2026-10-03",
+      time: "17:00",
+      barber_id: LUCAS,
+      appointment_id: "11111111-1111-4111-8111-111111111111",
+      status: "offered",
+    });
+    expect(withAppointment.status).toBe("offered");
+    expect(withAppointment.appointment_id).toBe("11111111-1111-4111-8111-111111111111");
+    expect(withAppointment.time).toBe("17:00");
+  });
+
+  it("keeps the current barber when another is free at the same hour", () => {
+    expect(
+      concreteAlternativeToLock({
+        date: "2026-10-03",
+        reason: "occupied",
+        requestedTime: "18:00",
+        requestedBarberId: LUCAS,
+        requestedBarberName: "Lucas Lima",
+        holdRequestedBarber: true,
+        allowOtherBarber: false,
+        alternatives: [{ time: "17:00", barber_id: "eduardo", barber_name: "Eduardo Gustavo" }],
+        sameTimeOthers: [{ barber_id: "eduardo", barber_name: "Eduardo Gustavo" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("locks the other barber only when this message named him", () => {
+    const offer = concreteAlternativeToLock({
+      date: "2026-10-03",
+      reason: "occupied",
+      requestedTime: "17:00",
+      requestedBarberId: LUCAS,
+      allowOtherBarber: true,
+      alternatives: [],
+      sameTimeOthers: [{ barber_id: "eduardo", barber_name: "Eduardo Gustavo" }],
+    });
+    expect(offer?.barber_id).toBe("eduardo");
+    expect(offer?.time).toBe("17:00");
+  });
+
+  it("does not lock when two hours are offered", () => {
+    expect(
+      concreteAlternativeToLock({
+        date: "2026-10-03",
+        reason: "occupied",
+        requestedTime: "18:00",
+        alternatives: [
+          { time: "17:00", barber_id: LUCAS },
+          { time: "17:30", barber_id: LUCAS },
+        ],
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("named barber and a floor without a clock", () => {
+  it("composes a card when this message names a barber and the draft already has service and hour", () => {
+    expect(
+      shouldComposeNamedBarberCard({
+        messageNamesCatalogBarber: true,
+        draftHasService: true,
+        draftHasClock: true,
+        messageHasClock: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldComposeNamedBarberCard({
+        messageNamesCatalogBarber: true,
+        draftHasService: true,
+        draftHasClock: true,
+        messageHasClock: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("locks one concrete hour and leaves a day without a clock unlocked", () => {
+    expect(firstLockableSlot([{ time: "09:00", barber_id: LUCAS, barber_name: "Lucas Lima" }])?.time).toBe("09:00");
+    expect(firstLockableSlot([])).toBeNull();
+    expect(firstLockableSlot([{ time: "", barber_id: LUCAS }])).toBeNull();
   });
 });

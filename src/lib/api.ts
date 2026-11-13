@@ -696,6 +696,7 @@ export const whatsappApi = {
     }>("/api/integrations/whatsapp/connect", {
       method: "POST",
       body: JSON.stringify(phone != null ? { phone } : {}),
+      timeoutMs: 45_000,
     }),
   status: () =>
     api<{ status: string; connected: boolean; qr?: string; pairingCode?: string }>(
@@ -1191,6 +1192,60 @@ export const waitlistApi = {
     ),
 };
 
+export type ReactivationSuggestion = {
+  client_id: string;
+  name: string | null;
+  phone: string;
+  reason: "waitlist_missed" | "no_visit" | "birthday" | "talked_without_booking";
+  detail: string;
+};
+
+export type QueuedReactivation = {
+  id: string;
+  client_id: string | null;
+  name: string | null;
+  phone: string | null;
+  reason: string;
+  run_after: string;
+};
+
+export type DaySummary = {
+  by_purpose: {
+    lembrete: number;
+    fila_espera: number;
+    reativacao: number;
+    cobranca: number;
+    atendimento: number;
+    avulsa: number;
+    campanha: number;
+  };
+  unique_clients_today: number;
+  insistence_phones: number;
+  send_failures_today: number;
+  session_connected: boolean;
+};
+
+export const intelligenceApi = {
+  daySummary: () => api<DaySummary>("/api/intelligence/day-summary"),
+};
+
+export const reactivationApi = {
+  list: (windowDays?: number) =>
+    api<ReactivationSuggestion[]>(
+      windowDays != null
+        ? `/api/intelligence/reactivation?window_days=${windowDays}`
+        : "/api/intelligence/reactivation",
+    ),
+  queue: (clientIds: string[]) =>
+    api<{ queued: number; run_after: string | null }>("/api/intelligence/reactivation/queue", {
+      method: "POST",
+      body: JSON.stringify({ client_ids: clientIds }),
+    }),
+  queued: () => api<QueuedReactivation[]>("/api/intelligence/reactivation/queue"),
+  remove: (id: string) =>
+    api<{ ok: boolean }>(`/api/intelligence/reactivation/queue/${id}/remove`, { method: "POST" }),
+};
+
 // ─── Plans API ────────────────────────────────────────────────────────────────
 
 export type BarbershopPlan = {
@@ -1221,16 +1276,43 @@ export type PlanSubscription = {
   plan_name: string;
   price: number;
   billing_cycle: "monthly" | "quarterly" | "yearly";
+  auto_billing: boolean;
 };
+
+export type PlanPaidMethod = "cash" | "pix";
 
 export type PlanCharge = {
   id: string;
   amount: number;
-  status: "pending" | "sent" | "paid" | "failed" | "skipped";
+  status: "pending" | "sent" | "paid" | "failed" | "skipped" | "overdue_1" | "overdue_2";
   due_date: string;
   sent_at: string | null;
   paid_at: string | null;
+  paid_method: PlanPaidMethod | null;
   created_at: string;
+};
+
+export type PlanChargeQueued = {
+  id: string;
+  kind: "due" | "day10" | "manual";
+  run_after: string;
+};
+
+export type PlanChargeRow = {
+  id: string;
+  subscription_id: string;
+  amount: number;
+  status: "pending" | "sent" | "paid";
+  due_date: string;
+  sent_at: string | null;
+  paid_at: string | null;
+  paid_method: PlanPaidMethod | null;
+  client_name: string;
+  client_phone: string;
+  plan_name: string;
+  auto_billing: boolean;
+  situation: "upcoming" | "due_today" | "overdue" | "paid";
+  queued: PlanChargeQueued[];
 };
 
 export const plansApi = {
@@ -1249,6 +1331,23 @@ export const plansApi = {
       api<{ ok: boolean }>(`/api/plans/subscriptions/${id}/cancel`, { method: "PUT" }),
     charges: (id: string) =>
       api<PlanCharge[]>(`/api/plans/subscriptions/${id}/charges`),
+    setAutoBilling: (id: string, enabled: boolean) =>
+      api<{ ok: boolean; auto_billing: boolean }>(`/api/plans/subscriptions/${id}/auto-billing`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      }),
+  },
+  charges: {
+    list: (status: "open" | "paid" = "open") =>
+      api<PlanChargeRow[]>(`/api/plans/charges?status=${status}`),
+    send: (id: string) =>
+      api<{ ok: boolean; run_after: string; message: string }>(`/api/plans/charges/${id}/send`, { method: "POST" }),
+    receive: (id: string, body: { method: PlanPaidMethod; paid_on?: string }) =>
+      api<{ ok: boolean }>(`/api/plans/charges/${id}/receive`, { method: "POST", body: JSON.stringify(body) }),
+    cancelQueued: (scheduledMessageId: string) =>
+      api<{ ok: boolean; id: string }>(`/api/integrations/automations/scheduled-messages/${scheduledMessageId}/skip`, {
+        method: "PATCH",
+      }),
   },
 };
 

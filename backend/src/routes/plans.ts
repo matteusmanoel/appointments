@@ -2,6 +2,16 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import {
+  AUTO_BILLING_OFF_REASON,
+  SUBSCRIPTION_CANCELLED_REASON,
+  cancelQueuedPlanBilling,
+  enqueueManualCharge,
+  ensureAutoBillingQueued,
+  recordPlanChargeReceipt,
+} from "../outbound/plan-billing.js";
+import { barbershopTimezone } from "../outbound/dispatch-gate.js";
+import { DAILY_CAP_REACHED_MESSAGE, dispatchWaitMessage } from "../outbound/dispatch-policy.js";
 
 export const plansRouter = Router();
 plansRouter.use(requireJwt);
@@ -134,7 +144,7 @@ plansRouter.get("/subscriptions", async (req: Request, res: Response) => {
   try {
     const barbershopId = getBarbershopId(req);
     const r = await pool.query(
-      `SELECT s.id, s.status, s.billing_day, s.next_billing_date, s.started_at, s.cancelled_at,
+      `SELECT s.id, s.status, s.billing_day, s.next_billing_date, s.started_at, s.cancelled_at, s.auto_billing,
               c.id AS client_id, c.name AS client_name, c.phone AS client_phone,
               p.id AS plan_id, p.name AS plan_name, p.price, p.billing_cycle
        FROM public.client_plan_subscriptions s
@@ -215,9 +225,10 @@ plansRouter.put("/subscriptions/:id/cancel", async (req: Request, res: Response)
     );
     if (!r.rows[0]) { res.status(404).json({ error: "Subscription not found or not active" }); return; }
     await pool.query(
-      `UPDATE public.plan_pix_charges SET status = 'skipped' WHERE subscription_id = $1 AND status = 'pending'`,
+      `UPDATE public.plan_pix_charges SET status = 'skipped' WHERE subscription_id = $1 AND status IN ('pending', 'sent')`,
       [id]
     );
+    await cancelQueuedPlanBilling({ barbershopId, subscriptionId: id, reason: SUBSCRIPTION_CANCELLED_REASON });
     res.json({ ok: true });
   } catch (e) {
     console.error("[plans] subscriptions cancel:", e);
@@ -230,7 +241,7 @@ plansRouter.get("/subscriptions/:id/charges", async (req: Request, res: Response
     const barbershopId = getBarbershopId(req);
     const { id } = req.params;
     const r = await pool.query(
-      `SELECT id, amount, status, due_date, sent_at, paid_at, created_at
+      `SELECT id, amount, status, due_date, sent_at, paid_at, paid_method, created_at
        FROM public.plan_pix_charges
        WHERE subscription_id = $1 AND barbershop_id = $2
        ORDER BY due_date DESC`,
@@ -240,5 +251,139 @@ plansRouter.get("/subscriptions/:id/charges", async (req: Request, res: Response
   } catch (e) {
     console.error("[plans] charges list:", e);
     res.status(500).json({ error: "Failed to list charges" });
+  }
+});
+
+const autoBillingBody = z.object({ enabled: z.boolean() });
+
+plansRouter.patch("/subscriptions/:id/auto-billing", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const { id } = req.params;
+    const idParsed = z.string().uuid().safeParse(id);
+    const parsed = autoBillingBody.safeParse(req.body);
+    if (!idParsed.success || !parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.success ? undefined : parsed.error.flatten() });
+      return;
+    }
+    const r = await pool.query(
+      `UPDATE public.client_plan_subscriptions SET auto_billing = $3, updated_at = now()
+       WHERE id = $1 AND barbershop_id = $2 AND status = 'active'
+       RETURNING id`,
+      [id, barbershopId, parsed.data.enabled]
+    );
+    if (!r.rows[0]) { res.status(404).json({ error: "Subscription not found or not active" }); return; }
+    if (parsed.data.enabled) {
+      res.json({ ok: true, auto_billing: true, queued: await ensureAutoBillingQueued(id) });
+      return;
+    }
+    const cancelled = await cancelQueuedPlanBilling({
+      barbershopId,
+      subscriptionId: id,
+      reason: AUTO_BILLING_OFF_REASON,
+      automaticOnly: true,
+    });
+    res.json({ ok: true, auto_billing: false, cancelled });
+  } catch (e) {
+    console.error("[plans] auto-billing:", e);
+    res.status(500).json({ error: "Failed to update automatic billing" });
+  }
+});
+
+// ─── Charges (cobrança de plano) ──────────────────────────────────────────────
+
+const chargesQuery = z.object({ status: z.enum(["open", "paid"]).optional().default("open") });
+
+plansRouter.get("/charges", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const parsed = chargesQuery.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid query", details: parsed.error.flatten() });
+      return;
+    }
+    const statuses = parsed.data.status === "paid" ? ["paid"] : ["pending", "sent"];
+    const tz = await barbershopTimezone(barbershopId);
+    const r = await pool.query(
+      `SELECT ch.id, ch.subscription_id, ch.amount, ch.status, ch.due_date::text AS due_date,
+              ch.sent_at, ch.paid_at, ch.paid_method,
+              c.name AS client_name, c.phone AS client_phone,
+              p.name AS plan_name, s.auto_billing,
+              CASE
+                WHEN ch.status = 'paid' THEN 'paid'
+                WHEN ch.due_date < (now() AT TIME ZONE $3)::date THEN 'overdue'
+                WHEN ch.due_date = (now() AT TIME ZONE $3)::date THEN 'due_today'
+                ELSE 'upcoming'
+              END AS situation,
+              COALESCE(
+                (SELECT json_agg(json_build_object('id', m.id, 'kind', m.payload_json->>'kind', 'run_after', m.run_after)
+                                 ORDER BY m.run_after)
+                 FROM public.scheduled_messages m
+                 WHERE m.barbershop_id = ch.barbershop_id AND m.type = 'plan_billing' AND m.status = 'queued'
+                   AND m.payload_json->>'charge_id' = ch.id::text),
+                '[]'::json
+              ) AS queued
+       FROM public.plan_pix_charges ch
+       JOIN public.client_plan_subscriptions s ON s.id = ch.subscription_id
+       JOIN public.clients c ON c.id = s.client_id
+       JOIN public.barbershop_plans p ON p.id = s.plan_id
+       WHERE ch.barbershop_id = $1 AND ch.status = ANY($2::text[])
+         AND (ch.status = 'paid' OR s.status = 'active')
+       ORDER BY CASE WHEN ch.status = 'paid' THEN ch.paid_at END DESC NULLS LAST, ch.due_date ASC
+       LIMIT 500`,
+      [barbershopId, statuses, tz]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error("[plans] charges board:", e);
+    res.status(500).json({ error: "Failed to list charges" });
+  }
+});
+
+plansRouter.post("/charges/:id/send", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const idParsed = z.string().uuid().safeParse(req.params.id);
+    if (!idParsed.success) { res.status(400).json({ error: "Invalid charge id" }); return; }
+    const result = await enqueueManualCharge(barbershopId, idParsed.data);
+    if (result.kind === "cap_reached") { res.status(429).json({ error: DAILY_CAP_REACHED_MESSAGE }); return; }
+    if (result.kind === "not_open") { res.status(409).json({ error: result.reason }); return; }
+    const tz = await barbershopTimezone(barbershopId);
+    res.status(202).json({
+      ok: true,
+      run_after: result.runAfter.toISOString(),
+      message: result.waitUntil ? dispatchWaitMessage(result.waitUntil, tz) : "Cobrança na fila de envio.",
+    });
+  } catch (e) {
+    console.error("[plans] charge send:", e);
+    res.status(500).json({ error: "Failed to queue charge" });
+  }
+});
+
+const receiveBody = z.object({
+  method: z.enum(["cash", "pix"]),
+  paid_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+plansRouter.post("/charges/:id/receive", async (req: Request, res: Response) => {
+  try {
+    const barbershopId = getBarbershopId(req);
+    const idParsed = z.string().uuid().safeParse(req.params.id);
+    const parsed = receiveBody.safeParse(req.body);
+    if (!idParsed.success || !parsed.success) {
+      res.status(400).json({ error: "Invalid body", details: parsed.success ? undefined : parsed.error.flatten() });
+      return;
+    }
+    const result = await recordPlanChargeReceipt({
+      barbershopId,
+      chargeId: idParsed.data,
+      method: parsed.data.method,
+      paidOn: parsed.data.paid_on,
+    });
+    if (result.kind === "not_open") { res.status(409).json({ error: result.reason }); return; }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[plans] charge receive:", e);
+    res.status(500).json({ error: "Failed to record receipt" });
   }
 });

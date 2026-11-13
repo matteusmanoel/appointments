@@ -54,6 +54,12 @@ export async function ensureCriticalSchema(): Promise<void> {
        ADD COLUMN IF NOT EXISTS booking_draft jsonb`
     )
     .catch(() => {});
+  await pool
+    .query(
+      `ALTER TABLE public.ai_conversation_runtime
+       ADD COLUMN IF NOT EXISTS pending_intents jsonb`
+    )
+    .catch(() => {});
 
   await pool
     .query(
@@ -247,7 +253,14 @@ export async function ensureCriticalSchema(): Promise<void> {
          'waitlist_offered',
          'no_show',
          'payment_recognized',
-         'conversation_started'
+         'conversation_started',
+         'send_failure',
+         'agent_silenced',
+         'agent_stuck',
+         'tool_error_escalated',
+         'payment_sent',
+         'payment_failed',
+         'plan_requested'
        ))`,
     )
     .catch((e) => {
@@ -264,5 +277,43 @@ export async function ensureCriticalSchema(): Promise<void> {
     .catch((e) => {
       if (!isUndefinedTableOrColumn(e)) throw e;
     });
+
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.ai_turn_sheets (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        barbershop_id uuid NOT NULL REFERENCES public.barbershops(id) ON DELETE CASCADE,
+        conversation_id uuid NOT NULL,
+        job_id uuid NOT NULL UNIQUE,
+        provider_event_id text,
+        at timestamptz NOT NULL DEFAULT now(),
+        inbound_preview text,
+        reply_preview text,
+        phone_mask text,
+        decision_owner text,
+        canonical_state text,
+        conversation_state text,
+        intent jsonb,
+        routing jsonb,
+        tools_requested jsonb NOT NULL DEFAULT '[]'::jsonb,
+        tools_executed jsonb NOT NULL DEFAULT '[]'::jsonb,
+        silenced_by text,
+        outbound jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE INDEX IF NOT EXISTS ai_turn_sheets_barbershop_at_idx
+       ON public.ai_turn_sheets (barbershop_id, at DESC)`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE INDEX IF NOT EXISTS ai_turn_sheets_conversation_at_idx
+       ON public.ai_turn_sheets (conversation_id, at)`,
+    )
+    .catch(() => {});
 }
 

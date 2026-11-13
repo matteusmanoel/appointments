@@ -7,7 +7,14 @@ export type AgendaActivityType =
   | "waitlist_offered"
   | "no_show"
   | "payment_recognized"
-  | "conversation_started";
+  | "conversation_started"
+  | "send_failure"
+  | "agent_silenced"
+  | "agent_stuck"
+  | "tool_error_escalated"
+  | "payment_sent"
+  | "payment_failed"
+  | "plan_requested";
 
 export type AgendaActor = "ai" | "owner" | "client_link" | "system";
 

@@ -43,7 +43,7 @@ async function fetchWithTimeout(
   }
 }
 
-async function request(method: string, path: string, body?: unknown): Promise<unknown> {
+async function request(method: string, path: string, body?: unknown, timeoutMs?: number): Promise<unknown> {
   const url = `${getBaseUrl()}${path}`;
   const res = await fetchWithTimeout(url, {
     method,
@@ -52,6 +52,7 @@ async function request(method: string, path: string, body?: unknown): Promise<un
       apikey: getApiKey(),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
+    timeoutMs,
   });
   const text = await res.text();
   if (!res.ok) {
@@ -111,8 +112,8 @@ export async function createInstance(instanceName: string): Promise<unknown> {
   });
 }
 
-export async function connectionState(instanceName: string): Promise<unknown> {
-  return request("GET", `/instance/connectionState/${encodeURIComponent(instanceName)}`);
+export async function connectionState(instanceName: string, timeoutMs?: number): Promise<unknown> {
+  return request("GET", `/instance/connectionState/${encodeURIComponent(instanceName)}`, undefined, timeoutMs);
 }
 
 export async function connectInstance(instanceName: string, phone?: string): Promise<unknown> {

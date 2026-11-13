@@ -8,11 +8,15 @@ import {
   clampInboundQuietSeconds,
   shouldDropReplyBecauseTurnGrew,
 } from "../integrations/whatsapp/inbound-turn.js";
-import { runAgent, detectViolations, sanitizeClientFacingReply, containsAiExposure } from "../ai/agent.js";
+import { runAgent, detectViolations, sanitizeClientFacingReply, containsAiExposure, looksLikeHallucinatedBookingClaim, replyClaimsPresenceConfirmed } from "../ai/agent.js";
+import { logTurnTrace, maskPhone, previewError, previewText, type AgentTurnTrace, type TurnTraceOutbound } from "../ai/turn-trace.js";
+import { persistTurnSheet } from "../ai/turn-sheet-store.js";
 import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
+import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
+import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
 import OpenAI from "openai";
 
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
@@ -82,16 +86,96 @@ function sanitizeOutgoingText(text: string): string {
   return out;
 }
 
-function isPermanentSendError(message: string): boolean {
-  const m = (message ?? "").toLowerCase();
-  return m.includes("is not on whatsapp") || m.includes("not on whatsapp") || m.includes("exists: false");
+const TOOL_FAILURE_ACTIVITY: Record<string, { type: "send_failure" | "payment_failed"; summary: string }> = {
+  send_shop_pix: { type: "payment_failed", summary: "PIX da barbearia não enviado ao cliente" },
+  send_pix_plan_charge: { type: "payment_failed", summary: "Cobrança do plano não enviada ao cliente" },
+  send_barbershop_location: { type: "send_failure", summary: "Localização não enviada ao cliente" },
+};
+const TOOL_ERROR_ESCALATION_THRESHOLD = 2;
+
+/** Outbound tools that failed, charges that went out, and turns with repeated tool errors → agenda feed. */
+async function recordToolOutcomeActivity(params: {
+  barbershopId: string;
+  conversationId: string;
+  clientPhone: string;
+  tools: Array<{ name: string; ok: boolean }>;
+}): Promise<void> {
+  const base = {
+    barbershopId: params.barbershopId,
+    conversationId: params.conversationId,
+    clientPhone: params.clientPhone,
+  };
+  for (const tool of params.tools) {
+    const failure = TOOL_FAILURE_ACTIVITY[tool.name];
+    if (!tool.ok && failure) {
+      await recordOperationalActivity({ ...base, type: failure.type, summary: failure.summary });
+    }
+    if (tool.ok && tool.name === "send_pix_plan_charge") {
+      await recordOperationalActivity({ ...base, type: "payment_sent", summary: "Cobrança do plano enviada pelo agente" });
+    }
+  }
+  const failures = params.tools.filter((t) => !t.ok);
+  if (failures.length >= TOOL_ERROR_ESCALATION_THRESHOLD) {
+    await recordOperationalActivity({
+      ...base,
+      type: "tool_error_escalated",
+      summary: `Agente encontrou ${failures.length} erros ao executar ações — revisar conversa`,
+    });
+  }
+}
+
+const SILENCED_REASON_LABELS: Record<string, string> = {
+  worker_false_confirmation: "confirmação sem registro na agenda",
+  ai_exposure: "resposta expunha erro interno",
+  unaligned_hour: "horário fora do expediente",
+  repeated_reply: "resposta repetida",
+  catalog_mismatch: "serviço ou barbeiro fora do catálogo",
+  tool_loop_exhausted: "agente não concluiu a resposta",
+};
+
+function silencedReasonLabel(reason: string | undefined): string {
+  return (reason && SILENCED_REASON_LABELS[reason]) || "sem resposta gerada";
+}
+
+async function markConversationForFollowup(params: {
+  barbershopId: string;
+  conversationId: string;
+  triggeredBy: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE public.ai_conversations SET needs_human_followup = true, updated_at = now() WHERE id = $1`,
+      [params.conversationId]
+    );
+  } catch { /* optional column */ }
+  try {
+    await pool.query(
+      `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
+       VALUES ($1, $2, 'pending_review', $3, $4)`,
+      [params.barbershopId, params.conversationId, params.triggeredBy, params.reason]
+    );
+  } catch { /* optional table */ }
+}
+
+/** Keeps undelivered bubbles on the job so a transient provider failure retries the send, not the agent. */
+async function stashPendingReplyParts(jobId: string, parts: string[]): Promise<void> {
+  await pool
+    .query(
+      `UPDATE public.ai_jobs
+       SET payload_json = coalesce(payload_json, '{}'::jsonb) || jsonb_build_object('pending_reply_parts', $2::jsonb),
+           updated_at = now()
+       WHERE id = $1`,
+      [jobId, JSON.stringify(parts)],
+    )
+    .catch((e) => console.warn("[ai-worker] stashPendingReplyParts failed:", e instanceof Error ? e.message : e));
 }
 
 async function getNextJob(): Promise<{
   id: string;
   barbershop_id: string;
   conversation_id: string;
-  payload_json: { fromPhone: string; text: string; provider_event_id?: string };
+  payload_json: { fromPhone: string; text: string; provider_event_id?: string; pending_reply_parts?: string[] };
   attempts: number;
   locked_at: Date | null;
 } | null> {
@@ -174,7 +258,16 @@ async function getNextJob(): Promise<{
   }
   const row = r.rows[0];
   if (!row) return null;
-  const payload = row.payload_json as { fromPhone?: string; text?: string; provider_event_id?: string };
+  const payload = row.payload_json as {
+    fromPhone?: string;
+    text?: string;
+    provider_event_id?: string;
+    providerEventId?: string;
+    pending_reply_parts?: unknown;
+  };
+  const pendingParts = Array.isArray(payload?.pending_reply_parts)
+    ? payload.pending_reply_parts.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+    : [];
   return {
     id: row.id,
     barbershop_id: row.barbershop_id,
@@ -182,7 +275,8 @@ async function getNextJob(): Promise<{
     payload_json: {
       fromPhone: payload?.fromPhone ?? "",
       text: payload?.text ?? "",
-      provider_event_id: payload?.provider_event_id,
+      provider_event_id: payload?.provider_event_id ?? payload?.providerEventId,
+      ...(pendingParts.length ? { pending_reply_parts: pendingParts } : {}),
     },
     attempts: row.attempts,
     locked_at: row.locked_at ?? null,
@@ -341,27 +435,74 @@ async function processOneJob(): Promise<boolean> {
 
   const { id: jobId, barbershop_id: barbershopId, conversation_id: conversationId, payload_json, attempts } = job;
   const { fromPhone, text: userTextFromJob } = payload_json;
+  const providerEventId =
+    (payload_json as { providerEventId?: string }).providerEventId ??
+    payload_json.provider_event_id ??
+    null;
+  const turnSink: {
+    state?: string;
+    replyLen: number;
+    replyText?: string;
+    silencedBy?: string;
+    agent: AgentTurnTrace | null;
+    outbound: TurnTraceOutbound;
+  } = {
+    replyLen: 0,
+    agent: null,
+    outbound: { status: "not_sent" },
+  };
   console.info("[ai-worker] processing jobId=%s barbershopId=%s conversationId=%s fromPhone=%s", jobId, barbershopId, conversationId, fromPhone);
 
   try {
     await ensureAiSettingsRow(barbershopId);
     const aiEnabled = await isAiEnabled(barbershopId);
-    let reply: string;
-
     if (!aiEnabled) {
       console.info("[ai-worker] jobId=%s AI is disabled, skipping silently barbershopId=%s", jobId, barbershopId);
+      turnSink.outbound = { status: "ai_disabled" };
       await updateConversationLastMessage(conversationId);
       await markJobDone(jobId);
       return true;
+    }
+
+    // No provider session → the reply could never be delivered; do not spend OpenAI tokens.
+    const session = await getWhatsAppOrNull(barbershopId);
+    if (!session) {
+      turnSink.outbound = { status: "whatsapp_disconnected" };
+      console.warn("[ai-worker] jobId=%s WhatsApp not connected, skipping agent barbershopId=%s", jobId, barbershopId);
+      await recordOperationalActivity({
+        barbershopId,
+        conversationId,
+        clientPhone: fromPhone,
+        type: "send_failure",
+        summary: "WhatsApp desconectado — mensagem do cliente ficou sem resposta",
+      });
+      await updateConversationLastMessage(conversationId);
+      await markJobDone(jobId);
+      return true;
+    }
+
+    const cachedParts = payload_json.pending_reply_parts ?? [];
+    let reply: string;
+
+    if (cachedParts.length) {
+      // Retry after a transient send failure: resend what the agent already produced.
+      reply = cachedParts.join("\n");
+      turnSink.replyText = reply;
+      turnSink.state = "cached_reply";
+      turnSink.replyLen = reply.length;
     } else if (config.nativeAiDisabled) {
       try {
         const raw = await callN8nAgent(conversationId, fromPhone, barbershopId, String(userTextFromJob ?? ""));
         reply = sanitizeClientFacingReply(raw);
+        turnSink.replyText = reply;
         console.info("[ai-worker] jobId=%s n8n reply len=%s", jobId, reply.length);
+        turnSink.state = "n8n";
+        turnSink.replyLen = reply.length;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error("[ai-worker] jobId=%s n8n error: %s", jobId, msg);
         reply = FALLBACK_MESSAGE;
+        turnSink.replyText = reply;
       }
       const convRowN8n = await pool.query<{ is_sandbox: boolean }>(
         `SELECT is_sandbox FROM public.ai_conversations WHERE id = $1`,
@@ -380,12 +521,16 @@ async function processOneJob(): Promise<boolean> {
           .catch((e) => console.warn("[ai-worker] failed to insert quality metrics (n8n):", e));
       }
     } else if (!config.openaiApiKey) {
+      turnSink.state = "no_openai_key";
       reply = FALLBACK_MESSAGE;
+      turnSink.replyText = reply;
     } else {
       const usage = await getUsageAndLimit(barbershopId);
       if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
+        turnSink.state = "hard_limit";
         reply = "";
+        turnSink.replyText = reply;
       } else {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
@@ -395,6 +540,10 @@ async function processOneJob(): Promise<boolean> {
           persistAssistantMessages: false,
         });
       reply = sanitizeClientFacingReply(result.reply);
+      turnSink.replyText = reply;
+      turnSink.agent = result.turnTrace ?? null;
+      turnSink.state = result.state;
+      turnSink.replyLen = reply.length;
       if (result.state === "appointment_created") {
         await enqueueOutboundEvent(barbershopId, "appointment_created", {
           conversation_id: conversationId,
@@ -409,8 +558,6 @@ async function processOneJob(): Promise<boolean> {
 
       // Safety net: if the reply claims the booking was confirmed but the agent never
       // set a state that proves a real DB write, the model may have hallucinated.
-      const FALSE_CONFIRMATION_RE =
-        /agendamento\s+(foi\s+)?confirmado|aguardamos\s+você\b|está\s+(marcado|agendado|confirmado)\b|\bconfirmei\s+(o|seu|a\s+sua?)\s+(agendamento|remarca[cç][aã]o|horário)\b|n[aã]o\s+consegui\s+validar|atendente\s+confere/i;
       const REAL_CONFIRMATION_STATES = new Set<string>([
         "appointment_created",
         "appointment_rescheduled",
@@ -419,7 +566,9 @@ async function processOneJob(): Promise<boolean> {
         "plan_subscribed",
       ]);
       if (
-        (FALSE_CONFIRMATION_RE.test(reply) || containsAiExposure(reply)) &&
+        (looksLikeHallucinatedBookingClaim(reply) ||
+          replyClaimsPresenceConfirmed(reply) ||
+          containsAiExposure(reply)) &&
         !REAL_CONFIRMATION_STATES.has(result.state ?? "")
       ) {
         console.warn(
@@ -429,6 +578,19 @@ async function processOneJob(): Promise<boolean> {
           conversationId
         );
         reply = "";
+        turnSink.replyText = reply;
+        turnSink.silencedBy = "worker_false_confirmation";
+      }
+      if (!reply && !turnSink.silencedBy && result.turnTrace?.silencedBy) {
+        turnSink.silencedBy = result.turnTrace.silencedBy;
+      }
+      if (!isSandbox && result.turnTrace) {
+        await recordToolOutcomeActivity({
+          barbershopId,
+          conversationId,
+          clientPhone: fromPhone,
+          tools: result.turnTrace.toolsExecuted,
+        });
       }
       if (!isSandbox && reply) {
         const violations = detectViolations(reply);
@@ -450,8 +612,7 @@ async function processOneJob(): Promise<boolean> {
       }
     }
 
-    const session = await getWhatsAppOrNull(barbershopId);
-    if (session) {
+    {
       const lastUserRow = await pool.query<{ last_user_at: Date | null }>(
         `SELECT max(created_at) AS last_user_at
          FROM public.ai_messages
@@ -473,6 +634,7 @@ async function processOneJob(): Promise<boolean> {
           jobId,
           conversationId,
         );
+        turnSink.outbound = { status: "dropped_half_turn" };
         await markJobDone(jobId);
         await bumpOrEnqueueJob({
           barbershopId,
@@ -500,17 +662,30 @@ async function processOneJob(): Promise<boolean> {
       const msPerChar = typingSimulation?.enabled ? (typingSimulation.msPerChar ?? 20) : 0;
       const jitterMs = typingSimulation?.enabled ? (typingSimulation.jitterMs ?? 100) : 0;
 
-      const parts = splitOutgoingBubbles(String(reply ?? ""))
-        .map((p) => stripTrailingBubblePeriod(sanitizeOutgoingText(p)))
-        .filter((p) => p.length > 0)
-        .slice(0, 3);
+      const parts = cachedParts.length
+        ? cachedParts.slice(0, 3)
+        : splitOutgoingBubbles(String(reply ?? ""))
+            .map((p) => stripTrailingBubblePeriod(sanitizeOutgoingText(p)))
+            .filter((p) => p.length > 0)
+            .slice(0, 3);
       if (!parts.length) {
+        turnSink.outbound = { status: "empty_reply" };
         console.info("[ai-worker] jobId=%s empty reply, skipping send (human handoff)", jobId);
+        if (turnSink.agent || turnSink.silencedBy) {
+          await recordOperationalActivity({
+            barbershopId,
+            conversationId,
+            clientPhone: fromPhone,
+            type: "agent_silenced",
+            summary: `Agente silenciado — revisar conversa (${silencedReasonLabel(turnSink.silencedBy)})`,
+          });
+        }
         await updateConversationLastMessage(conversationId);
         await markJobDone(jobId);
         return true;
       }
-      for (const part of parts) {
+      const sentIds: string[] = [];
+      for (const [partIndex, part] of parts.entries()) {
         if (baseDelayMs > 0 || msPerChar > 0) {
           const delay = baseDelayMs + part.length * msPerChar + (jitterMs > 0 ? Math.floor(Math.random() * jitterMs) : 0);
           if (delay > 0) await new Promise((r) => setTimeout(r, Math.min(delay, 5000)));
@@ -519,6 +694,7 @@ async function processOneJob(): Promise<boolean> {
         await reserveAssistantMessage({ conversationId, content: part, pendingId });
         try {
           const sent = await session.sendText(fromPhone, part);
+          if (sent.providerMessageId) sentIds.push(sent.providerMessageId);
           await confirmAssistantMessage({
             conversationId,
             pendingId,
@@ -533,57 +709,113 @@ async function processOneJob(): Promise<boolean> {
             providerMessageId: null,
             deliveryStatus: "failed",
           }).catch(() => {});
-          if (isPermanentSendError(errMsg)) {
-            console.warn("[ai-worker] jobId=%s permanent delivery failure: %s", jobId, errMsg);
-            try {
-              await pool.query(
-                `UPDATE public.ai_conversations SET needs_human_followup = true, updated_at = now() WHERE id = $1`,
-                [conversationId]
-              );
-            } catch { /* optional column */ }
-            try {
-              await pool.query(
-                `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
-                 VALUES ($1, $2, 'pending_review', 'delivery_failure', $3)`,
-                [barbershopId, conversationId, "Falha permanente ao enviar mensagem (número não está no WhatsApp)"]
-              );
-            } catch { /* optional table */ }
+          const sendErrorClass = classifySendError(errMsg);
+          if (sendErrorClass !== "transient") {
+            const notOnWhatsApp = sendErrorClass === "not_on_whatsapp";
+            turnSink.outbound = {
+              status: notOnWhatsApp ? "permanent_failure" : "provider_rejected",
+              error: previewError(errMsg),
+              bubbles: parts.length,
+              providerMessageIds: sentIds,
+            };
+            console.warn("[ai-worker] jobId=%s non-retryable delivery failure (%s): %s", jobId, sendErrorClass, errMsg);
+            await markConversationForFollowup({
+              barbershopId,
+              conversationId,
+              triggeredBy: "delivery_failure",
+              reason: notOnWhatsApp
+                ? "Falha permanente ao enviar mensagem (número não está no WhatsApp)"
+                : "Provedor WhatsApp recusou o envio da mensagem",
+            });
+            await recordOperationalActivity({
+              barbershopId,
+              conversationId,
+              clientPhone: fromPhone,
+              type: "send_failure",
+              summary: notOnWhatsApp
+                ? "Mensagem não entregue — número não está no WhatsApp"
+                : "Mensagem não entregue — WhatsApp recusou o envio",
+            });
             await updateConversationLastMessage(conversationId);
             await markJobDone(jobId);
             return true;
           }
+          await stashPendingReplyParts(jobId, parts.slice(partIndex));
           throw e;
         }
       }
+      turnSink.outbound = { status: "sent", bubbles: parts.length, providerMessageIds: sentIds };
       console.info("[ai-worker] jobId=%s sent to fromPhone=%s", jobId, fromPhone);
-    } else {
-      console.warn("[ai-worker] jobId=%s WhatsApp not connected barbershopId=%s", jobId, barbershopId);
     }
     await updateConversationLastMessage(conversationId);
     await markJobDone(jobId);
     return true;
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
+    turnSink.outbound = { status: "job_error", error: previewError(errMsg) };
     console.error(`[ai-worker] job ${jobId} error:`, errMsg);
     await markJobFailed(jobId, errMsg, attempts);
     if (attempts >= (config.aiJobMaxAttempts ?? 5)) {
-      // Mark conversation for human followup when job exhausts all retries
-      try {
-        await pool.query(
-          `UPDATE public.ai_conversations SET needs_human_followup = true, updated_at = now() WHERE id = $1`,
-          [conversationId]
-        );
-      } catch { /* column may not exist yet — safe to ignore */ }
-      try {
-        await pool.query(
-          `INSERT INTO public.ai_handoff_events (barbershop_id, conversation_id, event_type, triggered_by, reason)
-           VALUES ($1, $2, 'pending_review', 'job_failure', 'Job atingiu limite máximo de tentativas')`,
-          [barbershopId, conversationId]
-        );
-      } catch { /* table may not exist yet — safe to ignore */ }
+      await markConversationForFollowup({
+        barbershopId,
+        conversationId,
+        triggeredBy: "job_failure",
+        reason: "Job atingiu limite máximo de tentativas",
+      });
+      await recordOperationalActivity({
+        barbershopId,
+        conversationId,
+        clientPhone: fromPhone,
+        type: "agent_stuck",
+        summary: "Agente travou após várias tentativas — cliente sem resposta",
+      });
       console.warn("[ai-worker] job %s dead (maxAttempts=%s), conversation %s marked for human followup", jobId, attempts, conversationId);
     }
     return true;
+  } finally {
+    logTurnTrace({
+      phase: "agent",
+      jobId,
+      conversationId,
+      barbershopId,
+      providerEventId,
+      phone: maskPhone(fromPhone),
+      inboundPreview: previewText(String(userTextFromJob ?? "")),
+      state: turnSink.state ?? null,
+      replyLen: turnSink.replyLen,
+      silencedBy: turnSink.silencedBy ?? null,
+      outbound: turnSink.outbound,
+      decisionOwner: turnSink.agent?.decisionOwner ?? null,
+      conversationState: turnSink.agent?.conversationState ?? null,
+      canonicalState: turnSink.agent?.canonicalState ?? null,
+      intent: turnSink.agent?.intent ?? null,
+      routing: turnSink.agent?.routing ?? null,
+      openai: turnSink.agent?.openai ?? [],
+      toolsExecuted: turnSink.agent?.toolsExecuted ?? [],
+    });
+    await persistTurnSheet({
+      at: new Date().toISOString(),
+      phase: "agent",
+      jobId,
+      conversationId,
+      barbershopId,
+      providerEventId,
+      phone: maskPhone(fromPhone),
+      inboundPreview: previewText(String(userTextFromJob ?? "")),
+      replyPreview: previewText(turnSink.replyText ?? ""),
+      state: turnSink.state ?? null,
+      silencedBy: turnSink.silencedBy ?? null,
+      outbound: turnSink.outbound,
+      decisionOwner: turnSink.agent?.decisionOwner ?? null,
+      conversationState: turnSink.agent?.conversationState ?? null,
+      canonicalState: turnSink.agent?.canonicalState ?? null,
+      intent: turnSink.agent?.intent ?? null,
+      routing: turnSink.agent?.routing ?? null,
+      openai: turnSink.agent?.openai ?? [],
+      toolsExecuted: turnSink.agent?.toolsExecuted ?? [],
+    }).catch((e) => {
+      console.warn("[ai-worker] turn sheet:", e instanceof Error ? e.message : e);
+    });
   }
 }
 

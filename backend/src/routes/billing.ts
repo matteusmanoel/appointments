@@ -98,7 +98,8 @@ async function handleStripeEvent(event: Stripe.Event): Promise<void> {
     const session = event.data.object as Stripe.Checkout.Session;
     const metadata = (session.metadata || {}) as Record<string, string>;
     if (metadata.credit_type === "followup_manual") {
-      await creditFollowupFromSession(session);
+      // Follow-up manual aposentado — não processa, não marca erro.
+      console.info("[billing] ignorando checkout followup_manual aposentado session=%s", session.id);
       return;
     }
     await provisionFromCheckoutSession(session);
@@ -111,10 +112,11 @@ async function handleStripeEvent(event: Stripe.Event): Promise<void> {
       [subscription.status, subscription.id]
     ).catch(() => {});
   }
-  if (event.type === "invoice.payment_failed") {
-    const invoice = event.data.object as Stripe.Invoice;
-    await handleInvoicePaymentFailed(invoice);
-  }
+  // Aviso de assinatura fora do produto por enquanto (ADR 0003).
+  // if (event.type === "invoice.payment_failed") {
+  //   const invoice = event.data.object as Stripe.Invoice;
+  //   await handleInvoicePaymentFailed(invoice);
+  // }
 }
 
 async function handleInvoicePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
@@ -487,8 +489,13 @@ const creditsCheckoutBody = z.object({
   quantity: z.number().int().min(1).max(500).default(10),
 });
 
-/** POST /api/billing/credits_checkout — create Stripe Checkout (payment) for follow-up credits. Requires JWT. */
-billingRouter.post("/credits_checkout", requireJwt, async (req: Request, res: Response): Promise<void> => {
+/** POST /api/billing/credits_checkout — aposentado. */
+billingRouter.post("/credits_checkout", requireJwt, (_req: Request, res: Response): void => {
+  res.status(410).json({ error: "Créditos de follow-up fora do produto. Use o painel de reativação." });
+});
+
+/** @deprecated kept for reference — do not call */
+async function _credits_checkout_retired(req: Request, res: Response): Promise<void> {
   if (!stripe) {
     res.status(503).json({ error: "Checkout não configurado (Stripe)" });
     return;
@@ -530,7 +537,8 @@ billingRouter.post("/credits_checkout", requireJwt, async (req: Request, res: Re
     console.error("Credits checkout create error:", e);
     res.status(500).json({ error: "Erro ao criar sessão de pagamento" });
   }
-});
+}
+void _credits_checkout_retired;
 
 billingRouter.get("/session", async (req: Request, res: Response): Promise<void> => {
   const sessionId = (req.query.session_id as string)?.trim();

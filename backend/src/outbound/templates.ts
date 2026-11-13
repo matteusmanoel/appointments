@@ -75,6 +75,44 @@ export function buildReminder2h(v: ReminderVars): string {
   return v.alreadyConfirmed ? buildReminder2hConfirmed(v) : buildReminder2hPending(v);
 }
 
+/**
+ * Text to send now. A body stored at enqueue time is stale: presence may have
+ * been confirmed since. Reminders are rebuilt from the appointment row.
+ * Cancelled appointments send nothing.
+ */
+export function resolveReminderSendBody(params: {
+  type: string;
+  storedBody: string;
+  todayIso: string;
+  appointment: {
+    status: string;
+    clientName?: string;
+    date: string;
+    time: string;
+    serviceNames?: string;
+    barberName?: string;
+    totalPrice?: number;
+  } | null;
+}): string | null {
+  const appt = params.appointment;
+  if (appt?.status === "cancelled") return null;
+  if (appt && (params.type === "reminder_24h" || params.type === "reminder_2h")) {
+    const vars: ReminderVars = {
+      clientName: appt.clientName,
+      date: appt.date.slice(0, 10),
+      time: appt.time.slice(0, 5),
+      serviceNames: appt.serviceNames,
+      barberName: appt.barberName,
+      totalPrice: appt.totalPrice,
+      todayIso: params.todayIso,
+      alreadyConfirmed: appt.status === "confirmed",
+    };
+    return params.type === "reminder_24h" ? buildReminder24h(vars) : buildReminder2h(vars);
+  }
+  const stored = params.storedBody.trim();
+  return stored || null;
+}
+
 export function buildReminder2hPending(v: ReminderVars): string {
   const first = firstName(v.clientName);
   const day = relativeDay(v.date, v.todayIso);

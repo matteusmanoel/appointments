@@ -29,6 +29,47 @@ export function lastFitStartMins(params: {
   return null;
 }
 
+function overlapsWithBuffer(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number,
+  bufferMins: number,
+): boolean {
+  if (bufferMins <= 0) return aStart < bEnd && aEnd > bStart;
+  return aEnd + bufferMins > bStart && bEnd + bufferMins > aStart;
+}
+
+/**
+ * Last start that still fits the window and does not collide with a busy interval.
+ * A clock that only fits the closing time, but not the buffer, is not offered.
+ */
+export function lastBookableStartMins(params: {
+  durationMins: number;
+  windowStart: number;
+  windowEnd: number;
+  minStart: number | null;
+  busy: Array<{ start: number; end: number }>;
+  bufferMins: number;
+  step?: number;
+}): number | null {
+  const step = params.step ?? 30;
+  let start = lastFitStartMins(params);
+  while (start != null) {
+    const end = start + params.durationMins;
+    const busy = params.busy.some((slot) =>
+      overlapsWithBuffer(start as number, end, slot.start, slot.end, params.bufferMins),
+    );
+    if (!busy) return start;
+    const next = start - step;
+    if (next < params.windowStart) return null;
+    if (params.minStart != null && next < params.minStart) return null;
+    if (next + params.durationMins > params.windowEnd) return null;
+    start = next;
+  }
+  return null;
+}
+
 /**
  * First 30-min start in the window where duration still fits, not before minStart.
  * Mirror of lastFitStartMins — used when the client asked for a time *before* opening,

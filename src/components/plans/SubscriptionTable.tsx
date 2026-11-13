@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { ConfirmDialog } from "@/components/shared";
 
@@ -50,6 +51,13 @@ const CHARGE_STATUS_LABELS: Record<string, string> = {
   paid: "Pago",
   failed: "Falhou",
   skipped: "Ignorado",
+  overdue_1: "Lembrete de atraso",
+  overdue_2: "Lembrete de atraso",
+};
+
+const PAID_METHOD_LABELS: Record<string, string> = {
+  cash: "Dinheiro",
+  pix: "PIX conferido",
 };
 
 const CYCLE_LABELS: Record<string, string> = {
@@ -97,7 +105,10 @@ function ChargesModal({ subscriptionId, open, onOpenChange }: ChargesModalProps)
               <div key={c.id} className="flex items-center justify-between rounded-md border p-2.5 text-sm">
                 <div>
                   <p className="font-medium">R$ {Number(c.amount).toFixed(2).replace(".", ",")}</p>
-                  <p className="text-xs text-muted-foreground">Venc: {formatDate(c.due_date)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Venc: {formatDate(c.due_date)}
+                    {c.status === "paid" && c.paid_method ? ` · ${PAID_METHOD_LABELS[c.paid_method] ?? c.paid_method}` : ""}
+                  </p>
                 </div>
                 <Badge variant={c.status === "paid" ? "default" : c.status === "failed" ? "destructive" : "secondary"}>
                   {CHARGE_STATUS_LABELS[c.status] ?? c.status}
@@ -151,9 +162,25 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
       setLinkClientId("");
       setLinkPlanId("");
       void queryClient.invalidateQueries({ queryKey: ["plan-subscriptions"] });
+      void queryClient.invalidateQueries({ queryKey: ["plan-charges-board"] });
     },
     onError: (e) =>
       toastError("Não foi possível vincular", e instanceof Error ? e : undefined),
+  });
+
+  const autoBillingMutation = useMutation({
+    mutationFn: (v: { id: string; enabled: boolean }) => plansApi.subscriptions.setAutoBilling(v.id, v.enabled),
+    onSuccess: (_r, v) => {
+      toastSuccess(
+        v.enabled ? "Cobrança automática ligada." : "Cobrança automática desligada.",
+        v.enabled
+          ? "Os envios do vencimento e do 10º dia entram na fila de Cobranças."
+          : "Os envios automáticos na fila foram cancelados.",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["plan-subscriptions"] });
+      void queryClient.invalidateQueries({ queryKey: ["plan-charges-board"] });
+    },
+    onError: (e) => toastError("Não foi possível alterar a cobrança automática", e),
   });
 
   const cancelMutation = useMutation({
@@ -177,7 +204,7 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <p className="text-sm text-muted-foreground">
-          Vincule um plano ativo a um cliente para gerar cobranças recorrentes (base para automações e WhatsApp).
+          Vincule um plano ativo a um cliente para gerar as cobranças do mês. A cobrança é manual até você ligar o automático na assinatura. Ligado, envia no vencimento e no 10º dia se seguir em aberto.
         </p>
         <Button type="button" variant="outline" size="sm" className="shrink-0 gap-2" onClick={() => setLinkOpen(true)}>
           <Link2 className="h-4 w-4" />
@@ -190,7 +217,7 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
           <DialogHeader>
             <DialogTitle>Vincular plano ao cliente</DialogTitle>
             <DialogDescription>
-              Escolha um cliente e um plano ativo. A primeira cobrança PIX será agendada conforme a regra do backend.
+              Escolha um cliente e um plano ativo. A cobrança do mês aparece em Cobranças; nada é enviado sem você enviar ou ligar o automático.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -257,6 +284,9 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
               <TableHead>Ciclo</TableHead>
               <TableHead>Próx. cobrança</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>
+                <span title="Envia no vencimento e no 10º dia se seguir em aberto">Cobrança automática</span>
+              </TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
           </TableHeader>
@@ -283,6 +313,20 @@ export function SubscriptionTable({ subscriptions, isLoading }: SubscriptionTabl
                   <Badge variant={STATUS_VARIANTS[sub.status] ?? "secondary"}>
                     {STATUS_LABELS[sub.status] ?? sub.status}
                   </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id={`auto-billing-${sub.id}`}
+                      checked={sub.auto_billing}
+                      disabled={sub.status !== "active" || autoBillingMutation.isPending}
+                      onCheckedChange={(enabled) => autoBillingMutation.mutate({ id: sub.id, enabled })}
+                      aria-label={`Cobrança automática de ${sub.client_name}`}
+                    />
+                    <Label htmlFor={`auto-billing-${sub.id}`} className="text-xs font-normal text-muted-foreground">
+                      {sub.auto_billing ? "Vencimento e 10º dia" : "Manual"}
+                    </Label>
+                  </div>
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-1">

@@ -60,6 +60,10 @@ async function notifyWaitlist(event: AgendaChangeEvent): Promise<WaitlistHit | n
   );
   const tz = tzRow.rows[0]?.timezone || "America/Sao_Paulo";
 
+  // Automatic waitlist notice when a slot opens bypasses the daily cap and the 3-minute spacing
+  // interval (ADR 0004). The 20-minute floor before the slot is still enforced in the SQL below.
+  // The notice still counts toward the daily sum via the 'waitlist_offered' agenda_activity row.
+
   const candidate = await pool.query<{
     id: string;
     client_name: string | null;

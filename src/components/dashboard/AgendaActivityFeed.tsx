@@ -2,9 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Activity } from "lucide-react";
+import { Activity, AlertTriangle, CircleCheck } from "lucide-react";
 import { reportsApi } from "@/lib/api";
 import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
+import { operationalActivity, operationalActivityText } from "@/lib/agenda-activity";
 import { cn } from "@/lib/utils";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -16,6 +17,7 @@ const TYPE_LABEL: Record<string, string> = {
   no_show: "faltou",
   payment_recognized: "PIX recebido",
   conversation_started: "iniciou conversa",
+  plan_requested: "pediu o plano",
 };
 
 function formatWhen(date: string | null, time: string | null): string {
@@ -53,11 +55,28 @@ export function AgendaActivityFeed() {
         <ul className="divide-y">
           {events.map((ev) => {
             const who = ev.client_name?.trim() || "Cliente";
-            const verb = TYPE_LABEL[ev.type] ?? ev.type;
             const when = formatWhen(ev.scheduled_date, ev.scheduled_time);
-            const inner = (
+            const operational = operationalActivity(ev.type);
+            const inner = operational ? (
+              <span
+                className={cn(
+                  "flex items-start gap-2 px-4 py-3 text-sm hover:bg-muted/40",
+                  operational.tone === "danger" && "text-red-700 dark:text-red-300",
+                  operational.tone === "warning" && "text-amber-800 dark:text-amber-200",
+                )}
+              >
+                {operational.tone === "success" ? (
+                  <CircleCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                ) : (
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                )}
+                <span>
+                  <span className="font-medium">{who}</span> · {operationalActivityText(ev.type, ev.summary)}
+                </span>
+              </span>
+            ) : (
               <span className="block px-4 py-3 text-sm hover:bg-muted/40">
-                <span className="font-medium">{who}</span> {verb}
+                <span className="font-medium">{who}</span> {TYPE_LABEL[ev.type] ?? ev.type}
                 {when ? <span className="text-muted-foreground"> · {when}</span> : null}
               </span>
             );

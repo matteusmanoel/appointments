@@ -812,7 +812,7 @@ export default function Agendamentos() {
       scheduled_date: dateStr,
       scheduled_time: "09:00",
       notes: "",
-      status: "confirmed",
+      status: "pending",
       price: 0,
       barbershop_id: "",
     },
@@ -889,10 +889,6 @@ export default function Agendamentos() {
           ? { barbershop_id: body.barbershop_id }
           : {}),
       });
-      const desiredStatus = body.status ?? "confirmed";
-      if (desiredStatus !== "pending") {
-        await appointmentsApi.update(created.id, { status: desiredStatus });
-      }
       const price = Number(body.price ?? 0);
       if (
         priceManuallyEdited &&
@@ -959,7 +955,7 @@ export default function Agendamentos() {
       );
       form.setValue(
         "status",
-        (updated.status as AppointmentFormValues["status"]) ?? "confirmed",
+        (updated.status as AppointmentFormValues["status"]) ?? "pending",
         { shouldDirty: false, shouldTouch: false },
       );
       if (updated.scheduled_date) {
@@ -1099,7 +1095,7 @@ export default function Agendamentos() {
       scheduled_date: dateStr,
       scheduled_time: time,
       notes: "",
-      status: "confirmed",
+      status: "pending",
       price: 0,
       barbershop_id: "",
     });
@@ -1118,7 +1114,7 @@ export default function Agendamentos() {
       scheduled_date: dateStr,
       scheduled_time: slotsToShow[0] ?? "09:00",
       notes: "",
-      status: "confirmed",
+      status: "pending",
       price: 0,
       barbershop_id: "",
     });
@@ -1157,7 +1153,7 @@ export default function Agendamentos() {
       scheduled_date: normDate(apt.scheduled_date),
       scheduled_time: normTime(apt.scheduled_time),
       notes: "",
-      status: (apt.status as AppointmentFormValues["status"]) || "confirmed",
+      status: (apt.status as AppointmentFormValues["status"]) || "pending",
       price: Number(apt.price) || 0,
     });
     setFormOpen(true);
@@ -1189,7 +1185,7 @@ export default function Agendamentos() {
         scheduled_date: normDate(apt.scheduled_date),
         scheduled_time: normTime(apt.scheduled_time),
         notes: "",
-        status: (apt.status as AppointmentFormValues["status"]) || "confirmed",
+        status: (apt.status as AppointmentFormValues["status"]) || "pending",
         price: Number(apt.price) || 0,
       });
       setFormOpen(true);
@@ -1236,10 +1232,6 @@ export default function Agendamentos() {
               ? { barbershop_id: values.barbershop_id }
               : {}),
           });
-          const desiredStatus = values.status ?? "confirmed";
-          if (desiredStatus !== "pending") {
-            await appointmentsApi.update(created.id, { status: desiredStatus });
-          }
           if (
             priceManuallyEdited &&
             desiredPrice > 0 &&
@@ -1258,7 +1250,7 @@ export default function Agendamentos() {
         }
 
         const baseBody = {
-          status: values.status ?? "confirmed",
+          status: values.status ?? editingAppointment.status ?? "pending",
           scheduled_date: values.scheduled_date,
           scheduled_time: values.scheduled_time?.slice(0, 5),
           notes: values.notes,

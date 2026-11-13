@@ -10,6 +10,8 @@ import {
   composeManualWaitlistMessage,
   computeDispatchDeadline,
 } from "../agenda/waitlist-dispatch.js";
+import { checkDispatchGate } from "../outbound/dispatch-gate.js";
+import { DAILY_CAP_REACHED_MESSAGE, dispatchWaitMessage } from "../outbound/dispatch-policy.js";
 
 export const waitlistRouter = Router();
 waitlistRouter.use(requireJwt);
@@ -154,6 +156,15 @@ waitlistRouter.post("/:id/dispatch", async (req: Request, res: Response): Promis
     barberName: chosen.name,
     deadlineHm,
   });
+  const gate = await checkDispatchGate(barbershopId, tz);
+  if (gate.kind === "cap_reached") {
+    res.status(429).json({ error: DAILY_CAP_REACHED_MESSAGE });
+    return;
+  }
+  if (gate.kind === "wait") {
+    res.status(429).json({ error: dispatchWaitMessage(gate.until, tz) });
+    return;
+  }
   const session = await getWhatsAppOrNull(barbershopId);
   if (!session) {
     res.status(409).json({ error: "WhatsApp não conectado" });

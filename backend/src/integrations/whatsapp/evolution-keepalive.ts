@@ -1,10 +1,10 @@
 import { pool } from "../../db.js";
 import * as evo from "./evolution-client.js";
 import { evolutionWebhookUrl, persistEvolutionSocketState } from "./evolution-session.js";
-import { shouldOpenWhatsAppSocket, shouldRestoreDroppedSession, webhookNeedsRepair } from "./evolution-policy.js";
+import { shouldOpenWhatsAppSocket, shouldRestoreDroppedSession, shouldSkipEvolutionProbe, webhookNeedsRepair } from "./evolution-policy.js";
+import { withEvolutionInstance } from "./evolution-flight.js";
 
 const INTERVAL_MS = 20_000;
-const RESTORE_COOLDOWN_MS = 45_000;
 const lastRestoreAt = new Map<string, number>();
 
 function parseWebhookFind(raw: unknown): {
@@ -45,36 +45,30 @@ async function repairWebhook(instanceName: string, expectedUrl: string): Promise
 
 const restoreFailures = new Map<string, number>();
 
-function restoreCooldownMs(instanceName: string): number {
-  const failures = restoreFailures.get(instanceName) ?? 0;
-  return Math.min(5 * 60_000, RESTORE_COOLDOWN_MS * 2 ** failures);
+function noteProbeFailure(instanceName: string): void {
+  restoreFailures.set(instanceName, (restoreFailures.get(instanceName) ?? 0) + 1);
+  lastRestoreAt.set(instanceName, Date.now());
 }
 
 async function restoreSocket(
   instanceName: string,
 ): Promise<"open" | "qr" | "pending" | "skipped"> {
-  const now = Date.now();
-  const prev = lastRestoreAt.get(instanceName) ?? 0;
-  if (now - prev < restoreCooldownMs(instanceName)) return "skipped";
-  lastRestoreAt.set(instanceName, now);
+  const failures = restoreFailures.get(instanceName) ?? 0;
+  const elapsed = Date.now() - (lastRestoreAt.get(instanceName) ?? 0);
+  if (shouldSkipEvolutionProbe(failures, elapsed)) return "skipped";
+  lastRestoreAt.set(instanceName, Date.now());
   try {
-    const liveNow = evo.mapEvolutionState(await evo.connectionState(instanceName).catch(() => null));
-    if (!shouldOpenWhatsAppSocket(liveNow)) {
-      return liveNow === "connected" ? "open" : "pending";
-    }
-    await new Promise((r) => setTimeout(r, 4000));
-    const liveWait = evo.mapEvolutionState(await evo.connectionState(instanceName).catch(() => null));
-    if (!shouldOpenWhatsAppSocket(liveWait)) {
-      return liveWait === "connected" ? "open" : "pending";
-    }
-    const raw = await evo.connectInstance(instanceName);
-    const { qr } = evo.extractQr(raw);
-    const live = evo.mapEvolutionState(raw);
-    if (qr) return "qr";
-    if (live === "connected") return "open";
-    return "pending";
+    return await withEvolutionInstance(instanceName, async () => {
+      const liveNow = evo.mapEvolutionState(await evo.connectionState(instanceName).catch(() => null));
+      if (!shouldOpenWhatsAppSocket(liveNow)) {
+        return liveNow === "connected" ? "open" : "pending";
+      }
+      await evo.restartInstance(instanceName);
+      const live = evo.mapEvolutionState(await evo.connectionState(instanceName).catch(() => null));
+      if (live === "connected") return "open";
+      return "pending";
+    });
   } catch (e) {
-    restoreFailures.set(instanceName, (restoreFailures.get(instanceName) ?? 0) + 1);
     console.warn("[evolution keepalive] restoreSocket %s:", instanceName, e instanceof Error ? e.message : e);
     return "pending";
   }
@@ -86,6 +80,10 @@ async function keepOne(row: {
   status: "disconnected" | "connecting" | "connected";
 }): Promise<void> {
   const name = row.evolution_instance_name;
+  const failures = restoreFailures.get(name) ?? 0;
+  const elapsed = Date.now() - (lastRestoreAt.get(name) ?? 0);
+  if (shouldSkipEvolutionProbe(failures, elapsed)) return;
+
   let expectedUrl: string;
   try {
     expectedUrl = evolutionWebhookUrl();
@@ -100,6 +98,7 @@ async function keepOne(row: {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!/404|not found|does not exist/i.test(msg)) {
+      noteProbeFailure(name);
       console.warn("[evolution keepalive] connectionState %s:", name, msg);
       return;
     }
@@ -143,10 +142,10 @@ async function keepOne(row: {
         await persistEvolutionSocketState(row.barbershop_id, "connecting");
         return;
       }
-      restoreFailures.set(name, (restoreFailures.get(name) ?? 0) + 1);
+      noteProbeFailure(name);
       await repairWebhook(name, expectedUrl);
     } catch (e) {
-      restoreFailures.set(name, (restoreFailures.get(name) ?? 0) + 1);
+      noteProbeFailure(name);
       console.warn("[evolution keepalive] restore %s:", name, e instanceof Error ? e.message : e);
     }
   }
@@ -182,8 +181,16 @@ export function startEvolutionKeepalive(): void {
   if (process.env.AWS_LAMBDA_FUNCTION_NAME) return;
   if (!process.env.EVOLUTION_API_URL) return;
   console.log("[evolution keepalive] started (every %ss)", INTERVAL_MS / 1000);
-  void tick().catch((e) => console.warn("[evolution keepalive] tick:", e));
-  setInterval(() => {
-    void tick().catch((e) => console.warn("[evolution keepalive] tick:", e));
-  }, INTERVAL_MS);
+  let tickRunning = false;
+  const run = (): void => {
+    if (tickRunning) return;
+    tickRunning = true;
+    void tick()
+      .catch((e) => console.warn("[evolution keepalive] tick:", e))
+      .finally(() => {
+        tickRunning = false;
+      });
+  };
+  run();
+  setInterval(run, INTERVAL_MS);
 }

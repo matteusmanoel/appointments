@@ -2,17 +2,29 @@ import "../load-env.js";
 import { pool } from "../db.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 import { recordAgendaChange } from "../agenda/record-agenda-change.js";
-import { brPhoneMatchKeys, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
-import { buildReminder24h, buildReminder2hConfirmed, buildReminder2hPending } from "../outbound/templates.js";
+import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
+import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
+import { buildPlanPaymentMessage, resolveReminderSendBody } from "../outbound/templates.js";
 import {
-  runBirthdaySweepWithLock,
-  runDailyFollowUp30dSweepWithLock,
-  runDailyFollowUpNoAppointmentSweepWithLock,
-  runDailyOpeningSummarySweepWithLock,
-  runDailyPlanBillingSweepWithLock,
+  appendReminderTranscript,
+  loadReminderAppointment,
   runNoShowSweepWithLock,
-  runOverduePlanBillingReminderSweepWithLock,
 } from "../outbound/scheduled-messages.js";
+import {
+  DAILY_CAP_REACHED_MESSAGE,
+  DISPATCH_PRIORITY,
+  PLAN_BILLING_OVERDUE_DAYS,
+  REMINDER_2H_MIN_LEAD_MINUTES,
+  isRetiredAutomaticType,
+  planBillingNotVigenteReason,
+  reminderNotVigenteReason,
+  scheduledTypePurpose,
+} from "../outbound/dispatch-policy.js";
+import { checkDispatchGate, withDispatchLock } from "../outbound/dispatch-gate.js";
+import { loadPlanBillingCharge, runPlanBillingCycleSweepWithLock } from "../outbound/plan-billing.js";
+import { reactivationMessage } from "../outbound/reactivation.js";
+import { setPaymentPendingFlag } from "../ai/memory/client-memory.js";
+import { config } from "../config.js";
 
 const POLL_MS = 30_000;
 const MAX_ATTEMPTS = 5;
@@ -67,29 +79,42 @@ async function nextWindowStart(tz: string): Promise<Date> {
   return r.rows[0]?.run_after ?? new Date(Date.now() + 60 * 60 * 1000);
 }
 
-async function fetchNextJobs(): Promise<
-  { id: string; barbershop_id: string; type: string; to_phone: string; payload_json: unknown; attempts: number }[]
-> {
-  const r = await pool.query<{
-    id: string;
-    barbershop_id: string;
-    type: string;
-    to_phone: string;
-    payload_json: unknown;
-    attempts: number;
-  }>(
+type ScheduledJob = {
+  id: string;
+  barbershop_id: string;
+  type: string;
+  to_phone: string;
+  payload_json: unknown;
+  attempts: number;
+  dedupe_key: string | null;
+};
+
+async function fetchNextJobs(): Promise<ScheduledJob[]> {
+  const r = await pool.query<ScheduledJob>(
     `UPDATE public.scheduled_messages
      SET attempts = attempts + 1, updated_at = now()
      WHERE id IN (
        SELECT id FROM public.scheduled_messages
        WHERE status = 'queued' AND run_after <= now()
-       ORDER BY run_after ASC
+       ORDER BY CASE
+                  WHEN type IN ('reminder_24h', 'reminder_2h') THEN 0
+                  WHEN type = 'plan_billing'                   THEN 1
+                  WHEN type = 'reactivation'                   THEN 2
+                  WHEN type = 'manual'                         THEN 3
+                  WHEN type = 'campaign'                       THEN 4
+                  ELSE 5
+                END, run_after ASC
        LIMIT 5
        FOR UPDATE SKIP LOCKED
      )
-     RETURNING id, barbershop_id, type, to_phone, payload_json, attempts`
+     RETURNING id, barbershop_id, type, to_phone, payload_json, attempts, dedupe_key`
   );
-  return r.rows;
+  return [...r.rows].sort((a, b) => jobPriority(a.type) - jobPriority(b.type));
+}
+
+function jobPriority(type: string): number {
+  const purpose = scheduledTypePurpose(type);
+  return purpose ? DISPATCH_PRIORITY[purpose] : Number.MAX_SAFE_INTEGER;
 }
 
 async function markSent(id: string): Promise<void> {
@@ -121,11 +146,34 @@ async function markFailed(id: string, errorMessage: string, attempts: number): P
   }
 }
 
+/** Waiting for the dispatch spacing is not a failed attempt. */
+async function deferForSpacing(id: string, runAfter: Date): Promise<void> {
+  await pool.query(
+    `UPDATE public.scheduled_messages
+     SET status = 'queued', run_after = $1, attempts = GREATEST(attempts - 1, 0), updated_at = now()
+     WHERE id = $2`,
+    [runAfter, id]
+  );
+}
+
 async function postponeToWindow(id: string, runAfter: Date): Promise<void> {
   await pool.query(
     `UPDATE public.scheduled_messages SET status = 'queued', run_after = $1, last_error = NULL, updated_at = now() WHERE id = $2`,
     [runAfter, id]
   );
+}
+
+function isReminderType(type: string): boolean {
+  return type === "reminder_24h" || type === "reminder_2h";
+}
+
+/** Returns true if the appointment is at least `minMinutes` in the future (barbershop timezone). */
+async function hasMinLeadTime(date: string, time: string, tz: string, minMinutes: number): Promise<boolean> {
+  const r = await pool.query<{ ok: boolean }>(
+    `SELECT (($1::date + $2::time) AT TIME ZONE $3 - now()) >= ($4 || ' minutes')::interval AS ok`,
+    [date, time, tz, minMinutes],
+  );
+  return r.rows[0]?.ok ?? false;
 }
 
 async function isOptedOut(barbershopId: string, phone: string): Promise<boolean> {
@@ -140,14 +188,209 @@ async function isOptedOut(barbershopId: string, phone: string): Promise<boolean>
   return r.rows.length > 0;
 }
 
+function daysBetweenIso(fromIso: string, toIso: string): number {
+  const from = Date.UTC(+fromIso.slice(0, 4), +fromIso.slice(5, 7) - 1, +fromIso.slice(8, 10));
+  const to = Date.UTC(+toIso.slice(0, 4), +toIso.slice(5, 7) - 1, +toIso.slice(8, 10));
+  return Math.round((to - from) / 86_400_000);
+}
+
+/** Cobrança de plano: open month, same gate as reminders, text + PIX, no location pin. */
+async function processPlanBilling(job: {
+  id: string;
+  barbershopId: string;
+  to_phone: string;
+  payload: Record<string, unknown>;
+  tz: string;
+}): Promise<void> {
+  const { id, barbershopId, to_phone, payload, tz } = job;
+  const chargeId = typeof payload.charge_id === "string" ? payload.charge_id : null;
+  const charge = chargeId ? await loadPlanBillingCharge(barbershopId, chargeId) : null;
+  const notVigente = planBillingNotVigenteReason({ kind: payload.kind, charge });
+  if (notVigente || !charge) {
+    await markSkipped(id, notVigente ?? "Cobrança não existe mais");
+    return;
+  }
+
+  const shop = await pool.query<{ pix_key: string | null; name: string; address: string | null }>(
+    `SELECT pix_key, name, address FROM public.barbershops WHERE id = $1`,
+    [barbershopId],
+  );
+  const pixKey = shop.rows[0]?.pix_key?.trim() || null;
+  if (!pixKey) {
+    await markSkipped(id, "Chave PIX não configurada");
+    await recordOperationalActivity({
+      barbershopId,
+      type: "payment_failed",
+      clientName: charge.clientName,
+      clientPhone: to_phone,
+      summary: `Cobrança do plano ${charge.planName} não enviada — chave PIX não configurada`,
+      dedupeMinutes: 24 * 60,
+    });
+    return;
+  }
+
+  const gate = await checkDispatchGate(barbershopId, tz);
+  if (gate.kind === "wait") {
+    await deferForSpacing(id, gate.until);
+    return;
+  }
+  if (gate.kind === "cap_reached") {
+    await markSkipped(id, DAILY_CAP_REACHED_MESSAGE);
+    await recordOperationalActivity({
+      barbershopId,
+      type: "send_failure",
+      clientName: charge.clientName,
+      clientPhone: to_phone,
+      summary: `Cobrança do plano ${charge.planName} não enviada — ${DAILY_CAP_REACHED_MESSAGE}`,
+      dedupeMinutes: 24 * 60,
+    });
+    return;
+  }
+
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (!session) {
+    await markSkipped(id, "WhatsApp não conectado");
+    await recordOperationalActivity({
+      barbershopId,
+      type: "payment_failed",
+      clientName: charge.clientName,
+      clientPhone: to_phone,
+      summary: `Cobrança do plano ${charge.planName} não enviada — WhatsApp desconectado`,
+      dedupeMinutes: 24 * 60,
+    });
+    return;
+  }
+
+  const overdueDays =
+    payload.kind === "day10"
+      ? PLAN_BILLING_OVERDUE_DAYS
+      : Math.max(0, daysBetweenIso(charge.dueDate, todayIsoInTimezone(tz)));
+  const chargeBody = buildPlanPaymentMessage({
+    clientName: charge.clientName ?? undefined,
+    planName: charge.planName,
+    amount: charge.amount,
+    dueDate: charge.dueDate,
+    billingDay: charge.billingDay,
+    overdueDays: overdueDays > 0 ? overdueDays : undefined,
+  });
+  await session.sendText(to_phone, chargeBody);
+  await appendReminderTranscript({ barbershopId, phone: to_phone, body: chargeBody }).catch((err) => {
+    console.warn(
+      "[scheduled-messages-worker] plan charge transcript failed:",
+      err instanceof Error ? err.message : err,
+    );
+  });
+  const city = (shop.rows[0]?.address ?? "").split(",").pop()?.trim() || "Brasil";
+  try {
+    await session.sendPixRequest?.({
+      to: to_phone,
+      amount: charge.amount,
+      description: `Plano ${charge.planName} — NavalhIA`,
+      pixKey,
+      name: shop.rows[0]?.name ?? "Barbearia",
+      city,
+    });
+  } catch (e) {
+    console.warn("[scheduled-messages-worker] plan pix card failed id=%s: %s", id, e instanceof Error ? e.message : e);
+  }
+
+  await markSent(id);
+  await pool.query(
+    `UPDATE public.plan_pix_charges SET status = 'sent', sent_at = now()
+     WHERE id = $1 AND status IN ('pending', 'sent')`,
+    [charge.id],
+  );
+  void setPaymentPendingFlag(barbershopId, charge.clientPhone, charge.amount).catch(() => {});
+  await recordOperationalActivity({
+    barbershopId,
+    type: "payment_sent",
+    clientName: charge.clientName,
+    clientPhone: to_phone,
+    summary: `Cobrança do plano ${charge.planName} enviada (R$ ${charge.amount.toFixed(2).replace(".", ",")})`,
+    dedupeMinutes: 60,
+  });
+  console.info("[scheduled-messages-worker] sent id=%s barbershopId=%s type=plan_billing", id, barbershopId);
+}
+
+async function processReactivation(job: {
+  id: string;
+  barbershopId: string;
+  to_phone: string;
+  payload: Record<string, unknown>;
+  tz: string;
+}): Promise<void> {
+  const { id, barbershopId, to_phone, payload, tz } = job;
+  const clientId = typeof payload.client_id === "string" ? payload.client_id : null;
+  const reason = typeof payload.reason === "string" ? payload.reason : "";
+  const bodyOverride = typeof payload.body_override === "string" ? payload.body_override : null;
+  if (!clientId) {
+    await markSkipped(id, "Reativação sem cliente");
+    return;
+  }
+  const client = await pool.query<{ name: string | null; marketing_opt_out: boolean }>(
+    `SELECT name, marketing_opt_out FROM public.clients WHERE id = $1 AND barbershop_id = $2`,
+    [clientId, barbershopId],
+  );
+  const row = client.rows[0];
+  if (!row) {
+    await markSkipped(id, "Reativação sem cliente");
+    return;
+  }
+  if (row.marketing_opt_out) {
+    await markSkipped(id, "Cliente opt-out");
+    return;
+  }
+
+  const gate = await checkDispatchGate(barbershopId, tz);
+  if (gate.kind === "wait") {
+    await deferForSpacing(id, gate.until);
+    return;
+  }
+  if (gate.kind === "cap_reached") {
+    await markSkipped(id, DAILY_CAP_REACHED_MESSAGE);
+    await recordOperationalActivity({
+      barbershopId,
+      type: "send_failure",
+      clientName: row.name,
+      clientPhone: to_phone,
+      summary: `Reativação não enviada — ${DAILY_CAP_REACHED_MESSAGE}`,
+      dedupeMinutes: 24 * 60,
+    });
+    return;
+  }
+
+  const session = await getWhatsAppOrNull(barbershopId);
+  if (!session) {
+    await markSkipped(id, "WhatsApp não conectado");
+    return;
+  }
+
+  const shop = await pool.query<{ slug: string | null }>(
+    `SELECT slug FROM public.barbershops WHERE id = $1`,
+    [barbershopId],
+  );
+  const slug = shop.rows[0]?.slug?.trim();
+  const base = config.appUrl.replace(/\/$/, "");
+  const bookingLink = slug ? `${base}/b/${slug}` : base;
+  await session.sendText(to_phone, reactivationMessage({ reason, clientName: row.name, bookingLink, bodyOverride }));
+  await markSent(id);
+  console.info("[scheduled-messages-worker] sent id=%s barbershopId=%s type=reactivation", id, barbershopId);
+}
+
 async function processOne(): Promise<boolean> {
   const jobs = await fetchNextJobs();
   if (jobs.length === 0) return false;
 
   for (const row of jobs) {
-    const { id, barbershop_id: barbershopId, type, to_phone, payload_json, attempts } = row;
+    const { id, barbershop_id: barbershopId, type, to_phone, payload_json, attempts, dedupe_key } = row;
     const payload = (payload_json ?? {}) as Record<string, unknown>;
     const body = typeof payload.body === "string" ? payload.body : "";
+    let delivered = false;
+
+    if (isRetiredAutomaticType(type)) {
+      await markSkipped(id, "Disparo automático desativado — vira sugestão para o operador");
+      continue;
+    }
 
     try {
       const tzRows = await pool.query<{ timezone: string }>(
@@ -162,78 +405,75 @@ async function processOne(): Promise<boolean> {
         continue;
       }
 
-      const optedOut = await isOptedOut(barbershopId, to_phone);
-      if (optedOut) {
-        await markSkipped(id, "Cliente opt-out");
+      // plan_billing handles its own gate check (no marketing opt-out, PIX send path).
+      if (type === "plan_billing") {
+        await withDispatchLock(barbershopId, () =>
+          processPlanBilling({ id, barbershopId, to_phone, payload, tz }),
+        );
         continue;
       }
 
+      // reactivation handles its own opt-out check (marketing_opt_out) and gate check.
+      if (type === "reactivation") {
+        await withDispatchLock(barbershopId, () =>
+          processReactivation({ id, barbershopId, to_phone, payload, tz }),
+        );
+        continue;
+      }
+
+      // --- Reminders, manual messages, campaigns ---
       const appointmentId = typeof payload.appointment_id === "string" ? payload.appointment_id : null;
       let sendBody = body;
       let reminderClientName: string | null = null;
-      if (appointmentId) {
-        const appRow = await pool.query<{
-          status: string;
-          price: number | null;
-          client_name: string | null;
-          barber_name: string | null;
-          scheduled_date: string;
-          scheduled_time: string;
-          service_names: string | null;
-        }>(
-          `SELECT a.status,
-                  a.price::float8 AS price,
-                  a.scheduled_date::text AS scheduled_date,
-                  a.scheduled_time::text AS scheduled_time,
-                  c.name AS client_name,
-                  b.name AS barber_name,
-                  COALESCE(
-                    (
-                      SELECT string_agg(COALESCE(aps.service_name, s.name), ', ' ORDER BY aps.position)
-                      FROM public.appointment_services aps
-                      LEFT JOIN public.services s ON s.id = aps.service_id
-                      WHERE aps.appointment_id = a.id
-                    ),
-                    (SELECT name FROM public.services WHERE id = a.service_id)
-                  ) AS service_names
-           FROM public.appointments a
-           JOIN public.clients c ON c.id = a.client_id
-           JOIN public.barbers b ON b.id = a.barber_id
-           WHERE a.id = $1`,
-          [appointmentId],
-        );
-        if (appRow.rows[0]?.status === "cancelled") {
-          await markSkipped(id, "Agendamento cancelado");
+      const appt = appointmentId ? await loadReminderAppointment(appointmentId) : null;
+
+      if (isReminderType(type)) {
+        const notVigente = reminderNotVigenteReason({
+          type,
+          appointmentId,
+          dedupeKey: dedupe_key,
+          payload,
+          appointment: appt,
+        });
+        if (notVigente) {
+          await markSkipped(id, notVigente);
           continue;
-        }
-        if ((type === "reminder_24h" || type === "reminder_2h") && appRow.rows[0]) {
-          const appt = appRow.rows[0];
-          reminderClientName = appt.client_name;
-          const vars = {
-            clientName: appt.client_name ?? undefined,
-            date: String(appt.scheduled_date ?? payload.date ?? "").slice(0, 10),
-            time: String(appt.scheduled_time ?? payload.time ?? "").slice(0, 5),
-            serviceNames:
-              appt.service_names ??
-              (typeof payload.service_names === "string" ? payload.service_names : undefined),
-            barberName: appt.barber_name ?? undefined,
-            totalPrice: appt.price != null && Number.isFinite(Number(appt.price)) ? Number(appt.price) : undefined,
-            todayIso: todayIsoInTimezone(tz),
-            alreadyConfirmed: appt.status === "confirmed",
-          };
-          sendBody =
-            type === "reminder_24h"
-              ? buildReminder24h(vars)
-              : vars.alreadyConfirmed
-                ? buildReminder2hConfirmed(vars)
-                : buildReminder2hPending(vars);
         }
       }
 
-      const session = await getWhatsAppOrNull(barbershopId);
-      if (!session) {
-        await markSkipped(id, "WhatsApp não conectado");
-        continue;
+      if (appointmentId) {
+        if (appt?.status === "cancelled") {
+          await markSkipped(id, "Agendamento cancelado");
+          continue;
+        }
+        if (appt) reminderClientName = appt.clientName ?? null;
+        if (appt && (type === "reminder_24h" || type === "reminder_2h")) {
+          sendBody =
+            resolveReminderSendBody({
+              type,
+              storedBody: body,
+              todayIso: todayIsoInTimezone(tz),
+              appointment: {
+                ...appt,
+                serviceNames:
+                  appt.serviceNames ??
+                  (typeof payload.service_names === "string" ? payload.service_names : undefined),
+              },
+            }) ?? "";
+        }
+      }
+
+      // Lembrete 2h whose natural time fell before the send window is postponed to window open.
+      // At window open, only send if at least 20 minutes remain before the appointment.
+      if (type === "reminder_2h" && appt) {
+        const ok = await hasMinLeadTime(appt.date, appt.time, tz, REMINDER_2H_MIN_LEAD_MINUTES);
+        if (!ok) {
+          await markSkipped(
+            id,
+            `Lembrete 2h: menos de ${REMINDER_2H_MIN_LEAD_MINUTES} minutos para o horário, não enviado`,
+          );
+          continue;
+        }
       }
 
       if (!sendBody) {
@@ -241,55 +481,115 @@ async function processOne(): Promise<boolean> {
         continue;
       }
 
-      await session.sendText(to_phone, sendBody);
-      if (type === "reminder_24h" || type === "reminder_2h") {
-        const keys = brPhoneMatchKeys(canonicalizeBrPhoneDigits(to_phone) ?? to_phone.replace(/\D/g, ""));
-        await pool.query(
-          `INSERT INTO public.ai_messages (conversation_id, role, content)
-           SELECT c.id, 'assistant', $3
-           FROM public.ai_conversations c
-           WHERE c.barbershop_id = $1 AND c.channel = 'whatsapp'
-             AND regexp_replace(c.external_thread_id, '[^0-9]', '', 'g') = ANY($2::text[])
-           ORDER BY c.updated_at DESC
-           LIMIT 1`,
-          [barbershopId, keys, sendBody],
-        ).catch((err) => {
-          console.warn("[scheduled-messages-worker] reminder transcript failed:", err instanceof Error ? err.message : err);
-        });
-      }
+      // Gate check (cap + spacing) + send inside per-barbershop advisory lock.
+      // Only gated types reach here; unknown/future types fall through to ungated path.
+      if (scheduledTypePurpose(type)) {
+        const state = { sent: false };
+        await withDispatchLock(barbershopId, async () => {
+          const gate = await checkDispatchGate(barbershopId, tz);
+          if (gate.kind === "wait") {
+            await deferForSpacing(id, gate.until);
+            return;
+          }
+          if (gate.kind === "cap_reached") {
+            await markSkipped(id, DAILY_CAP_REACHED_MESSAGE);
+            await recordOperationalActivity({
+              barbershopId,
+              type: "send_failure",
+              appointmentId,
+              clientPhone: to_phone,
+              clientName: reminderClientName,
+              summary: `Disparo não enviado — ${DAILY_CAP_REACHED_MESSAGE}`,
+              dedupeMinutes: 24 * 60,
+            });
+            return;
+          }
 
-      const locRow = await pool.query<{
-        name: string;
-        address: string | null;
-        latitude: number | null;
-        longitude: number | null;
-      }>(
-        `SELECT name, address, latitude, longitude FROM public.barbershops WHERE id = $1`,
-        [barbershopId],
-      );
-      const lr = locRow.rows[0];
-      if (
-        lr &&
-        lr.latitude != null &&
-        lr.longitude != null &&
-        (lr.address?.trim() || lr.name)
-      ) {
-        try {
-          await session.sendLocation(to_phone, {
-            name: (lr.name ?? "Barbearia").trim() || "Barbearia",
-            address: (lr.address ?? lr.name ?? "").trim() || "Barbearia",
-            lat: lr.latitude,
-            lng: lr.longitude,
-          });
-        } catch (locErr) {
-          console.warn(
-            "[scheduled-messages-worker] sendLocation failed id=%s: %s",
-            id,
-            locErr instanceof Error ? locErr.message : String(locErr),
+          const session = await getWhatsAppOrNull(barbershopId);
+          if (!session) {
+            await markSkipped(id, "WhatsApp não conectado");
+            if (isReminderType(type)) {
+              await recordOperationalActivity({
+                barbershopId,
+                type: "send_failure",
+                appointmentId,
+                clientPhone: to_phone,
+                clientName: reminderClientName,
+                summary: "Lembrete não entregue — WhatsApp desconectado",
+                dedupeMinutes: 24 * 60,
+              });
+            }
+            return;
+          }
+
+          await session.sendText(to_phone, sendBody);
+          state.sent = true;
+
+          if (isReminderType(type)) {
+            await appendReminderTranscript({ barbershopId, phone: to_phone, body: sendBody }).catch((err) => {
+              console.warn("[scheduled-messages-worker] reminder transcript failed:", err instanceof Error ? err.message : err);
+            });
+          }
+
+          const locRow = await pool.query<{
+            name: string;
+            address: string | null;
+            latitude: number | null;
+            longitude: number | null;
+          }>(
+            `SELECT name, address, latitude, longitude FROM public.barbershops WHERE id = $1`,
+            [barbershopId],
           );
-        }
+          const lr = locRow.rows[0];
+          if (
+            isReminderType(type) &&
+            lr &&
+            lr.latitude != null &&
+            lr.longitude != null &&
+            (lr.address?.trim() || lr.name)
+          ) {
+            try {
+              await session.sendLocation(to_phone, {
+                name: (lr.name ?? "Barbearia").trim() || "Barbearia",
+                address: (lr.address ?? lr.name ?? "").trim() || "Barbearia",
+                lat: lr.latitude,
+                lng: lr.longitude,
+              });
+            } catch (locErr) {
+              console.warn(
+                "[scheduled-messages-worker] sendLocation failed id=%s: %s",
+                id,
+                locErr instanceof Error ? locErr.message : String(locErr),
+              );
+            }
+          }
+
+          await markSent(id);
+          if (isReminderType(type)) {
+            await recordAgendaChange({
+              barbershopId,
+              appointmentId,
+              type: "reminder_sent",
+              actor: "system",
+              clientPhone: to_phone,
+              clientName: reminderClientName,
+              summary: type,
+            }).catch(() => {});
+          }
+          console.info("[scheduled-messages-worker] sent id=%s barbershopId=%s type=%s", id, barbershopId, type);
+        });
+        delivered = state.sent;
+        continue;
       }
 
+      // Fallthrough for future ungated types.
+      const session = await getWhatsAppOrNull(barbershopId);
+      if (!session) {
+        await markSkipped(id, "WhatsApp não conectado");
+        continue;
+      }
+      await session.sendText(to_phone, sendBody);
+      delivered = true;
       await markSent(id);
       if (type === "reminder_24h" || type === "reminder_2h") {
         const appointmentId = typeof payload.appointment_id === "string" ? payload.appointment_id : null;
@@ -307,24 +607,52 @@ async function processOne(): Promise<boolean> {
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       console.error("[scheduled-messages-worker] error id=%s:", id, errMsg);
-      await markFailed(id, errMsg, attempts);
+      const retryable = classifySendError(errMsg) === "transient";
+      await markFailed(id, errMsg, retryable ? attempts : MAX_ATTEMPTS);
+      if (!delivered && isReminderType(type) && (!retryable || attempts >= MAX_ATTEMPTS)) {
+        await recordOperationalActivity({
+          barbershopId,
+          type: "send_failure",
+          appointmentId: typeof payload.appointment_id === "string" ? payload.appointment_id : null,
+          clientPhone: to_phone,
+          summary: "Lembrete não entregue — falha no envio pelo WhatsApp",
+          dedupeMinutes: 24 * 60,
+        });
+      }
+      if (type === "plan_billing" && (!retryable || attempts >= MAX_ATTEMPTS)) {
+        await recordOperationalActivity({
+          barbershopId,
+          type: "payment_failed",
+          clientPhone: to_phone,
+          summary: "Cobrança do plano não entregue — falha no envio pelo WhatsApp",
+          dedupeMinutes: 24 * 60,
+        });
+      }
     }
   }
   return true;
 }
 
+/**
+ * Only sweeps that do not message a client on their own (ADR 0003).
+ * Follow-up e aniversário viram sugestão; resumo de abertura e aviso de assinatura estão fora
+ * do produto por enquanto. O ciclo de cobrança só gera o mês e enfileira quem tem o automático.
+ */
+async function runDailySweeps(): Promise<void> {
+  await Promise.all([
+    // runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
+    // runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
+    // runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
+    // runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
+    runPlanBillingCycleSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] plan billing cycle sweep:", e)),
+    runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
+  ]);
+}
+
 /** Run one cycle: daily sweep once, then process batches up to maxBatches. Used by Lambda and by runLoop. */
 export async function runScheduledMessagesCycle(options?: { maxBatches?: number }): Promise<{ processed: number }> {
   const maxBatches = options?.maxBatches ?? 20;
-  await Promise.all([
-    runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
-    runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
-    runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
-    runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
-    runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
-    runOverduePlanBillingReminderSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] overdue plan billing sweep:", e)),
-    runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
-  ]);
+  await runDailySweeps();
   let processed = 0;
   while (processed < maxBatches) {
     try {
@@ -344,26 +672,10 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 async function runLoop(): Promise<void> {
   console.info("[scheduled-messages-worker] started");
   setTimeout(() => {
-    void Promise.all([
-      runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
-      runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
-      runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
-      runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
-      runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
-      runOverduePlanBillingReminderSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] overdue plan billing sweep:", e)),
-      runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
-    ]);
+    void runDailySweeps();
   }, 60_000);
   setInterval(() => {
-    void Promise.all([
-      runDailyFollowUp30dSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_30d sweep:", e)),
-      runDailyFollowUpNoAppointmentSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily followup_no_appointment sweep:", e)),
-      runBirthdaySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily birthday sweep:", e)),
-      runDailyOpeningSummarySweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily opening_summary sweep:", e)),
-      runDailyPlanBillingSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] daily plan billing sweep:", e)),
-      runOverduePlanBillingReminderSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] overdue plan billing sweep:", e)),
-      runNoShowSweepWithLock().catch((e) => console.error("[scheduled-messages-worker] no-show sweep:", e)),
-    ]);
+    void runDailySweeps();
   }, ONE_DAY_MS);
   while (true) {
     const { processed } = await runScheduledMessagesCycle({ maxBatches: 20 });

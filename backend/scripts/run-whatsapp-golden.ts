@@ -104,14 +104,40 @@ function tools(msgs: Msg[]): string[] {
   return [...new Set(msgs.map((m) => m.tool_name).filter((n): n is string => !!n))];
 }
 
+async function sendTurn(text: string): Promise<void> {
+  try {
+    await sendText(LAB_EVOLUTION_INSTANCE, SHOP_PHONE, text);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/não respondeu a tempo/i.test(msg)) throw e;
+    console.warn("evolution send timeout, retrying once");
+    await new Promise((r) => setTimeout(r, 3000));
+    await sendText(LAB_EVOLUTION_INSTANCE, SHOP_PHONE, text);
+  }
+}
+
 async function main(): Promise<void> {
   const shopId = await barbershopId();
   const outDir = path.resolve(process.cwd(), ".lab");
   mkdirSync(outDir, { recursive: true });
-  const outFile = path.join(outDir, "golden-whatsapp-report.json");
+  const fromId = process.env.GOLDEN_FROM?.trim();
+  const idsRaw = process.env.GOLDEN_IDS?.trim();
+  const outName = process.env.GOLDEN_OUT?.trim() || "golden-whatsapp-report.json";
+  let scenarios = goldenScenarios;
+  if (idsRaw) {
+    const wanted = idsRaw.split(",").map((id) => id.trim()).filter(Boolean);
+    const missing = wanted.filter((id) => !goldenScenarios.some((scenario) => scenario.id === id));
+    if (missing.length) throw new Error(`cenário não encontrado: ${missing.join(", ")}`);
+    scenarios = wanted.map((id) => goldenScenarios.find((scenario) => scenario.id === id)!);
+  } else if (fromId) {
+    const start = scenarios.findIndex((s) => s.id === fromId || s.id.startsWith(`${fromId}-`));
+    if (start < 0) throw new Error(`cenário não encontrado: ${fromId}`);
+    scenarios = scenarios.slice(start);
+  }
+  const outFile = path.join(outDir, outName);
   const report: unknown[] = [];
 
-  for (const scenario of goldenScenarios) {
+  for (const scenario of scenarios) {
     const started = new Date();
     console.log(`\n=== ${scenario.id} ===`);
     await wipeWhatsAppTestContext({ barbershopId: shopId, phone: CLIENT_PHONE });
@@ -123,7 +149,7 @@ async function main(): Promise<void> {
     for (const turn of scenario.turns) {
       const mark = new Date();
       console.log(">", turn.content);
-      await sendText(LAB_EVOLUTION_INSTANCE, SHOP_PHONE, turn.content);
+      await sendTurn(turn.content);
       const msgs = await waitReply(shopId, mark);
       const reply = replyText(msgs);
       console.log("<", reply.slice(0, 400).replace(/\n/g, " | ") || "(sem resposta)");

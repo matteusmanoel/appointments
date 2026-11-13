@@ -1,9 +1,26 @@
 import OpenAI from "openai";
 import { pool } from "../db.js";
 import * as aiTools from "./tools.js";
+import { understandTurn } from "./agent/understanding.js";
+import {
+  ASK_BOOKING_NAME,
+  ASK_CORTE_OR_COMBO,
+  ASK_HOUR,
+  ASK_SERVICE,
+  CLOCK_OUTSIDE_HOURS,
+  PLAN_CHARGE_ACK,
+  orchestrate,
+  validateToolCatalogArgs,
+} from "./agent/orchestrator.js";
+import { composePendingIntentOffer, loadPendingIntents, savePendingIntents } from "./agent/pending-intents.js";
+import type { IntentType } from "./agent/types.js";
+import type { ConversationState as CanonicalConversationState } from "./agent/types.js";
+import { buildAgentContext } from "./agent/context-builder.js";
+import type { AgentTurnTrace } from "./turn-trace.js";
 import { buildSystemPrompt, normalizeProfile } from "./prompt-builder.js";
 import { retrieveKnowledge, buildKnowledgeBlock } from "./rag.js";
 import { setConversationPaused } from "./runtime-pause.js";
+import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
 import {
   getClientMemory,
   buildClientMemoryPromptBlock,
@@ -16,7 +33,7 @@ import type { ClientMemoryRow } from "./memory/client-memory.js";
 import { sendBarbershopLocationToClient } from "../lib/send-barbershop-location.js";
 import { sendStickerToClient } from "../lib/send-sticker-to-client.js";
 import { isValidUuid } from "../lib/uuid.js";
-import { addDaysIso, alignSpokenHour, formatResumoWhen, formatTimePt, formatWeekCalendarForTools, parseClientTime, pickExecutedToolDate, pickExecutedToolTime, shopOpenStatusNow, shopWindowOnIso, weekdayShortPtFromIso } from "./date-calendar.js";
+import { addDaysIso, alignSpokenHour, describeShopOpenStatus, formatDateBr, formatResumoWhen, formatTimePt, formatWeekCalendarForTools, parseClientTime, pickExecutedToolDate, pickExecutedToolTime, shopOpenStatusNow, shopWindowOnIso, weekdayPtFromIso, weekdayShortPtFromIso } from "./date-calendar.js";
 import type { ClientDateSource } from "./date-calendar.js";
 import {
   acceptsAnyBarber,
@@ -24,6 +41,8 @@ import {
   assistantAskedBarberPreference,
   assistantAskedReminderRsvp,
   assistantOfferedNextOpenDay,
+  assistantOfferedFitSlot,
+  assistantOfferedSingleHour,
   assistantOfferedAltBarberSlot,
   bookingDateFromUserTurn,
   composeHumanConsult,
@@ -31,6 +50,7 @@ import {
   isClientConfirmation,
   isShopHoursQuestion,
   lastAssistantTurnText,
+  assistantMessageIsPlanCharge,
   lastUserTurnText,
   looksLikeAfterTimeIntent,
   looksLikeCancelIntent,
@@ -47,6 +67,7 @@ import {
   looksLikeZeroIntentUnknown,
   offeredAltBarberFromText,
   offeredFitClockIfAccepted,
+  clockForNamedBarber,
   prefersNamedBarberOverTime,
   clientPinnedBarberClockAndDay,
 } from "./conversation-intents.js";
@@ -59,7 +80,10 @@ import {
   emptyBookingDraft,
   inferServiceKeyword,
   loadBookingDraft,
+  concreteAlternativeToLock,
+  firstLockableSlot,
   lockOfferedSlot,
+  shouldComposeNamedBarberCard,
   mergeBookingDraft,
   offeredClockFromUnavailable,
   pickRequestedBarber,
@@ -67,6 +91,7 @@ import {
   resolveBarberFromText,
   resolveMultipleServicesFromText,
   resolveServiceFromText,
+  resolveCheckServiceIds,
   unknownNamedBarberFromText,
   saveBookingDraft,
   type BookingDraft,
@@ -76,6 +101,50 @@ import {
 import type { UnavailableReason } from "./slot-fit.js";
 
 type ClientFavoritesResult = Awaited<ReturnType<typeof aiTools.getClientFavoriteServices>>;
+
+const INTENT_LABEL_PT: Record<IntentType, string> = {
+  schedule: "o agendamento",
+  reschedule: "o reagendamento",
+  cancel: "o cancelamento",
+  presence: "a confirmação de presença",
+  waitlist: "a lista de espera",
+  payment: "o pagamento (PIX)",
+  plan: "os planos",
+  consult: "a consulta dos horários marcados",
+  location: "a localização",
+  hours: "o horário de funcionamento",
+  handoff: "falar com a equipe",
+  unknown: "o pedido",
+};
+
+function intentLabelsPt(intents: IntentType[]): string {
+  const labels = intents.map((i) => INTENT_LABEL_PT[i]);
+  if (labels.length <= 1) return labels[0] ?? "";
+  return `${labels.slice(0, -1).join(", ")} e ${labels[labels.length - 1]}`;
+}
+
+/** Turn outcomes that close the transactional intent — the moment to offer pending intents. */
+const TRANSACTION_CLOSED_STATES = new Set<string>([
+  "appointment_created",
+  "appointment_rescheduled",
+  "appointment_cancelled",
+  "appointment_confirmed",
+]);
+
+/**
+ * Maps legacy runAgent conversation state strings to the canonical ConversationState type.
+ * Legacy states predate the ADR-0002 architecture; V2 will persist canonical state directly.
+ */
+function mapLegacyConvState(legacy: string): CanonicalConversationState {
+  switch (legacy) {
+    case "offer_awaiting_confirm": return "slot_offered";
+    case "awaiting_name":          return "awaiting_name";
+    case "reminder_rsvp_pending":  return "reminder_24h_pending";
+    case "no_upcoming":            return "idle";
+    case "has_upcoming":           return "idle";
+    default:                       return "idle";
+  }
+}
 
 function buildOpeningMessage(barbershopName: string): string {
   const n = (barbershopName ?? "").trim() || "barbearia";
@@ -87,7 +156,7 @@ function buildOpeningMessage(barbershopName: string): string {
   return variants[Math.floor(Date.now() / 10000) % variants.length]!;
 }
 
-type UpcomingApptRow = {
+export type UpcomingApptRow = {
   id: string;
   date: string;
   time: string;
@@ -96,6 +165,7 @@ type UpcomingApptRow = {
   barber_id?: string;
   service_ids?: string[];
   status?: string;
+  price?: number;
 };
 
 function filterUpcomingFromNow(rows: UpcomingApptRow[], dateOnlyStr: string, currentTimeHHmm: string): UpcomingApptRow[] {
@@ -222,17 +292,11 @@ function buildOperationalContextBlock(params: {
     nowHHmm: params.dateTimeStr.slice(-5),
     businessHours: (params.businessHoursRaw ?? null) as Parameters<typeof shopOpenStatusNow>[0]["businessHours"],
   });
-  const statusLine = openStatus.open
-    ? `Status agora: ABERTO (fecha às ${openStatus.closesAt}).`
-    : `Status agora: FECHADO${openStatus.closedAt ? ` (encerrou às ${openStatus.closedAt})` : ""}${
-        openStatus.nextOpenWeekdayPt
-          ? `; abre de novo ${openStatus.nextOpenWeekdayPt}${openStatus.nextOpensAt ? ` às ${openStatus.nextOpensAt}` : ""}`
-          : ""
-      }.`;
+  const statusLine = describeShopOpenStatus(openStatus);
   const consumption = buildConsumptionSummaryLines(params.clientMemory, params.favorites);
   const nameLine = params.clientName.trim()
-    ? `Nome no cadastro: *${params.clientName.trim()}* (use o primeiro nome no tratamento).`
-    : `Nome no cadastro: ainda não informado — peça só quando for salvar o agendamento.`;
+    ? `Nome da pessoa: *${params.clientName.trim()}* (só este nome no tratamento).`
+    : `Nome da pessoa: ainda não dito por ela. Não use o nome do contato do WhatsApp.`;
   const addrLine =
     params.address != null && String(params.address).trim()
       ? `Endereço cadastrado: ${String(params.address).trim()}`
@@ -253,8 +317,8 @@ function buildOperationalContextBlock(params: {
     `Expediente de referência (configuração da unidade — feriados, folgas e exceções vêm das *tools*; não invente):\n` +
     `${hoursBlock}\n` +
     `${statusLine}\n` +
-    `Ao responder sobre horário de funcionamento, use SEMPRE essa linha "Status agora". Nunca recalcule se está aberto a partir da tabela. ` +
-    `Se estiver FECHADO, diga que já encerrou e quando reabre. Se a pessoa perguntou quais são os horários, inclua também a tabela de expediente da semana (o bloco acima). ` +
+    `Ao responder sobre horário de funcionamento, diga esse fato em frase humana. Nunca recalcule se está aberto a partir da tabela e nunca repita um rótulo interno. ` +
+    `Se a loja já encerrou, diga isso e quando reabre. Se a pessoa perguntou quais são os horários, inclua também a tabela de expediente da semana (o bloco acima). ` +
     `Em seguida pergunte qual serviço ela quer para adiantar o agendamento do próximo dia.\n\n` +
     `Histórico / preferências (pistas; se o cliente pedir outra coisa, siga o cliente):\n` +
     `${consumption}\n` +
@@ -332,6 +396,10 @@ const MAX_EMOJIS_FOR_VIOLATION = 4;
 const AI_EXPOSURE_PATTERNS = [
   /pelo que vi[,\s]/i,
   /não\s+consegui\s+(checar|verificar|encontrar|acessar|obter)/i,
+  /n[aã]o\s+consigo\s+(verificar|consultar|checar|colocar|acessar|processar)/i,
+  /estou\s+tendo\s+dificuldades/i,
+  /string\s+vazia/i,
+  /status\s+agora/i,
   /como\s+(ia|robô|bot|inteligência\s+artificial)\b/i,
   /\bmeu\s+sistema\b/i,
   /\bfui\s+programad[oa]\b/i,
@@ -420,8 +488,8 @@ export function composePresenceConfirmed(params: {
 }): string {
   const who = params.barberName ? ` com o ${params.barberName}` : "";
   return params.firstName
-    ? `Presença confirmada, ${params.firstName}! Te esperamos ${params.when}${who}.`
-    : `Presença confirmada! Te esperamos ${params.when}${who}.`;
+    ? `✅ Presença confirmada, ${params.firstName}! Te esperamos ${params.when}${who}.`
+    : `✅ Presença confirmada! Te esperamos ${params.when}${who}.`;
 }
 
 export function composeCancellationReply(params: {
@@ -431,29 +499,79 @@ export function composeCancellationReply(params: {
 }): string {
   const service = params.serviceName?.trim() || "Horário";
   const who = params.barberName ? ` com o ${params.barberName}` : "";
-  return `${service} de ${params.when}${who} cancelado. Quando quiser remarcar, é só chamar!`;
+  return `❌ ${service} de ${params.when}${who} cancelado. Quando quiser remarcar, é só chamar!`;
 }
 
 /**
  * Silence beats an error leak or a repeated bubble.
  * Deterministic slot/presence/cancel copy is passed with composed=true so it is not wiped for exposure.
  */
-export function guardClientReply(input: {
+export type ClientReplyGuardInput = {
   reply: string;
   previousAssistant: string;
   userText: string;
   opensAt: string | null;
   closesAt: string | null;
   composed: boolean;
-}): string {
-  let reply = (input.reply ?? "").trim();
-  if (!reply) return "";
-  if (!input.composed && containsAiExposure(reply)) return "";
+  /** Shop catalog names; a booking summary citing anything else is silenced. */
+  catalog?: { services: string[]; barbers: string[] };
+};
+
+export type ClientReplyGuardReason = "ai_exposure" | "unaligned_hour" | "repeated_reply" | "catalog_mismatch";
+
+export function guardClientReplyWithReason(input: ClientReplyGuardInput): {
+  reply: string;
+  silencedBy: ClientReplyGuardReason | null;
+} {
+  const reply = (input.reply ?? "").trim();
+  if (!reply) return { reply: "", silencedBy: null };
+  if (!input.composed && containsAiExposure(reply)) return { reply: "", silencedBy: "ai_exposure" };
   if (!input.composed && replyCitesUnalignedHour(input.userText, reply, input.opensAt, input.closesAt)) {
-    return "";
+    return { reply: "", silencedBy: "unaligned_hour" };
   }
-  if (replyRepeatsPrevious(reply, input.previousAssistant)) return "";
-  return reply;
+  if (
+    !input.composed &&
+    input.catalog &&
+    summaryCitesItemOutsideCatalog(reply, input.catalog.services, input.catalog.barbers)
+  ) {
+    return { reply: "", silencedBy: "catalog_mismatch" };
+  }
+  if (replyRepeatsPrevious(reply, input.previousAssistant)) return { reply: "", silencedBy: "repeated_reply" };
+  return { reply, silencedBy: null };
+}
+
+export function guardClientReply(input: ClientReplyGuardInput): string {
+  return guardClientReplyWithReason(input).reply;
+}
+
+const SUMMARY_NON_CATALOG_TOKEN_RE =
+  /\d|r\$|:\s*$|\b(hoje|amanh[aã]|depois de amanh[aã]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo|feira|manh[aã]|tarde|noite|confirmar|confirmado|total|valor|servi[cç]os?|barbeiro|profissional|data|hor[aá]rio|hora|dia|resumo|endere[cç]o|local)\b/i;
+
+/**
+ * A booking summary (price + "Posso confirmar?") lists service and barber in bold.
+ * Any bold item that is neither a catalog service nor a barber is an invented offer.
+ */
+export function summaryCitesItemOutsideCatalog(
+  reply: string,
+  serviceNames: string[],
+  barberNames: string[],
+): boolean {
+  const text = reply ?? "";
+  const looksLikeSummary = /posso\s+confirmar|r\$\s?\d/i.test(text);
+  if (!looksLikeSummary) return false;
+  const known = [...serviceNames, ...barberNames].map((n) => normalizeLoose(n)).filter(Boolean);
+  if (!known.length) return false;
+  const bold = [...text.matchAll(/\*([^*\n]{2,60})\*/g)].map((m) => (m[1] ?? "").trim());
+  for (const item of bold) {
+    if (SUMMARY_NON_CATALOG_TOKEN_RE.test(item)) continue;
+    const norm = normalizeLoose(item);
+    if (!norm) continue;
+    const parts = norm.split(/\s*(?:\+|,|\be\b|\bcom\b)\s*/).map((p) => p.trim()).filter((p) => p.length >= 3);
+    if (!parts.length) continue;
+    const allKnown = parts.every((p) => known.some((k) => k.includes(p) || p.includes(k)));
+    if (!allKnown) return true;
+  }
+  return false;
 }
 
 /** Text names a service first. If it doesn't, bind the habitual combo/service from memory. */
@@ -470,7 +588,10 @@ export function resolveServiceForTurn(
 }
 
 /** Returns list of violation codes for simulation/quality checks. */
-export function detectViolations(reply: string): string[] {
+export function detectViolations(
+  reply: string,
+  catalog?: { services: string[]; barbers: string[] },
+): string[] {
   const out: string[] = [];
   const t = (reply ?? "").trim();
   if (looksLikePhoneRequest(t)) out.push("phone_ask");
@@ -478,6 +599,9 @@ export function detectViolations(reply: string): string[] {
   const emojis = t.match(EMOJI_REGEX);
   if (emojis != null && emojis.length > MAX_EMOJIS_FOR_VIOLATION) out.push("excessive_emojis");
   if (containsAiExposure(t)) out.push("ai_exposure");
+  if (catalog && summaryCitesItemOutsideCatalog(t, catalog.services, catalog.barbers)) {
+    out.push("service_not_in_catalog");
+  }
   return out;
 }
 
@@ -542,6 +666,11 @@ export function composeAvailableSlotConfirm(slot: AvailableSlotSummary): string 
   );
 }
 
+/** Card of the slot a failed create or reschedule just tried to write. The draft stays open. */
+export function composeUnwrittenSlotCard(slot: AvailableSlotSummary): string {
+  return composeAvailableSlotConfirm(slot);
+}
+
 /**
  * composeAvailableSlotConfirm() above is a deterministic template (never LLM-authored),
  * so a prompt-only instruction can't make it disclose a barber substitution. When the
@@ -555,8 +684,15 @@ export function withBarberSubstitutionDisclosure(
   rawUserText: string,
   barbers: CatalogBarber[],
   offeredBarberName: string,
+  /** Recent user messages (excluding current) to check when current turn omits barber name. */
+  recentUserTurns?: string[],
 ): string {
-  const unknownRequested = unknownNamedBarberFromText(rawUserText, barbers);
+  // Check current turn first; fall back to the most recent user turn that named an unknown barber.
+  // This catches the pattern: turn 1 "com Gabriel" → turn 2 "corte e barba" (no name repeated).
+  const unknownRequested =
+    unknownNamedBarberFromText(rawUserText, barbers) ??
+    recentUserTurns?.map((t) => unknownNamedBarberFromText(t, barbers)).find(Boolean) ??
+    null;
   if (!unknownRequested) return reply;
   if (normalizeLoose(offeredBarberName).includes(normalizeLoose(unknownRequested))) return reply;
   return `Não temos o ${unknownRequested} na equipe, mas o ${offeredBarberName} tem esse horário livre[[MSG]]${reply}`;
@@ -714,6 +850,32 @@ function idKnownToCatalog(id: unknown, catalog: Array<{ id: string }>): string |
   return catalog.some((item) => item.id === value) ? value : undefined;
 }
 
+/**
+ * Barber for a slot check. A name said this turn wins. Otherwise a move of the
+ * single upcoming appointment keeps that professional — a tool id must not
+ * swap them for whoever is listed first.
+ */
+export function barberIdForAvailability(params: {
+  namedBarberId?: string | null;
+  anyBarber: boolean;
+  draftBarberId?: string | null;
+  upcomingBarberId?: string | null;
+  toolBarberId?: string | null;
+  catalogIds: readonly string[];
+}): string | undefined {
+  const known = new Set(params.catalogIds);
+  const trusted = (id?: string | null) => (id && isValidUuid(id) ? id : undefined);
+  const inCatalog = (id?: string | null) => {
+    const value = trusted(id);
+    if (!value) return undefined;
+    return known.size === 0 || known.has(value) ? value : undefined;
+  };
+  const named = inCatalog(params.namedBarberId);
+  if (named) return named;
+  if (params.anyBarber) return inCatalog(params.toolBarberId);
+  return trusted(params.upcomingBarberId) ?? trusted(params.draftBarberId) ?? inCatalog(params.toolBarberId);
+}
+
 function draftPatchFromSnap(snap: CheckAvailabilitySnapshot): Partial<BookingDraft> {
   const overflowFit =
     (snap.unavailableReason === "hours_overflow" || snap.unavailableReason === "past") && snap.lastFit
@@ -749,7 +911,7 @@ function occupiedCopyFromSnap(
     reason: snap.unavailableReason,
     barberName,
     timeHHmm: snap.time,
-    alternatives: alts,
+    alternatives: holdRequestedBarber ? sameBarber.slice(0, 2) : alts,
     sameTimeOthers: snap.sameTimeOthers,
     weekdayPt: snap.weekdayPt ?? undefined,
     nextOpenWeekdayPt: snap.nextOpenWeekdayPt,
@@ -761,6 +923,37 @@ function occupiedCopyFromSnap(
   });
 }
 
+function draftKeptAfterCancel(
+  prev: BookingDraft,
+  target?: {
+    id?: string;
+    date?: string;
+    time?: string;
+    price?: number;
+    service_names?: string;
+    service_ids?: string[];
+    barber_name?: string;
+    barber_id?: string;
+  } | null,
+  knownName?: boolean,
+): BookingDraft {
+  const date = target?.date ? String(target.date).slice(0, 10) : "";
+  const time = target?.time ? String(target.time).slice(0, 5) : "";
+  const hasSlot = /^\d{4}-\d{2}-\d{2}$/.test(date) && /^\d{2}:\d{2}$/.test(time);
+  return {
+    ...emptyBookingDraft(),
+    ...(prev.service_ids?.length ? { service_ids: prev.service_ids } : target?.service_ids?.length ? { service_ids: target.service_ids } : {}),
+    service_name: prev.service_name || target?.service_names || undefined,
+    barber_id: prev.barber_id || target?.barber_id,
+    barber_name: prev.barber_name || target?.barber_name,
+    ...(hasSlot ? { date, time } : {}),
+    ...(target?.id ? { appointment_id: target.id } : {}),
+    ...(typeof target?.price === "number" && Number.isFinite(target.price) ? { total_price: target.price } : {}),
+    phase: "rebook_eligible",
+    status: hasSlot ? (knownName ? "offered" : "awaiting_name") : "collecting",
+  };
+}
+
 export function isUsableClientName(name: string | undefined): boolean {
   const t = (name ?? "").trim();
   if (t.length < 2) return false;
@@ -768,6 +961,7 @@ export function isUsableClientName(name: string | undefined): boolean {
   if (folded === "cliente") return false;
   if (/^(undefined|null|nan|none|desconhecido)$/.test(folded)) return false;
   if (/^(por gentileza|gentileza|por favor|obrigado|obrigada|sim|ok|pode)$/.test(folded)) return false;
+  if (looksLikeCancelIntent(t) || looksLikeRescheduleIntent(t)) return false;
   // Reject barber-preference phrases that were mistakenly captured/stored as a
   // client name (e.g. a stale "Com Qualquer Barbeiro" row) — these are never
   // real names, whether they come from the current message or from the DB.
@@ -815,7 +1009,11 @@ export function confirmedPersonName(params: {
   if (!params.nameConfirmed) return "";
   const stored = (params.storedName ?? "").trim();
   if (!isUsableClientName(stored)) return "";
-  if (matchesUnconfirmedPush(stored, params.pushName)) return "";
+  // When nameConfirmed is true the client explicitly stated their name during the
+  // booking flow — trust it even when it coincides with the WhatsApp push name.
+  // Push names can be real personal names; blocking them here causes spurious
+  // re-asks ("Me diz seu nome para salvar" on a confirmed client).
+  // The matchesUnconfirmedPush guard applies only to the unconfirmed path above.
   return stored;
 }
 
@@ -838,25 +1036,197 @@ export function replyAsksForService(reply: string): boolean {
   return /qual servi[cç]o|que servi[cç]o|qual horario|em que dia/.test(t);
 }
 
-/** Native or text PIX already left the chat. The assistant bubble must not repeat the key. */
+/** Native or text PIX already left the chat. Drop only the key echo and keep the rest of the answer. */
 export function replyWithoutPixEcho(reply: string, pixKey: string): string {
   const key = (pixKey ?? "").trim();
-  if (!key) return reply;
   const digits = key.replace(/\D/g, "");
-  const hasKey = reply.includes(key) || (digits.length >= 8 && reply.includes(digits));
-  if (!hasKey && !/chave pix/i.test(reply)) return reply;
-  return "Te mandei a chave PIX aqui.";
+  const kept = reply
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      if (key && line.includes(key)) return false;
+      if (digits.length >= 8 && line.includes(digits)) return false;
+      if (/chave\s+pix|te mandei a chave|pix da\b/i.test(line) && !/\b(valor|pre[cç]o|r\$)\b/i.test(line)) return false;
+      return true;
+    });
+  const rest = kept.join("\n").trim();
+  return rest || "Te mandei a chave PIX aqui.";
 }
+
+/** PIX card already went out. Keep the price when the client asked for it. */
+export function replyAfterPixCard(params: {
+  reply: string;
+  pixKey: string;
+  userText: string;
+  price?: number;
+}): string {
+  let out = replyWithoutPixEcho(params.reply, params.pixKey);
+  const askedPrice = /\b(valor|pre[cç]o|quanto)\b/i.test(params.userText);
+  if (askedPrice && params.price != null && Number.isFinite(params.price) && !/r\$\s*\d/i.test(out)) {
+    out = `O valor é R$ ${params.price.toFixed(2).replace(".", ",")}. ${out}`.trim();
+  }
+  return out;
+}
+
+const PIX_TYPE_LABEL: Record<string, string> = {
+  cpf: "CPF",
+  cnpj: "CNPJ",
+  telefone: "Celular",
+  email: "E-mail",
+  aleatoria: "Chave aleatória",
+};
+
+export function formatBrl(price: number): string {
+  return `R$ ${price.toFixed(2).replace(".", ",")}`;
+}
+
+const PIX_RECEIPT_BUBBLE =
+  "Assim que realizar o pagamento, se puder nos enviar o comprovante, eu agradeço! Se tiver qualquer outra dúvida, estou à disposição. 👍";
+
+/** Copy-chip: word joiner + narrow no-break space so WhatsApp keeps the key as one token. */
+function pixKeyChip(key: string): string {
+  return `\`${"\u2060\u202F"}${key}${"\u202F\u2060"}\``;
+}
+
+/** First bubble is the key. The receipt ask is a second bubble. */
+export function composeShopPixReply(params: {
+  pixKey: string;
+  keyType?: string | null;
+  holderName?: string | null;
+  shopName?: string | null;
+  serviceName?: string | null;
+  price?: number | null;
+}): string {
+  const key = params.pixKey.trim();
+  const typeLabel = params.keyType ? (PIX_TYPE_LABEL[params.keyType] ?? params.keyType) : null;
+  const who = [params.holderName?.trim(), params.shopName?.trim()].filter(Boolean).join(" / ");
+  const meta = [typeLabel ? `Chave tipo ${typeLabel}` : null, who ? `Nome: ${who}` : null].filter(Boolean).join(" • ");
+  const price =
+    params.price != null && Number.isFinite(params.price) ? formatBrl(params.price) : null;
+  const service = params.serviceName?.trim();
+  const lead =
+    price && service
+      ? `Fica em ${price} o ${service}. Segue a nossa chave PIX:`
+      : price
+        ? `Fica em ${price}. Segue a nossa chave PIX:`
+        : "Segue a nossa chave PIX:";
+  const card = [lead, pixKeyChip(key)];
+  if (meta) card.push(`_ (${meta})_`);
+  return `${card.join("\n\n")}[[MSG]]${PIX_RECEIPT_BUBBLE}`;
+}
+
+/** The pin already went out; the text only acknowledges it. */
+export function composeLocationSent(): string {
+  return "Enviei nossa localização.[[MSG]]Se precisar de mais alguma coisa, é só avisar!";
+}
+
+/** Model wrote an RSVP success line. Valid only after confirm_appointment sets appointment_confirmed. */
+export function replyClaimsPresenceConfirmed(reply: string): boolean {
+  return /presen[cç]a\s+confirmada/i.test(reply);
+}
+
+/** A reply that claims this turn created or confirmed a booking, not a recap of one that already exists. */
+export function looksLikeHallucinatedBookingClaim(reply: string): boolean {
+  return /agendamento\s+(foi\s+)?confirmado|aguardamos\s+você\b|\bconfirmei\s+(o|seu|a\s+sua?)\s+(agendamento|remarca[cç][aã]o|horário)\b|n[aã]o\s+consegui\s+validar|atendente\s+confere/i.test(
+    reply,
+  );
+}
+
+export function composeUpcomingRecap(params: {
+  firstName?: string;
+  serviceName: string;
+  when: string;
+  barberName?: string;
+  price?: number;
+}): string {
+  const who = params.firstName
+    ? `${params.firstName}, seu horário está agendado para `
+    : "Seu horário está agendado para ";
+  const when = params.when ? params.when.charAt(0).toLowerCase() + params.when.slice(1) : params.when;
+  const service = params.serviceName.trim() || "o serviço combinado";
+  const barber = params.barberName?.trim().split(/\s+/)[0];
+  const withBarber = barber ? ` com o ${barber}` : "";
+  const price =
+    params.price != null && Number.isFinite(params.price) ? ` O valor é ${formatBrl(params.price)}.` : "";
+  const body = `${who}${when}: ${service}${withBarber}.${price}`
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/[^\S\n]{2,}/g, " ")
+    .trim();
+  return `${body}[[MSG]]Se precisar cancelar ou reagendar é só dizer o novo dia e horário que eu ajusto pra você.`;
+}
+
+/** Mid-sentence when: "amanhã, segunda-feira (28/09) às 15h". */
+export function formatMarkedWhen(dateIso: string, timeHHmm: string, todayIso: string): string {
+  const weekday = weekdayPtFromIso(dateIso);
+  const ddmm = formatDateBr(dateIso).slice(0, 5);
+  const body = `${weekday} (${ddmm}) às ${formatTimePt(timeHHmm)}`;
+  if (dateIso === todayIso) return `hoje, ${body}`;
+  if (dateIso === addDaysIso(todayIso, 1)) return `amanhã, ${body}`;
+  return body;
+}
+
+/** Minutes from the shop's local clock until the appointment starts. */
+export function minutesUntilAppointment(params: {
+  dateIso: string;
+  timeHHmm: string;
+  todayIso: string;
+  nowHHmm: string;
+}): number | null {
+  const time = params.timeHHmm.slice(0, 5);
+  const now = params.nowHHmm.slice(0, 5);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(params.dateIso) || !/^\d{4}-\d{2}-\d{2}$/.test(params.todayIso)) return null;
+  if (!/^\d{2}:\d{2}$/.test(time) || !/^\d{2}:\d{2}$/.test(now)) return null;
+  const [y, m, d] = params.dateIso.split("-").map(Number);
+  const [ty, tm, td] = params.todayIso.split("-").map(Number);
+  const [hh, mm] = time.split(":").map(Number);
+  const [nh, nm] = now.split(":").map(Number);
+  const start = Date.UTC(y!, (m ?? 1) - 1, d, hh, mm);
+  const current = Date.UTC(ty!, (tm ?? 1) - 1, td, nh, nm);
+  return Math.round((start - current) / 60000);
+}
+
+/** Second bubble only when the 2h reminder can still be sent. */
+export const REMINDER_BUBBLE_LEAD_MINUTES = 180;
 
 export function composeBookingCreated(params: {
   firstName: string;
   serviceName: string;
   when: string;
   barberName?: string;
+  remindBefore?: boolean;
 }): string {
-  const barber = params.barberName?.trim();
-  const waiting = barber ? ` ${barber.split(/\s+/)[0]} estará esperando você.` : "";
-  return `Agendado, ${params.firstName}. ${params.serviceName}, ${params.when}.${waiting} Confirme quando receber o lembrete.`;
+  const barber = params.barberName?.trim().split(/\s+/)[0];
+  const withPro = barber ? `, com o profissional ${barber}` : "";
+  const booked = `✅ Agendado, ${params.firstName}! Seu horário de ${params.serviceName} está marcado para ${params.when}${withPro}.`;
+  if (!params.remindBefore) return booked;
+  return `${booked}[[MSG]]Enviaremos um lembrete 2h antes e pedimos que confirme para garantir o seu horário. Até lá!`;
+}
+
+export function composeRescheduleDone(params: {
+  firstName: string;
+  serviceName: string;
+  when: string;
+  barberName?: string;
+}): string {
+  const barber = params.barberName?.trim().split(/\s+/)[0];
+  const withPro = barber ? `, com o profissional ${barber}` : "";
+  return `✅ Pronto, ${params.firstName}! Seu horário de ${params.serviceName} ficou para ${params.when}${withPro}.`;
+}
+
+/** The offered card names a different clock than the draft. Affirmation must not write the stale draft. */
+export function rescheduleDraftMatchesOffer(draftTime: string | undefined, assistantText: string): boolean {
+  const offered = parseClientTime(assistantText);
+  const draft = (draftTime ?? "").slice(0, 5);
+  if (!offered || !/^\d{2}:\d{2}$/.test(draft)) return true;
+  return offered.slice(0, 5) === draft;
+}
+
+/** Model invented a booking failure. A real unavailable check is composed elsewhere. */
+export function replyNarratesBookingFailure(reply: string): boolean {
+  return /j[aá] est[aá] ocupad|tamb[eé]m est[aá] ocupad|n[aã]o estou conseguindo|n[aã]o consegui reagendar|mais um momento para resolver/i.test(
+    reply,
+  );
 }
 
 export function composeRescheduleAsk(params: {
@@ -901,6 +1271,92 @@ function askClientNameReply(): string {
   return "Para confirmar, qual seu nome?";
 }
 
+/**
+ * The model is negotiating a slot (busy, or a menu of times) without a
+ * check_availability result from this turn. That reply must not reach the client.
+ */
+/** The reply asserts a clock is free. A failed check must not become this claim. */
+export function replyClaimsSlotIsFree(reply: string): boolean {
+  const t = (reply ?? "").toLowerCase();
+  return /\b(livres?|dispon[ií]vel|tenho\s+[aà]s|pode ser [aà]s)\b/.test(t);
+}
+
+export function replyNegotiatesUnverifiedSlots(reply: string): boolean {
+  const text = reply.toLowerCase();
+  if (/n[aã]o est[aá] dispon[ií]vel|indispon[ií]vel|op[cç][oõ]es dispon/.test(text)) return true;
+  const clocks = text.match(/\b\d{1,2}\s*h\d{0,2}\b/g) ?? [];
+  return clocks.length >= 2;
+}
+
+/**
+ * This turn names a clock that is not the sole upcoming appointment.
+ * The date stays on that row unless the turn named another day.
+ */
+export function pendingMoveSlot(params: {
+  userText: string;
+  upcomingDate: string;
+  upcomingTime: string;
+  date: string;
+  opensAt: string | null;
+  closesAt: string | null;
+}): { date: string; time: string } | null {
+  const raw = parseClientTime(params.userText);
+  if (!raw) return null;
+  const time = alignSpokenHour(params.userText, raw, params.opensAt, params.closesAt).slice(0, 5);
+  const date = params.date.slice(0, 10);
+  const same =
+    date === params.upcomingDate.slice(0, 10) && time === params.upcomingTime.slice(0, 5);
+  if (same || !/^\d{2}:\d{2}$/.test(time) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return { date, time };
+}
+
+/**
+ * Bare yes to a card that asked "Posso confirmar?" and named a clock.
+ * A new clock in the user text is a move, not this acceptance.
+ */
+export function affirmedUnverifiedClock(params: {
+  userText: string;
+  previousAssistant: string;
+  affirmative: boolean;
+  askedConfirmation: boolean;
+  opensAt: string | null;
+  closesAt: string | null;
+}): string | null {
+  if (!params.affirmative || !params.askedConfirmation) return null;
+  if (parseClientTime(params.userText)) return null;
+  const raw = parseClientTime(params.previousAssistant);
+  if (!raw) return null;
+  const time = alignSpokenHour(params.previousAssistant, raw, params.opensAt, params.closesAt).slice(0, 5);
+  return /^\d{2}:\d{2}$/.test(time) ? time : null;
+}
+
+/** Says the appointment is already at a clock that is not the row on file. */
+export function replyClaimsOtherClock(reply: string, bookedTimeHHmm: string): boolean {
+  if (!/est[aá] agendado|est[aá] marcado|posso confirmar/i.test(reply)) return false;
+  const cited = parseClientTime(reply);
+  if (!cited) return false;
+  return cited.slice(0, 5) !== bookedTimeHHmm.slice(0, 5);
+}
+
+/** Service, barber, date and time the client named in this turn. History does not count. */
+export function understoodBookableSlot(intent: {
+  primary: string;
+  intents: string[];
+  service: { ids?: string[] } | "ambiguous" | null;
+  barber: { kind: string; id?: string } | null;
+  dateTime: { date?: string; time?: string } | null;
+}): { date: string; time: string; barberId: string; serviceIds: string[] } | null {
+  if (intent.primary !== "schedule" && !intent.intents.includes("schedule")) return null;
+  const service = intent.service;
+  const barber = intent.barber;
+  const date = intent.dateTime?.date;
+  const time = intent.dateTime?.time;
+  if (!service || service === "ambiguous" || !service.ids?.length) return null;
+  if (!barber || barber.kind !== "named" || !barber.id) return null;
+  if (!date || !time) return null;
+  return { date, time, barberId: barber.id, serviceIds: service.ids };
+}
+
 function extractNameFromText(text: string): string | null {
   const raw = (text ?? "").replace(/\p{Extended_Pictographic}/gu, " ").replace(/\s+/g, " ").trim();
   if (!raw) return null;
@@ -914,6 +1370,58 @@ function extractNameFromText(text: string): string | null {
   if (!/^[A-Za-zÀ-ÖØ-öø-ÿ' ]+$/.test(cleaned)) return null;
   if (cleaned.split(" ").filter(Boolean).length > 4) return null;
   return cleaned;
+}
+
+/** Words that open a message but are never the client's own name (greetings, vocatives, fillers). */
+const LEADING_NON_NAME_WORDS = new Set([
+  "oi", "oie", "oii", "ola", "opa", "salve", "eai", "iae", "fala", "hey", "hello", "bom", "boa", "dia", "tarde",
+  "noite", "tudo", "td", "beleza", "blz", "show", "top", "joia", "ok", "okay", "sim", "nao", "claro", "certo",
+  "entao", "bem", "olha", "veja", "tipo", "cara", "mano", "brother", "bro", "parceiro", "amigo", "amiga",
+  "chefe", "mestre", "irmao", "moco", "moca", "senhor", "senhora", "pessoal", "galera", "gente", "obrigado",
+  "obrigada", "valeu", "vlw", "por", "favor", "gostaria", "quero", "queria", "preciso", "pode", "poderia",
+  "consegue", "tem", "teria", "hoje", "amanha", "depois", "agora", "sera", "sabe", "desculpa", "perdao",
+  "barbearia", "barbeiro", "atendente", "corte", "barba", "cabelo", "horario", "agenda", "agendamento",
+  "segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo", "manha", "que", "qual", "quando",
+  "como", "onde", "voce", "voces", "vc", "vcs", "eu", "me", "meu", "minha", "aqui", "la", "ai", "isso", "esse",
+  "essa", "este", "esta", "ja", "so", "tambem", "e", "o", "a", "os", "as", "um", "uma", "de", "do", "da",
+]);
+
+/**
+ * A booking message that opens with the client's own name: "Mateus, corte amanhã às 15h".
+ * Only a comma/period/colon-separated opener counts, and only when the rest of the
+ * message carries a booking signal (verb, date, clock or catalog service). Greetings,
+ * vocatives, barber names and the shop name are never taken as the client's name.
+ */
+export function extractLeadingAddressedName(
+  text: string,
+  ctx: { todayIso: string; serviceNames: string[]; barberNames: string[]; shopName?: string },
+): string | null {
+  const raw = (text ?? "").replace(/\p{Extended_Pictographic}/gu, " ").replace(/\s+/g, " ").trim();
+  const m = raw.match(/^([A-Za-zÀ-ÖØ-öø-ÿ']{2,20}(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ']{2,20})?)\s*[,.:;–—-]\s*(.{4,})$/);
+  if (!m) return null;
+  const candidate = (m[1] ?? "").trim();
+  const rest = (m[2] ?? "").trim();
+  const words = candidate.split(" ").map((w) => foldName(w));
+  if (words.some((w) => LEADING_NON_NAME_WORDS.has(w))) return null;
+  const folded = foldName(candidate);
+  const collides = [...ctx.serviceNames, ...ctx.barberNames, ctx.shopName ?? ""]
+    .map((n) => foldName(n))
+    .filter((n) => n.length >= 2)
+    .some((n) => n === folded || n.split(/\s+/).includes(words[0] ?? ""));
+  if (collides) return null;
+  if (!isUsableClientName(candidate)) return null;
+  const restFolded = foldName(rest);
+  const mentionsService = ctx.serviceNames.some((s) => {
+    const first = foldName(s).split(/\s+/)[0] ?? "";
+    return first.length >= 4 && restFolded.includes(first);
+  });
+  const hasBookingSignal =
+    looksLikeNewBookingIntent(rest) ||
+    looksLikeRescheduleIntent(rest) ||
+    Boolean(parseClientTime(rest)) ||
+    Boolean(bookingDateFromUserTurn(rest, ctx.todayIso)) ||
+    mentionsService;
+  return hasBookingSignal ? candidate : null;
 }
 
 function formatTopServicesForWhatsapp(
@@ -956,7 +1464,7 @@ Leia o último turno do cliente junto com o estado da conversa. Não invente int
 · Consultar / meu horário → use o bloco de próximos agendamentos; se vazio (no_upcoming), diga que não há horário.
 · Cancelar → list_client_upcoming_appointments se precisar do id → cancel_appointment. Sem horário ativo: informe isso; não chame cancel de novo.
 · Reagendar → list_client_upcoming_appointments → check_availability do novo slot → resumo → após sim, reschedule_appointment (não troca serviço).
-· PIX / pagar / débito / acerto → send_shop_pix. Cobrança mensal de plano → send_pix_plan_charge.
+· PIX / pagar / débito / acerto → send_shop_pix. O sistema manda valor e chave numa mensagem só. Não repita a chave nem monte cartão. Cobrança mensal de plano → send_pix_plan_charge.
 · Planos / assinatura / mensalidade → list_plans antes de responder; "quero pagar/assinar" também send_shop_pix, sem abrir corte.
 · Fila / me avise se liberar → add_to_waitlist. Localização → send_barbershop_location (máx. 1). Expediente → contexto operacional, sem recalcular. Humano → string vazia (handoff).
 · Serviço + data/hora → check_availability. Sem hora → get_next_slots. service_ids: UUID do combo se existir; senão combine UUIDs. Não invente UUID.
@@ -964,11 +1472,11 @@ Leia o último turno do cliente junto com o estado da conversa. Não invente int
 
 --- FLUXOS CANÔNICOS ---
 AGENDAR: check_availability ou get_next_slots → resumo *Serviço* | *Barbeiro* | Dia dd/MM às HHh | R$ X,XX + "Posso confirmar?" → sem nome, peça o nome → create_appointment.
-Após create_appointment com sucesso: "[Nome]! [Serviço] com o [Barbeiro] em [dia dd/MM às HHh]. Aguardamos você!"
-RSVP sucesso: "Presença confirmada, [Nome]! Te esperamos [dia dd/MM às HHh] com o [Barbeiro]."
+Após create_appointment ou reschedule_appointment com sucesso: não escreva a confirmação — o sistema envia.
+RSVP sucesso: "Presença confirmada, [Nome]! Te esperamos [dia dd/MM às HHh] com o [Barbeiro]." Só depois que confirm_appointment retornar ok neste turno. Afirmação sem lembrete pendente não confirma presença.
 CANCELAR: "[Serviço] de [dia/hora] com o [Barbeiro] cancelado. Quando quiser remarcar, é só chamar!"
 FILA: "Anotei! Se o horário das [hora] com o [Barbeiro] abrir, te aviso aqui."
-Erro no reschedule: "Esse horário já foi preenchido" + get_next_slots + 2 opções em frase.
+Erro de ferramenta ao gravar horário: responda string vazia. Não diga que está ocupado nem que não conseguiu.
 
 --- REGRAS DE FORMATO E PROIBIÇÕES ---
 WhatsApp: negrito *texto* (um asterisco, nunca **texto**). Sem travessão — nem –. Horários em frase corrida, máx. 2–3 opções, nunca em bullets. [[MSG]] para bolhas.
@@ -982,6 +1490,7 @@ export const RUNTIME_GUARDRAILS = `GUARDRAILS CRÍTICOS (têm precedência sobre
 - Nunca exibir UUID, telefone ou ID interno ao cliente.
 - Nunca confirmar ação ("agendado/cancelado/reagendado") antes da tool retornar sucesso.
 - RSVP: "sim/confirmo/vou" após lembrete = confirm_appointment no pending existente — nunca create_appointment.
+- Nunca escrever "Presença confirmada" se confirm_appointment não retornou ok neste turno.
 - appointment_id sempre UUID de list_client_upcoming_appointments — nunca número, nunca nome de barbeiro.
 - Sem dados reais das tools para responder: retorne string vazia (handoff).`;
 
@@ -1260,7 +1769,7 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_shop_pix",
       description:
-        "Envia a chave PIX da loja (débito, plano ou acerto avulso). Independente de agendamento, serviço ou valor. Não chama confirm_appointment.",
+        "Prepara a chave PIX da loja (débito, plano ou acerto avulso). O sistema manda valor e chave numa mensagem. Não repita a chave. Não chama confirm_appointment.",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
@@ -1409,6 +1918,8 @@ export type AgentResult = {
     | "plan_subscribed";
   /** Operational context block for this turn. Only set when RunAgentOptions.includeDebugContext is true. */
   debugContext?: string;
+  /** Structured slice of this turn. The worker logs it; it does not change the reply. */
+  turnTrace?: AgentTurnTrace;
 };
 
 export type RunAgentOptions = {
@@ -1424,7 +1935,7 @@ export type RunAgentOptions = {
 
 let selectedBarbershopColumnSupported: boolean | null = null;
 
-async function supportsSelectedBarbershopColumn(): Promise<boolean> {
+export async function supportsSelectedBarbershopColumn(): Promise<boolean> {
   if (selectedBarbershopColumnSupported != null) return selectedBarbershopColumnSupported;
   try {
     const r = await pool.query<{ ok: boolean }>(
@@ -1477,81 +1988,55 @@ export async function runAgent(
   openai: OpenAI,
   options?: RunAgentOptions
 ): Promise<AgentResult> {
-  const settingsRow = await pool.query<{
-    enabled: boolean;
-    timezone: string | null;
-    model: string;
-    model_premium: string | null;
-    temperature: number;
-    system_prompt_override: string | null;
-    agent_profile: unknown;
-    additional_instructions: string | null;
-    max_output_tokens: number | null;
-  }>(
-    `SELECT s.enabled, s.timezone, s.model, s.model_premium, s.temperature, s.system_prompt_override,
-            s.agent_profile, s.additional_instructions, s.max_output_tokens
-     FROM public.barbershop_ai_settings s WHERE s.barbershop_id = $1`,
-    [barbershopId]
+  // ── Load all DB context via context-builder ──────────────────────────────
+  const _ctx = await buildAgentContext(
+    barbershopId,
+    conversationId,
+    clientPhone,
+    options?.simulatedNow
   );
-  const settings = settingsRow.rows[0];
-  const planRow = await pool.query<{ billing_plan: string | null }>(
-    "SELECT billing_plan FROM public.barbershops WHERE id = $1",
-    [barbershopId]
-  );
-  const billingPlan = planRow.rows[0]?.billing_plan ?? "pro";
 
-  // Account-wide number mode: resolve selected_barbershop_id and effective barbershop for tools
-  type BranchInfo = { id: string; name: string };
-  let effectiveBarbershopId = barbershopId;
-  let accountBranches: BranchInfo[] = [];
-  let numberMode: "account_wide" | "per_branch" = "per_branch";
-  try {
-    let selectedId: string | null = null;
-    if (await supportsSelectedBarbershopColumn()) {
-      const runtimeRow = await pool.query<{ selected_barbershop_id: string | null }>(
-        `SELECT selected_barbershop_id FROM public.ai_conversation_runtime WHERE conversation_id = $1`,
-        [conversationId]
-      );
-      selectedId = runtimeRow.rows[0]?.selected_barbershop_id ?? null;
-    }
-    const accountRow = await pool.query<{ account_id: string | null }>(
-      "SELECT account_id FROM public.barbershops WHERE id = $1",
-      [barbershopId]
-    );
-    const accountId = accountRow.rows[0]?.account_id ?? null;
-    if (accountId) {
-      const accRow = await pool.query<{ whatsapp_number_mode: string }>(
-        "SELECT whatsapp_number_mode FROM public.accounts WHERE id = $1",
-        [accountId]
-      );
-      numberMode = accRow.rows[0]?.whatsapp_number_mode === "account_wide" ? "account_wide" : "per_branch";
-      const branchesRow = await pool.query<{ id: string; name: string }>(
-        "SELECT id, name FROM public.barbershops WHERE account_id = $1 ORDER BY name",
-        [accountId]
-      );
-      accountBranches = branchesRow.rows;
-      const allowedIds = new Set(accountBranches.map((b) => b.id));
-      if (selectedId && allowedIds.has(selectedId)) {
-        effectiveBarbershopId = selectedId;
-      }
-    }
-  } catch {
-    // Tables/columns may not exist
-  }
+  // Destructure immutable fields
+  const {
+    settings,
+    billingPlan,
+    accountBranches,
+    numberMode,
+    messageCount,
+    premiumAvailable,
+    usePremiumByMessages,
+    timeZone,
+    dateTimeStr,
+    dateOnlyStr,
+    tomorrowOnlyStr,
+    currentTimeHHmm,
+    barbershopName,
+    businessHoursRaw,
+    shopAddress,
+    hasGeoLocation,
+    clientNameConfirmed,
+    whatsappPushName,
+    clientMemory,
+    upcomingAppointments,
+    upcomingBooked,
+    lastVisit,
+    history,
+    lastN,
+  } = _ctx;
 
-  const msgCountRow = await pool.query<{ cnt: string }>(
-    "SELECT count(*)::text AS cnt FROM public.ai_messages WHERE conversation_id = $1",
-    [conversationId]
-  );
-  const messageCount = parseInt(msgCountRow.rows[0]?.cnt ?? "0", 10);
-  const ESCALATION_MESSAGE_THRESHOLD = 15;
+  // Mutable fields (may be updated during the turn)
+  let effectiveBarbershopId = _ctx.effectiveBarbershopId;
+  let clientName = _ctx.clientName;
+  let bookingDraft = _ctx.bookingDraft;
+  const lastUserTextRaw = _ctx.lastUserTextRaw;
+  const clientFavorites = _ctx.clientFavorites as ClientFavoritesResult | null;
+
+  // ── Derived constants (unchanged from original) ─────────────────────────
   const ESCALATION_TOOL_ERROR_THRESHOLD = 2;
-  const premiumAvailable =
-    billingPlan === "premium" && (settings?.model_premium ?? "").trim() !== "";
-  const usePremiumByMessages =
-    premiumAvailable && messageCount >= ESCALATION_MESSAGE_THRESHOLD;
   let usePremiumModel = usePremiumByMessages;
-  let model = usePremiumModel ? (settings?.model_premium ?? settings?.model) : (settings?.model ?? "gpt-4o-mini");
+  let model: string = usePremiumModel
+    ? (settings?.model_premium ?? settings?.model ?? "gpt-4o-mini")
+    : (settings?.model ?? "gpt-4o-mini");
   const temperature = settings?.temperature ?? 0.3;
   const draft = options?.sandboxDraft;
   const useDraft = draft && draft.agent_profile != null && typeof draft.agent_profile === "object";
@@ -1561,6 +2046,8 @@ export async function runAgent(
     (settings?.agent_profile != null &&
       typeof settings.agent_profile === "object" &&
       Object.keys(settings.agent_profile as object).length > 0);
+
+  // ── System prompt (built from context data) ──────────────────────────────
   let systemPrompt: string;
   if (hasProfile) {
     const profile = useDraft ? normalizeProfile(draft.agent_profile) : normalizeProfile(settings!.agent_profile);
@@ -1580,105 +2067,23 @@ export async function runAgent(
     });
   }
 
-  // Safety: ensure we always use a real IANA timezone (avoid drifting to UTC in production).
-  const timeZone = settings?.timezone && settings.timezone.includes("/") ? settings.timezone : "America/Sao_Paulo";
-  const simulatedNowDate = options?.simulatedNow ? new Date(options.simulatedNow) : null;
-  const now = simulatedNowDate && !Number.isNaN(simulatedNowDate.getTime()) ? simulatedNowDate : new Date();
-  const dateTimeStr = new Intl.DateTimeFormat("sv-SE", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(now);
-  const dateOnlyStr = new Intl.DateTimeFormat("sv-SE", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-  const tomorrowOnlyStr = addDaysIso(dateOnlyStr, 1);
-  const currentTimeHHmm = (dateTimeStr.includes(" ") ? dateTimeStr.split(" ")[1] : "00:00").slice(0, 5);
-
-  const shopContextRow = await pool.query<{
-    name: string;
-    business_hours: unknown;
-    address: string | null;
-    latitude: number | null;
-    longitude: number | null;
-  }>("SELECT name, business_hours, address, latitude, longitude FROM public.barbershops WHERE id = $1", [effectiveBarbershopId]);
-  const barbershopName = shopContextRow.rows[0]?.name ?? "Barbearia";
-  const businessHoursRaw = shopContextRow.rows[0]?.business_hours ?? null;
-  const shopAddress = shopContextRow.rows[0]?.address?.trim() ?? "";
-
   // Late-binding catalog — populated after the catalog fetch below; safe to reference in closures.
   let lateCatalogServices: CatalogService[] = [];
-  const hasGeoLocation =
-    shopContextRow.rows[0]?.latitude != null && shopContextRow.rows[0]?.longitude != null;
-
-  // Always resolve client by the incoming phone so we never ask for it.
-  let clientName = "";
-  let clientNameConfirmed = false;
-  let whatsappPushName: string | null = null;
-  try {
-    const c = (await aiTools.upsertClient(effectiveBarbershopId, clientPhone)) as unknown;
-    if (c && typeof c === "object") {
-      const row = c as Record<string, unknown>;
-      clientNameConfirmed = row.name_confirmed === true;
-      whatsappPushName = typeof row.whatsapp_contact_name === "string" ? row.whatsapp_contact_name : null;
-      const maybeName = row.name;
-      if (typeof maybeName === "string" && clientNameConfirmed && isUsableClientName(maybeName)) {
-        const formatted = aiTools.formatStoredClientName(maybeName.trim()) ?? maybeName.trim();
-        clientName = confirmedPersonName({
-          storedName: formatted,
-          nameConfirmed: true,
-          pushName: whatsappPushName,
-        });
-      }
-    }
-  } catch {
-    // If client lookup fails, the agent can still proceed by asking name later (never phone).
-  }
-
-  const memExists = await clientMemoryTableExists();
-  const [clientMemory, rawUp, clientFavorites] = await Promise.all([
-    memExists ? getClientMemory(effectiveBarbershopId, clientPhone) : Promise.resolve(null),
-    aiTools.listClientUpcomingAppointments(effectiveBarbershopId, clientPhone, dateOnlyStr).catch(() => [] as unknown[]),
-    aiTools.getClientFavoriteServices(effectiveBarbershopId, clientPhone).catch(() => null),
-  ]);
-
-  let upcomingAppointments: UpcomingApptRow[] = [];
-  try {
-    const arr = Array.isArray(rawUp) ? rawUp : [];
-    upcomingAppointments = filterUpcomingFromNow(arr as UpcomingApptRow[], dateOnlyStr, currentTimeHHmm);
-  } catch {
-    upcomingAppointments = [];
-  }
-
-  const lastVisit =
-    upcomingAppointments.length === 0
-      ? await aiTools.getClientLastAppointment(effectiveBarbershopId, clientPhone).catch(() => null)
-      : null;
-
-  const upcomingBooked = ((): "pending" | "confirmed" | null => {
-    const pending = upcomingAppointments.find((a) => a.status === "pending");
-    if (pending) return "pending";
-    if (upcomingAppointments.some((a) => a.status === "confirmed" || !a.status)) return "confirmed";
-    return null;
-  })();
 
   const operationalContextBlock = buildOperationalContextBlock({
     barbershopName,
     timeZone,
     dateTimeStr,
     dateOnlyStr,
-    clientName,
+    clientName: confirmedPersonName({
+      storedName: clientName,
+      nameConfirmed: clientNameConfirmed,
+      pushName: whatsappPushName,
+    }),
     businessHoursRaw,
     clientMemory,
     favorites: clientFavorites,
-    address: shopContextRow.rows[0]?.address ?? null,
+    address: shopAddress || null,
     hasGeoLocation,
   });
 
@@ -1696,7 +2101,7 @@ export async function runAgent(
     contactContextBlock =
       `\n\n--- Próximos agendamentos deste contato ---\n${lines}\n` +
       `Ao citar esses horários ao cliente, use exatamente este formato curto (dd/MM às HHh, ex.: 24/09 às 14h). Nunca escreva a data por extenso nem o ano.\n` +
-      `Antes de tratar como novo agendamento: cumprimente pelo primeiro nome se souber. Pergunte de forma objetiva se está tudo certo com esse horário ou se prefere reagendar. ` +
+      `Consulta lista os horários. Saudação com horário futuro cita só o próximo, com o texto fixo. ` +
       `Para reagendar ou cancelar, use list_client_upcoming_appointments, reschedule_appointment e cancel_appointment conforme o caso.`;
   } else if (
     clientMemory &&
@@ -1737,22 +2142,7 @@ export async function runAgent(
       `\n\nFILIAIS: Esta conta tem várias filiais. Quando o cliente ainda não tiver escolhido a filial, pergunte: "Qual filial você prefere?" e liste: ${branchList}. Quando o cliente escolher, chame a ferramenta select_branch com o barbershop_id correto da filial escolhida. Depois use as outras ferramentas normalmente para a filial selecionada.`;
   }
 
-  const messagesRow = await pool.query<{
-    role: string;
-    content: string | null;
-    tool_name: string | null;
-    tool_payload: unknown;
-  }>(
-    `SELECT role, content, tool_name, tool_payload FROM public.ai_messages
-     WHERE conversation_id = $1 ORDER BY created_at ASC`,
-    [conversationId]
-  );
-  const history = messagesRow.rows;
-  const lastN = history.slice(-MAX_MEMORY_MESSAGES);
-  const lastUserTextRaw = lastUserTurnText(lastN);
   const lastUserText = lastUserTextRaw.toLowerCase().trim();
-
-  let bookingDraft = await loadBookingDraft(conversationId);
 
   if (looksLikePlanIntent(lastUserTextRaw) || looksLikePixIntent(lastUserTextRaw)) {
     const planSubscription = await aiTools
@@ -1778,8 +2168,21 @@ export async function runAgent(
   const debugContext = options?.includeDebugContext
     ? `${operationalContextBlock}${contactContextBlock}`
     : undefined;
+  // decisionOwner is updated after routing runs; default to llm_tool_loop.
+  const turnTrace: AgentTurnTrace = {
+    decisionOwner: "llm_tool_loop",
+    conversationState: "",
+    canonicalState: null,
+    intent: null,
+    routing: null,
+    nameKnown: Boolean(clientName && isUsableClientName(clientName)),
+    nameSource: null,
+    openai: [],
+    toolsExecuted: [],
+    catalogRejections: [],
+  };
   function withDebug<T extends AgentResult>(result: T): T {
-    const cleaned = { ...result, reply: sanitizeClientFacingReply(result.reply) };
+    const cleaned = { ...result, reply: sanitizeClientFacingReply(result.reply), turnTrace };
     return debugContext ? { ...cleaned, debugContext } : cleaned;
   }
 
@@ -1846,15 +2249,37 @@ export async function runAgent(
     return withDebug({ reply, state: "handoff_requested" });
   }
 
-  // Proactive name capture: if the user writes "meu nome é X" in the same message,
-  // persist it immediately to avoid asking again in the next turn.
-  const extractedRaw = extractNameFromText(lastUserTextRaw);
+  const [catalogServicesRaw, catalogBarbersRaw] = await Promise.all([
+    aiTools.listServices(effectiveBarbershopId),
+    aiTools.listBarbers(effectiveBarbershopId),
+  ]);
+  const catalogServices = catalogFromUnknown(catalogServicesRaw);
+  lateCatalogServices = catalogServices;
+  const catalogBarbers = catalogBarbersFromUnknown(catalogBarbersRaw);
+
+  // Proactive name capture: "meu nome é X" or a booking message that opens with the
+  // client's own name ("Mateus, corte amanhã às 15h") is persisted now so the closing
+  // step never asks for it again.
+  const explicitNameRaw = extractNameFromText(lastUserTextRaw);
+  const leadingNameRaw = explicitNameRaw
+    ? null
+    : extractLeadingAddressedName(lastUserTextRaw, {
+        todayIso: dateOnlyStr,
+        serviceNames: catalogServices.map((s) => s.name),
+        barberNames: catalogBarbers.map((b) => b.name),
+        shopName: barbershopName,
+      });
+  const extractedRaw = explicitNameRaw ?? leadingNameRaw;
   const extractedName = extractedRaw ? aiTools.formatStoredClientName(extractedRaw) ?? extractedRaw : null;
+  if (extractedName) {
+    turnTrace.nameSource = explicitNameRaw ? "explicit" : "leading_address";
+  }
   if (extractedName && (!clientName || normalizeLoose(clientName) !== normalizeLoose(extractedName))) {
     aiTools.upsertClient(effectiveBarbershopId, clientPhone, extractedName).catch(() => {});
     clientName = extractedName;
   }
 
+  let spokenHourOutside = false;
   const desired = (() => {
     let desiredDate: string | undefined;
     let desiredDateSource: ClientDateSource | undefined;
@@ -1896,6 +2321,7 @@ export async function runAgent(
             businessHoursRaw as Parameters<typeof shopWindowOnIso>[1],
           );
           desiredTime = alignSpokenHour(content, parsed, window.start, window.end);
+          if (window.start && parsed < window.start && desiredTime < window.start) spokenHourOutside = true;
         }
       }
 
@@ -1937,13 +2363,22 @@ export async function runAgent(
     }
 
     const turnTime = parseClientTime(lastUserTextRaw);
-    if (turnTime) desiredTime = turnTime;
+    if (turnTime && !isShopHoursQuestion(lastUserTextRaw)) {
+      const dateForWindow =
+        bookingDateFromUserTurn(lastUserTextRaw, dateOnlyStr)?.date ?? desiredDate ?? dateOnlyStr;
+      const window = shopWindowOnIso(
+        dateForWindow,
+        businessHoursRaw as Parameters<typeof shopWindowOnIso>[1],
+      );
+      desiredTime = alignSpokenHour(lastUserTextRaw, turnTime, window.start, window.end);
+      if (window.start && turnTime < window.start && desiredTime < window.start) spokenHourOutside = true;
+    }
 
     const offeredClock = offeredFitClockIfAccepted({
       lastAssistant: lastAssistantTurnText(history),
       lastUser: lastUserTextRaw,
     });
-    if (offeredClock) desiredTime = offeredClock;
+    if (offeredClock && !turnTime) desiredTime = offeredClock;
 
     // Explicit date from the CURRENT turn only — used for date-priority logic
     const currentTurnDate = bookingDateFromUserTurn(lastUserTextRaw, dateOnlyStr);
@@ -1994,14 +2429,6 @@ export async function runAgent(
     );
   })();
 
-  const [catalogServicesRaw, catalogBarbersRaw] = await Promise.all([
-    aiTools.listServices(effectiveBarbershopId),
-    aiTools.listBarbers(effectiveBarbershopId),
-  ]);
-  const catalogServices = catalogFromUnknown(catalogServicesRaw);
-  lateCatalogServices = catalogServices;
-  const catalogBarbers = catalogBarbersFromUnknown(catalogBarbersRaw);
-
   const turnFacts = draftPatchFromTurn({
     text: lastUserTextRaw,
     todayIso: dateOnlyStr,
@@ -2020,6 +2447,19 @@ export async function runAgent(
       pendingProposal: null,
       lastAgentQuestion: null,
     });
+  }
+  if (typeof turnFacts.patch.time === "string" && /^\d{2}:\d{2}/.test(turnFacts.patch.time)) {
+    const clockDate = turnFacts.patch.date || bookingDraft.date || dateOnlyStr;
+    const clockWindow = shopWindowOnIso(
+      clockDate,
+      businessHoursRaw as Parameters<typeof shopWindowOnIso>[1],
+    );
+    turnFacts.patch.time = alignSpokenHour(
+      lastUserTextRaw,
+      turnFacts.patch.time.slice(0, 5),
+      clockWindow.start,
+      clockWindow.end,
+    );
   }
   bookingDraft = applyTurnToDraft(bookingDraft, turnFacts.patch, {
     floorWithoutClock: turnFacts.floorWithoutClock,
@@ -2057,12 +2497,21 @@ export async function runAgent(
     if (t.length < 2 || t.length > 40) return false;
     if (isAffirmativeOnly) return false;
     if (isGreetingOnly) return false;
+    if (
+      looksLikeRescheduleIntent(t) ||
+      looksLikeCancelIntent(t) ||
+      looksLikeNewBookingIntent(t)
+    ) {
+      return false;
+    }
     return /^[A-Za-zÀ-ÖØ-öø-ÿ' ]+$/.test(t) && t.split(" ").filter(Boolean).length <= 4;
   })();
 
   const nameFromUserForBooking = (() => {
     if (acceptsAnyBarber(lastUserTextRaw)) return "";
-    const raw = extractedName ?? (isLikelyNameOnly && lastUserText.trim() ? lastUserText.trim() : "");
+    const raw =
+      extractedName ??
+      (assistantAskedName && isLikelyNameOnly && lastUserText.trim() ? lastUserText.trim() : "");
     if (!raw) return "";
     return aiTools.formatStoredClientName(raw) ?? raw;
   })();
@@ -2072,6 +2521,7 @@ export async function runAgent(
     nameConfirmed: clientNameConfirmed || Boolean(nameFromUserForBooking),
     pushName: whatsappPushName,
   });
+  turnTrace.nameKnown = Boolean(bookingName);
 
   if (isLikelyNameOnly && assistantAskedName && lastUserText.trim()) {
     aiTools.upsertClient(effectiveBarbershopId, clientPhone, lastUserText.trim()).catch(() => {});
@@ -2106,7 +2556,7 @@ export async function runAgent(
     ? bookingName
       ? "offer_awaiting_confirm"
       : "awaiting_name"
-    : lastWasReminder && upcomingBooked === "pending"
+    : (lastWasReminder || recentReminderSent) && upcomingBooked === "pending"
       ? "reminder_rsvp_pending"
       : bookingDraft.status === "awaiting_name"
         ? "awaiting_name"
@@ -2128,6 +2578,182 @@ export async function runAgent(
             ? " — não há horário futuro; consultar/cancelar deve dizer isso, não inventar."
             : " — há horário futuro; consultar/cancelar/reagendar usa a lista, não cria outro.");
 
+  // ── Understanding + Orchestrator (V1 — additive, does not yet replace existing logic) ─────
+  // Produces structured IntentSet and deterministic routing decisions from the current turn.
+  // Informs: barber disclosure, intent conflict resolution, plan_offered clearing, handoff.
+  const canonicalConvState = mapLegacyConvState(conversationState);
+  turnTrace.conversationState = conversationState;
+  turnTrace.canonicalState = canonicalConvState;
+  const intentSet = understandTurn({
+    text: lastUserTextRaw,
+    todayIso: dateOnlyStr,
+    services: catalogServices,
+    barbers: catalogBarbers,
+    previousState: canonicalConvState,
+    conversationId,
+  });
+  const pendingIntents = await loadPendingIntents(conversationId);
+  let hasActiveSubscription = false;
+  if (intentSet.primary === "plan" || intentSet.intents.includes("plan")) {
+    try {
+      const listed = (await aiTools.listClientPlanSubscription(effectiveBarbershopId, clientPhone)) as {
+        found?: boolean;
+      };
+      hasActiveSubscription = listed?.found === true;
+    } catch {
+      hasActiveSubscription = false;
+    }
+  }
+  const speechWindow = shopWindowOnIso(
+    desired.desiredDate || dateOnlyStr,
+    businessHoursRaw as Parameters<typeof shopWindowOnIso>[1],
+  );
+  const spokenRaw = isShopHoursQuestion(lastUserTextRaw) ? null : parseClientTime(lastUserTextRaw);
+  const alignedSpoken = spokenRaw
+    ? alignSpokenHour(lastUserTextRaw, spokenRaw, speechWindow.start, speechWindow.end)
+    : undefined;
+  const replyingToPlanCharge = assistantMessageIsPlanCharge(lastAssistantTurnText(lastN));
+  const routing = orchestrate({
+    intentSet,
+    conversationState: canonicalConvState,
+    previousTurnConfidence: undefined, // TODO V2: persist per-turn confidence in DB
+    hasUpcomingAppointment: upcomingAppointments.length > 0,
+    hasActiveBookingDraft: !!(bookingDraft.service_ids?.length || bookingDraft.service_name),
+    pendingIntents,
+    isAffirmative: isAffirmativeOnly,
+    waitlistOfferOpen: bookingDraft.waitlistOffer === true && Boolean(bookingDraft.date && bookingDraft.time && bookingDraft.service_name),
+    hasPersonName: Boolean(bookingName),
+    nameStatedThisTurn: Boolean(nameFromUserForBooking),
+    hasActiveSubscription,
+    carriedClock: alignedSpoken ?? bookingDraft.time ?? null,
+    namedBarberThisTurn:
+      Boolean(resolveBarberFromText(lastUserTextRaw, catalogBarbers)) && !parseClientTime(lastUserTextRaw),
+    carriedServiceIds: bookingDraft.service_ids?.length
+      ? bookingDraft.service_ids
+      : (upcomingAppointments[0]?.service_ids ?? []),
+    replyingToPlanCharge,
+    spokenHourOutside,
+  });
+  if (routing.primaryIntent === "hours") {
+    const openNow = shopOpenStatusNow({
+      todayIso: dateOnlyStr,
+      nowHHmm: currentTimeHHmm,
+      businessHours: (businessHoursRaw ?? null) as Parameters<typeof shopOpenStatusNow>[0]["businessHours"],
+    });
+    routing.turnDirective = describeShopOpenStatus(openNow);
+  }
+  if (JSON.stringify(routing.nextPending) !== JSON.stringify(pendingIntents)) {
+    await savePendingIntents(conversationId, routing.nextPending);
+  }
+  const resumingPending = routing.resumedPending.length > 0;
+  const routingApplied: string[] = [];
+  turnTrace.intent = {
+    primary: intentSet.primary,
+    intents: intentSet.intents,
+    confidence: intentSet.confidence,
+    service:
+      intentSet.service == null
+        ? null
+        : intentSet.service === "ambiguous"
+          ? "ambiguous"
+          : intentSet.service.name,
+    barber:
+      intentSet.barber == null
+        ? null
+        : intentSet.barber.kind === "any"
+          ? "any"
+          : intentSet.barber.name,
+    date: intentSet.dateTime?.date ?? null,
+    time: alignedSpoken ?? intentSet.dateTime?.time ?? null,
+  };
+  // Orchestrator takes ownership when it blocks/restricts the LLM's freedom.
+  if (!routing.recordingAuthorized || routing.waitlistMissingClock || routing.triggerHandoff) {
+    turnTrace.decisionOwner = "orchestrator";
+  }
+
+  turnTrace.routing = {
+    primaryIntent: routing.primaryIntent,
+    triggerHandoff: routing.triggerHandoff,
+    handoffReason: routing.handoffReason,
+    clearPlanOffered: routing.clearPlanOffered,
+    requiresBarberDisclosure: routing.requiresBarberDisclosure,
+    unknownBarberName: routing.unknownBarberName,
+    handleNow: routing.handleNow,
+    deferred: routing.deferred,
+    applied: routingApplied,
+    allowedTools: routing.allowedTools,
+  };
+
+  const secondaryNow = routing.handleNow.slice(1);
+  if (resumingPending) {
+    routingApplied.push("resume_pending");
+    systemPrompt +=
+      `\n\nPEDIDO RETOMADO: o cliente aceitou ver agora ${intentLabelsPt(routing.resumedPending)}. ` +
+      "Trate só isso neste turno (planos → list_plans; pagamento → send_shop_pix; localização → send_barbershop_location). " +
+      "O agendamento anterior já está fechado: não chame create_appointment, reschedule_appointment nem confirm_appointment.";
+  } else if (secondaryNow.length) {
+    routingApplied.push("companion_same_turn");
+    systemPrompt +=
+      `\n\nPEDIDOS NO MESMO TURNO: o principal é ${intentLabelsPt([routing.primaryIntent])}; o cliente também pediu ${intentLabelsPt(secondaryNow)}. ` +
+      "Resolva o principal primeiro e atenda os demais neste mesmo turno com a ferramenta correspondente " +
+      "(pagamento → send_shop_pix; localização → send_barbershop_location). Só afirme o que as ferramentas retornaram.";
+  }
+  if (routing.deferred.length) {
+    routingApplied.push("defer_secondary");
+    systemPrompt +=
+      `\n\nPEDIDO ADIADO: o cliente também mencionou ${intentLabelsPt(routing.deferred)}. ` +
+      `Neste turno trate só ${intentLabelsPt([routing.primaryIntent])}. Não responda sobre ${intentLabelsPt(routing.deferred)} ` +
+      "nem diga que já resolveu — isso será oferecido automaticamente quando o principal fechar.";
+  }
+
+  // Barber substitution guardrail: if Understanding detected an unknown named barber,
+  // inject a system guardrail so the LLM doesn't silently substitute.
+  if (routing.requiresBarberDisclosure && routing.unknownBarberName) {
+    routingApplied.push("barber_disclosure");
+    systemPrompt =
+      systemPrompt +
+      `\n\nAVISO: o cliente pediu o barbeiro "${routing.unknownBarberName}" que NÃO está na equipe. ` +
+      `Antes de oferecer um slot, informe isso de forma simpática e apresente quem está disponível naquele horário.`;
+  }
+
+  // Unknown intent: no recording tools allowed this turn.
+  // The agent must ask an objective clarifying question and must not call any write tool.
+  if (routing.primaryIntent === "unknown" && !routing.recordingAuthorized) {
+    routingApplied.push("no_recording");
+    systemPrompt +=
+      "\n\nINTENÇÃO NÃO IDENTIFICADA: Faça uma pergunta objetiva para entender o que o cliente quer. " +
+      "PROIBIDO neste turno: create_appointment, reschedule_appointment, cancel_appointment, " +
+      "add_to_waitlist, update_client_notes, confirm_appointment e qualquer ferramenta que grava dados.";
+  }
+  systemPrompt +=
+    `\n\nFERRAMENTAS DESTE TURNO: ${routing.allowedTools.length ? routing.allowedTools.join(", ") : "nenhuma"}. ` +
+    "Qualquer outra chamada é recusada e não vira handoff. " +
+    "Não escolha uma hora que a pessoa não disse e que não está no rascunho. " +
+    "Pergunte a hora só quando a pessoa está marcando ou remarcando e a hora ainda não foi dita. " +
+    "Pedido de chave PIX, endereço ou valor não é pedido de horário. " +
+    "Um sim curto, mesmo com uma cortesia antes, aceita o horário já oferecido. " +
+    "Desistir de ir ou pedir para cancelar cancela o horário atual na hora: não diga que a ação falhou e não use esse pedido como nome.";
+  if (routing.primaryIntent === "plan" && hasActiveSubscription) {
+    systemPrompt +=
+      "\n\nQuem já tem plano e pede a cobrança: chame send_pix_plan_charge. Não crie outra assinatura.";
+  } else if (routing.primaryIntent === "plan" && bookingName) {
+    systemPrompt +=
+      "\n\nA pessoa disse o nome. Chame subscribe_client_to_plan no plano que ela pediu. A chave da primeira cobrança sai junto.";
+  }
+  const establishedFact = routing.turnDirective || (spokenHourOutside ? CLOCK_OUTSIDE_HOURS : "");
+  if (establishedFact) {
+    systemPrompt += `\nSe a frase do modelo não puder sair, diga só: ${establishedFact}`;
+  }
+
+  // Waitlist with incomplete clock: orchestrator blocks add_to_waitlist and asks for missing fields.
+  if (routing.waitlistMissingClock) {
+    routingApplied.push("waitlist_clock_incomplete");
+    const fieldLabels: Record<string, string> = { date: "data", time: "horário", service: "serviço" };
+    const missing = routing.waitlistMissingClock.map((f) => fieldLabels[f] ?? f).join(", ");
+    systemPrompt +=
+      `\n\nFILA DE ESPERA — dados incompletos: falta ${missing}. ` +
+      "Pergunte só o que falta. NÃO chame add_to_waitlist até ter data, horário e serviço.";
+  }
 
   // --- RAG: inject knowledge chunks when relevant ---
   try {
@@ -2185,23 +2811,27 @@ export async function runAgent(
           {
             role: "system",
             content:
-              "PRIMEIRO HORÁRIO: o cliente quer o slot mais cedo do dia. " +
-              "Não pergunte o serviço nem o barbeiro se já houver horário ou último atendimento. " +
-              "Chame get_next_slots com a data correta e limit=1, SEM after_time, usando esse serviço e barbeiro. " +
-              "Confirme no resumo. Não adivinhe nem use check_availability.",
+              "PRIMEIRO HORÁRIO: é a abertura do dia pedido, o mesmo serviço e o mesmo barbeiro. " +
+              "Chame check_availability nesse horário de abertura. " +
+              "Se a abertura já passou, use o próximo relógio desse dia em que o serviço cabe. " +
+              "Não repita o horário que a pessoa já tem e não troque de barbeiro.",
           },
         ] as OpenAI.Chat.Completions.ChatCompletionMessageParam[])
       : []),
-    ...(isAffirmativeOnly && assistantAskedConfirmation && Boolean(upcomingBooked)
+    ...(isAffirmativeOnly &&
+    (assistantAskedConfirmation || assistantOfferedSingleHour(previousAssistantEarly)) &&
+    Boolean(upcomingBooked) &&
+    !resumingPending
       ? ([
           {
             role: "system",
             content:
-              "CONFIRMAÇÃO DE REAGENDAMENTO: o cliente confirmou o novo horário. Chame reschedule_appointment com o appointment_id atual. Não cancele, não crie outro e não chame confirm_appointment.",
+              "CONFIRMAÇÃO DE REAGENDAMENTO: o cliente aceitou a hora já oferecida, inclusive 'pode sim' com uma cortesia antes, ou quando a oferta foi 'Fica bom?' ou 'Quer esse?'. " +
+              "Chame reschedule_appointment com o appointment_id atual, o mesmo barbeiro e essa hora. Não cancele, não crie outro, não troque de barbeiro e não chame confirm_appointment.",
           },
         ] as OpenAI.Chat.Completions.ChatCompletionMessageParam[])
       : []),
-    ...(isAffirmativeOnly && assistantAskedConfirmation && !upcomingBooked
+    ...(isAffirmativeOnly && assistantAskedConfirmation && !upcomingBooked && !resumingPending
       ? ([
           {
             role: "system",
@@ -2260,9 +2890,9 @@ export async function runAgent(
             barberName: target.barber_name,
           })
         : reply;
-    if (state === "appointment_cancelled") return reply.trim() ? reply : phrase();
+    if (state === "appointment_cancelled") return phrase();
     if (!looksLikeCancelIntent(lastUserTextRaw) || looksLikeRescheduleIntent(lastUserTextRaw)) return reply;
-    if (!target?.id) return reply;
+    if (!target?.id) return "Você não tem horário marcado agora.";
     const r = await aiTools.cancelAppointmentByAgent(
       currentBarbershopId,
       target.id,
@@ -2271,7 +2901,7 @@ export async function runAgent(
     );
     if (!(r && typeof r === "object" && (r as { ok?: boolean }).ok === true)) return reply;
     state = "appointment_cancelled";
-    bookingDraft = emptyBookingDraft();
+    bookingDraft = draftKeptAfterCancel(bookingDraft, target, Boolean(bookingName));
     await saveBookingDraft(conversationId, bookingDraft);
     updateClientMemoryFromAppointmentEvent({
       eventType: "appointment_cancelled",
@@ -2283,17 +2913,38 @@ export async function runAgent(
 
   function applyOutputGuard(reply: string, composed: boolean): string {
     const window = shopWindowForGuard();
-    return guardClientReply({
+    const guarded = guardClientReplyWithReason({
       reply,
       previousAssistant,
       userText: lastUserTextRaw,
       opensAt: window.start,
       closesAt: window.end,
       composed,
+      catalog: {
+        services: catalogServices.map((s) => s.name),
+        barbers: [
+          ...catalogBarbers.map((b) => b.name),
+          ...(clientName ? [clientName] : []),
+          ...(barbershopName ? [barbershopName] : []),
+        ],
+      },
     });
+    if (guarded.silencedBy) {
+      turnTrace.silencedBy = guarded.silencedBy;
+      if (guarded.silencedBy === "repeated_reply" && (composed || establishedFact)) {
+        return establishedFact || reply;
+      }
+      return establishedFact;
+    }
+    return guarded.reply;
   }
 
   async function finishTurn(reply: string, composed: boolean) {
+    if (state === "handoff_requested") {
+      const out = applyOutputGuard(reply, true);
+      await persistAssistant(out);
+      return withDebug({ reply: out, usage: totalUsage, state });
+    }
     let out = applyOutputGuard(reply, composed);
     const acceptingNewBooking =
       isAffirmativeOnly &&
@@ -2325,18 +2976,29 @@ export async function runAgent(
           dateOnlyStr,
         ),
       });
-    } else if (state === "appointment_created") {
-      const when = formatResumoWhen(
-        String(bookingDraft.date ?? "").slice(0, 10),
-        String(bookingDraft.time ?? "").slice(0, 5),
-        dateOnlyStr,
-      );
-      out = composeBookingCreated({
+    } else if (state === "appointment_created" || state === "appointment_rescheduled") {
+      const dateIso = String(bookingDraft.date ?? "").slice(0, 10);
+      const timeHHmm = String(bookingDraft.time ?? "").slice(0, 5);
+      const when = formatMarkedWhen(dateIso, timeHHmm, dateOnlyStr);
+      const lead = {
         firstName: firstNameFromClientName(bookingName || clientName || "você"),
         serviceName: bookingDraft.service_name || "Horário",
         when,
         barberName: bookingDraft.barber_name,
+      };
+      const mins = minutesUntilAppointment({
+        dateIso,
+        timeHHmm,
+        todayIso: dateOnlyStr,
+        nowHHmm: currentTimeHHmm,
       });
+      out =
+        state === "appointment_created"
+          ? composeBookingCreated({
+              ...lead,
+              remindBefore: mins != null && mins >= REMINDER_BUBBLE_LEAD_MINUTES,
+            })
+          : composeRescheduleDone(lead);
     } else if (state === "appointment_confirmed" && !lastCheckThisTurn && !acceptingNewBooking) {
       const next = upcomingAppointments.find((a) => a.status === "pending") ?? upcomingAppointments[0];
       if (next) {
@@ -2380,11 +3042,66 @@ export async function runAgent(
         timeHHmm: lastVisit.time,
       });
     }
-    if (shopPixSentThisTurn) {
-      out = replyWithoutPixEcho(out, shopPixKeyThisTurn);
+    const consultRecap =
+      routing.primaryIntent === "consult" && !state && upcomingAppointments.length > 0;
+    if (consultRecap) {
+      const next = upcomingAppointments[0];
+      out = composeUpcomingRecap({
+        firstName: clientName ? firstNameFromClientName(clientName) : undefined,
+        serviceName: next.service_names || "seu horário",
+        when: formatResumoWhen(String(next.date).slice(0, 10), String(next.time).slice(0, 5), dateOnlyStr),
+        barberName: next.barber_name,
+        price: next.price,
+      });
+    }
+    if (shopPixThisTurn) {
+      const booked = upcomingAppointments[0];
+      out = composeShopPixReply({
+        pixKey: shopPixThisTurn.key,
+        keyType: shopPixThisTurn.keyType,
+        holderName: shopPixThisTurn.holderName,
+        shopName: shopPixThisTurn.shopName,
+        serviceName: booked?.service_names || bookingDraft.service_name,
+        price: booked?.price ?? bookingDraft.total_price,
+      });
+    }
+    const locationReplied = locationPinSentThisTurn && !shopPixThisTurn && !consultRecap && !composed && !state;
+    if (locationReplied) out = composeLocationSent();
+    let falsePresenceReplaced = false;
+    if (state !== "appointment_confirmed" && replyClaimsPresenceConfirmed(out)) {
+      const next = upcomingAppointments[0];
+      out = next
+        ? composeUpcomingRecap({
+            firstName: clientName ? firstNameFromClientName(clientName) : undefined,
+            serviceName: next.service_names || "seu horário",
+            when: formatResumoWhen(String(next.date).slice(0, 10), String(next.time).slice(0, 5), dateOnlyStr),
+            barberName: next.barber_name,
+            price: next.price,
+          })
+        : "Não confirmei presença. Me diz o dia e o horário se quiser ajustar.";
+      falsePresenceReplaced = true;
     }
     out = await ensureMappedCancel(out);
-    out = applyOutputGuard(out, state === "appointment_confirmed" || state === "appointment_cancelled" || composed);
+    out = applyOutputGuard(
+      out,
+      consultRecap ||
+        falsePresenceReplaced ||
+        locationReplied ||
+        Boolean(shopPixThisTurn) ||
+        state === "appointment_confirmed" ||
+        state === "appointment_cancelled" ||
+        state === "appointment_created" ||
+        state === "appointment_rescheduled" ||
+        composed,
+    );
+    if (out && state && TRANSACTION_CLOSED_STATES.has(state) && routing.nextPending.intents.length) {
+      const offer = composePendingIntentOffer(routing.nextPending.intents);
+      if (offer) {
+        out = `${out}[[MSG]]${offer}`;
+        routingApplied.push("offer_pending");
+        await savePendingIntents(conversationId, { intents: routing.nextPending.intents, offered: true });
+      }
+    }
     await persistAssistant(out);
     updateClientMemoryFromConversation(effectiveBarbershopId, clientPhone, {
       messages: lastN.map((m) => ({ role: m.role, content: String(m.content ?? "") })),
@@ -2392,11 +3109,140 @@ export async function runAgent(
     }).catch(() => {});
     return withDebug({ reply: out, usage: totalUsage, state });
   }
+
+  async function handoffAfterBookingFailure(toolName: string) {
+    if (!routingApplied.includes("claim_withheld")) routingApplied.push("claim_withheld");
+    turnTrace.silencedBy = turnTrace.silencedBy ?? `claim_withheld:${toolName}`;
+    return finishTurn(establishedFact, Boolean(establishedFact));
+  }
+
+  async function lockOneConcreteHour(reply: string, snap: CheckAvailabilitySnapshot): Promise<string> {
+    if (parseClientTime(reply)) return reply;
+    const nextDate =
+      snap.nextOpenDate && /^\d{4}-\d{2}-\d{2}$/.test(snap.nextOpenDate) ? snap.nextOpenDate : snap.date;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) return reply;
+    const barberId = snap.barberId || bookingDraft.barber_id;
+    const serviceIds = bookingDraft.service_ids?.length ? bookingDraft.service_ids : snap.serviceIds;
+    if (!barberId || !serviceIds.length) return reply;
+    try {
+      const listed = await aiTools.getNextSlots(effectiveBarbershopId, {
+        date: nextDate,
+        service_ids: serviceIds,
+        barber_id: barberId,
+        limit: 1,
+        ...(nextDate === snap.date && bookingDraft.after_time ? { after_time: bookingDraft.after_time } : {}),
+      });
+      const slots =
+        listed && typeof listed === "object" && Array.isArray((listed as { slots?: unknown }).slots)
+          ? (listed as { slots: Array<{ time?: string; barber_id?: string; barber_name?: string }> }).slots
+          : [];
+      const first = firstLockableSlot(slots);
+      if (!first) return reply;
+      bookingDraft = lockOfferedSlot(bookingDraft, {
+        date: nextDate,
+        time: first.time,
+        barber_id: first.barber_id,
+        barber_name: first.barber_name || snap.barberName || bookingDraft.barber_name,
+        status: bookingName ? "offered" : "awaiting_name",
+      });
+      const when = formatResumoWhen(nextDate, first.time, dateOnlyStr);
+      const who = (first.barber_name || snap.barberName || "").split(" ")[0];
+      return `Nesse horário não cabe. Posso te encaixar ${when}${who ? ` com o ${who}` : ""}. Fica bom pra você?`;
+    } catch {
+      return reply;
+    }
+  }
+
+  async function speakUnwrittenSlot(): Promise<string> {
+    const date = String(bookingDraft.date ?? "").slice(0, 10);
+    const time = String(bookingDraft.time ?? "").slice(0, 5);
+    const barberId = bookingDraft.barber_id;
+    const serviceIds = bookingDraft.service_ids ?? [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time) || !barberId || !serviceIds.length) {
+      return serviceIds.length ? "Qual hora você prefere?" : ASK_SERVICE;
+    }
+    bookingDraft = mergeBookingDraft(bookingDraft, {
+      status: bookingName ? "offered" : "awaiting_name",
+    });
+    const card = () =>
+      composeUnwrittenSlotCard({
+        serviceName: bookingDraft.service_name || "Horário",
+        barberName: bookingDraft.barber_name || "o barbeiro",
+        dateIso: String(bookingDraft.date ?? date).slice(0, 10),
+        timeHHmm: String(bookingDraft.time ?? time).slice(0, 5),
+        totalPrice: bookingDraft.total_price ?? 0,
+        firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+        todayIso: dateOnlyStr,
+      });
+    try {
+      const checked = await aiTools.checkAvailability(effectiveBarbershopId, {
+        date,
+        time,
+        barber_id: barberId,
+        ...(serviceIds.length === 1 ? { service_id: serviceIds[0] } : { service_ids: serviceIds }),
+      });
+      const snap = snapshotCheckAvailability(checked, barberId);
+      await persistTool(
+        "check_availability",
+        { date, time, barber_id: barberId },
+        JSON.stringify(checked).slice(0, 4096),
+      );
+      turnTrace.toolsExecuted.push({ name: "check_availability", ok: Boolean(snap) });
+      if (snap && !snap.available) {
+        const filled = {
+          ...snap,
+          barberName: snap.barberName || bookingDraft.barber_name || "",
+          barberId: snap.barberId || barberId,
+        };
+        let reply = occupiedCopyFromSnap(filled, dateOnlyStr, true);
+        const alternative = concreteAlternativeToLock({
+          date: filled.date || date,
+          reason: filled.unavailableReason,
+          requestedTime: filled.time || time,
+          requestedBarberId: barberId,
+          requestedBarberName: bookingDraft.barber_name,
+          holdRequestedBarber: true,
+          allowOtherBarber: false,
+          lastFit: filled.lastFit,
+          alternatives: filled.alternatives,
+          sameTimeOthers: filled.sameTimeOthers,
+        });
+        if (alternative?.barber_id) {
+          bookingDraft = lockOfferedSlot(bookingDraft, {
+            date: alternative.date,
+            time: alternative.time,
+            barber_id: alternative.barber_id,
+            barber_name: alternative.barber_name || bookingDraft.barber_name,
+            status: bookingName ? "offered" : "awaiting_name",
+          });
+        } else {
+          reply = await lockOneConcreteHour(reply, filled);
+        }
+        await saveBookingDraft(conversationId, bookingDraft);
+        return reply.trim() || card();
+      }
+    } catch {
+      /* the card still speaks */
+    }
+    await saveBookingDraft(conversationId, bookingDraft);
+    return card();
+  }
+
   let toolErrorCount = 0;
   let currentBarbershopId = effectiveBarbershopId;
   let lastCheckThisTurn: CheckAvailabilitySnapshot | null = null;
-  let shopPixSentThisTurn = false;
-  let shopPixKeyThisTurn = "";
+  let shopPixThisTurn: {
+    key: string;
+    keyType: string | null;
+    holderName: string | null;
+    shopName: string | null;
+  } | null = null;
+  let locationPinSentThisTurn = false;
+  let partialSlotListThisTurn = false;
+  const movingAppointmentId =
+    upcomingAppointments.length === 1 && isValidUuid(upcomingAppointments[0]?.id ?? "")
+      ? upcomingAppointments[0].id
+      : undefined;
   const listedUpcomingIdsThisTurn: string[] = [];
 
   /** Menos criatividade quando o próximo passo é fechar agendamento (nome ou confirmação explícita). */
@@ -2419,8 +3265,433 @@ export async function runAgent(
     );
   }
 
+  function barberForThisAvailabilityCheck(toolBarberId: unknown): string | undefined {
+    const named =
+      intentSet.barber?.kind === "named" && intentSet.barber.id && isValidUuid(intentSet.barber.id)
+        ? intentSet.barber.id
+        : undefined;
+    const clientNamedBarber = intentSet.barber != null;
+    return barberIdForAvailability({
+      namedBarberId: named,
+      anyBarber: acceptsAnyBarber(lastUserTextRaw) || intentSet.barber?.kind === "any",
+      draftBarberId: bookingDraft.barber_id,
+      upcomingBarberId:
+        !clientNamedBarber && upcomingAppointments.length === 1 ? upcomingAppointments[0]?.barber_id : undefined,
+      toolBarberId: typeof toolBarberId === "string" ? toolBarberId : undefined,
+      catalogIds: catalogBarbers.map((b) => b.id),
+    });
+  }
+
+  function pinDraftBarber(barberId: string | undefined) {
+    if (!barberId || bookingDraft.barber_id === barberId) return;
+    const name =
+      catalogBarbers.find((b) => b.id === barberId)?.name ??
+      upcomingAppointments.find((a) => a.barber_id === barberId)?.barber_name;
+    bookingDraft = {
+      ...bookingDraft,
+      barber_id: barberId,
+      ...(name ? { barber_name: name } : {}),
+    };
+  }
+
+  if (isGreetingOnly && upcomingAppointments.length > 0) {
+    const next = [...upcomingAppointments].sort((a, b) =>
+      `${a.date}T${a.time}`.localeCompare(`${b.date}T${b.time}`),
+    )[0]!;
+    const reply = composeHumanConsult({
+      firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+      serviceName: next.service_names || "seu horário",
+      weekdayShort: weekdayShortPtFromIso(String(next.date).slice(0, 10)),
+      barberName: next.barber_name,
+      timeHHmm: String(next.time).slice(0, 5),
+    });
+    return finishTurn(reply, true);
+  }
+
+  if (routing.primaryIntent === "plan" && !hasActiveSubscription && !bookingName) {
+    return finishTurn(establishedFact || "Para assinar, qual seu nome?", true);
+  }
+
+  const carriedService = bookingDraft.service_name || upcomingAppointments[0]?.service_names || "";
+  if (
+    carriedService &&
+    routing.handleNow.includes("reschedule") &&
+    (intentSet.service == null || intentSet.service === "ambiguous")
+  ) {
+    systemPrompt +=
+      `\n\nO serviço deste horário continua ${carriedService}. ` +
+      "Não troque por um serviço avulso e não pergunte se é o combo ou só uma parte.";
+  }
+
+  const namingNewSlot = Boolean(
+    parseClientTime(lastUserTextRaw) || bookingDateFromUserTurn(lastUserTextRaw, dateOnlyStr),
+  );
+  const namedThisTurn = resolveBarberFromText(lastUserTextRaw, catalogBarbers);
+  if (
+    namedThisTurn &&
+    shouldComposeNamedBarberCard({
+      messageNamesCatalogBarber: true,
+      draftHasService: Boolean(bookingDraft.service_ids?.length),
+      draftHasClock: Boolean(bookingDraft.date && bookingDraft.time),
+      messageHasClock: Boolean(parseClientTime(lastUserTextRaw)),
+    })
+  ) {
+    const date = String(bookingDraft.date).slice(0, 10);
+    const earlierUsers = lastN.filter((m) => m.role === "user").map((m) => String(m.content ?? ""));
+    const previousAsk = earlierUsers.length >= 2 ? earlierUsers[earlierUsers.length - 2] : "";
+    const time = clockForNamedBarber(previousAsk, String(bookingDraft.time ?? ""));
+    const serviceIds = bookingDraft.service_ids ?? [];
+    const checked = await aiTools.checkAvailability(effectiveBarbershopId, {
+      date,
+      time,
+      barber_id: namedThisTurn.id,
+      ...(serviceIds.length === 1 ? { service_id: serviceIds[0] } : { service_ids: serviceIds }),
+    });
+    const snap = snapshotCheckAvailability(checked, namedThisTurn.id);
+    await persistTool(
+      "check_availability",
+      { date, time, barber_id: namedThisTurn.id },
+      JSON.stringify(checked).slice(0, 4096),
+    );
+    turnTrace.toolsExecuted.push({ name: "check_availability", ok: Boolean(snap) });
+    if (snap?.available) {
+      bookingDraft = lockOfferedSlot(bookingDraft, {
+        date,
+        time,
+        barber_id: namedThisTurn.id,
+        barber_name: namedThisTurn.name,
+        status: bookingName ? "offered" : "awaiting_name",
+      });
+      await saveBookingDraft(conversationId, bookingDraft);
+      return finishTurn(
+        composeAvailableSlotConfirm({
+          serviceName: snap.serviceName || bookingDraft.service_name || "Horário",
+          barberName: namedThisTurn.name,
+          dateIso: date,
+          timeHHmm: time,
+          totalPrice: snap.totalPrice || bookingDraft.total_price || 0,
+          firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+          todayIso: dateOnlyStr,
+        }),
+        true,
+      );
+    }
+    if (snap) {
+      const filled = { ...snap, barberId: namedThisTurn.id, barberName: namedThisTurn.name };
+      let reply = occupiedCopyFromSnap(filled, dateOnlyStr, true);
+      const alternative = concreteAlternativeToLock({
+        date: filled.date || date,
+        reason: filled.unavailableReason,
+        requestedTime: filled.time || time,
+        requestedBarberId: namedThisTurn.id,
+        requestedBarberName: namedThisTurn.name,
+        holdRequestedBarber: true,
+        allowOtherBarber: false,
+        lastFit: filled.lastFit,
+        alternatives: filled.alternatives,
+        sameTimeOthers: filled.sameTimeOthers,
+      });
+      if (alternative?.barber_id) {
+        bookingDraft = lockOfferedSlot(bookingDraft, {
+          date: alternative.date,
+          time: alternative.time,
+          barber_id: alternative.barber_id,
+          barber_name: alternative.barber_name || namedThisTurn.name,
+          status: bookingName ? "offered" : "awaiting_name",
+        });
+      } else {
+        reply = await lockOneConcreteHour(reply, filled);
+      }
+      await saveBookingDraft(conversationId, bookingDraft);
+      const spoken = reply.trim();
+      return finishTurn(spoken || `Esse horário com o ${namedThisTurn.name.split(" ")[0]} não está livre.`, true);
+    }
+    return finishTurn(`Não consegui ver a agenda do ${namedThisTurn.name.split(" ")[0]} agora.`, true);
+  }
+  if (
+    looksLikeRescheduleIntent(lastUserTextRaw) &&
+    !isAffirmativeOnly &&
+    !namingNewSlot &&
+    bookingDraft.date &&
+    bookingDraft.time &&
+    bookingDraft.barber_id &&
+    (bookingDraft.service_ids?.length ?? 0) > 0
+  ) {
+    bookingDraft = lockOfferedSlot(bookingDraft, {
+      date: String(bookingDraft.date).slice(0, 10),
+      time: String(bookingDraft.time).slice(0, 5),
+      barber_id: bookingDraft.barber_id,
+      barber_name: bookingDraft.barber_name,
+      status: bookingName ? "offered" : "awaiting_name",
+    });
+    await saveBookingDraft(conversationId, bookingDraft);
+    return finishTurn(
+      composeAvailableSlotConfirm({
+        serviceName: bookingDraft.service_name || "Horário",
+        barberName: bookingDraft.barber_name || "o barbeiro",
+        dateIso: String(bookingDraft.date).slice(0, 10),
+        timeHHmm: String(bookingDraft.time).slice(0, 5),
+        totalPrice: bookingDraft.total_price ?? 0,
+        firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+        todayIso: dateOnlyStr,
+      }),
+      true,
+    );
+  }
+
+  if (
+    isLikelyNameOnly &&
+    !draftIsCloseable(bookingDraft) &&
+    bookingDraft.status !== "awaiting_name" &&
+    upcomingAppointments.length > 0 &&
+    routing.primaryIntent === "unknown"
+  ) {
+    const next = upcomingAppointments[0]!;
+    return finishTurn(
+      composeUpcomingRecap({
+        firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+        serviceName: next.service_names || "seu horário",
+        when: formatResumoWhen(String(next.date).slice(0, 10), String(next.time).slice(0, 5), dateOnlyStr),
+        barberName: next.barber_name,
+        price: next.price,
+      }),
+      true,
+    );
+  }
+
+  if (isAffirmativeOnly && !parseClientTime(lastUserTextRaw) && bookingDraft.date && !bookingDraft.time) {
+    return finishTurn("Qual hora você prefere?", true);
+  }
+
+  if (looksLikeCancelIntent(lastUserTextRaw) && !looksLikeRescheduleIntent(lastUserTextRaw)) {
+    return finishTurn("", true);
+  }
+
+  const acceptingOpenDraft =
+    draftIsCloseable(bookingDraft) &&
+    Boolean(bookingName) &&
+    (isAffirmativeOnly || Boolean(nameFromUserForBooking));
+  if (
+    acceptingOpenDraft &&
+    bookingDraft.appointment_id &&
+    routing.allowedTools.includes("reschedule_appointment")
+  ) {
+    const payload = {
+      date: bookingDraft.date as string,
+      time: bookingDraft.time as string,
+      barber_id: bookingDraft.barber_id as string,
+    };
+    const written = await aiTools.rescheduleAppointmentByAgent(
+      effectiveBarbershopId,
+      bookingDraft.appointment_id,
+      clientPhone,
+      payload,
+      conversationId,
+    );
+    const ok = written != null && typeof written === "object" && (written as { ok?: boolean }).ok === true;
+    await persistTool("reschedule_appointment", payload, JSON.stringify(written).slice(0, 4096));
+    turnTrace.toolsExecuted.push({ name: "reschedule_appointment", ok });
+    if (ok) {
+      state = "appointment_rescheduled";
+      bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed" });
+      await saveBookingDraft(conversationId, bookingDraft);
+      return finishTurn("", true);
+    }
+    return finishTurn(await speakUnwrittenSlot(), true);
+  } else if (
+    acceptingOpenDraft &&
+    !bookingDraft.appointment_id &&
+    routing.allowedTools.includes("create_appointment") &&
+    upcomingAppointments.length === 0
+  ) {
+    const payload: Parameters<typeof aiTools.createAppointment>[1] = {
+      client_phone: clientPhone,
+      client_name: bookingName,
+      barber_id: bookingDraft.barber_id as string,
+      ...(bookingDraft.service_ids?.length === 1
+        ? { service_id: bookingDraft.service_ids[0] }
+        : { service_ids: bookingDraft.service_ids }),
+      date: bookingDraft.date as string,
+      time: bookingDraft.time as string,
+    };
+    const created = await aiTools.createAppointment(effectiveBarbershopId, payload, conversationId);
+    const createdId =
+      created && typeof created === "object" ? String((created as { id?: string }).id ?? "") : "";
+    await persistTool("create_appointment", payload, JSON.stringify(created).slice(0, 4096));
+    turnTrace.toolsExecuted.push({ name: "create_appointment", ok: Boolean(createdId) });
+    if (createdId) {
+      state = "appointment_created";
+      bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed", appointment_id: createdId });
+      await saveBookingDraft(conversationId, bookingDraft);
+      return finishTurn("", true);
+    }
+    return finishTurn(await speakUnwrittenSlot(), true);
+  }
+
+  if (
+    isAffirmativeOnly &&
+    !parseClientTime(lastUserTextRaw) &&
+    !draftIsCloseable(bookingDraft) &&
+    upcomingAppointments.length > 0 &&
+    !looksLikeCancelIntent(lastUserTextRaw) &&
+    !looksLikeRescheduleIntent(lastUserTextRaw)
+  ) {
+    const next = upcomingAppointments[0]!;
+    return finishTurn(
+      composeUpcomingRecap({
+        firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+        serviceName: next.service_names || "seu horário",
+        when: formatResumoWhen(String(next.date).slice(0, 10), String(next.time).slice(0, 5), dateOnlyStr),
+        barberName: next.barber_name,
+        price: next.price,
+      }),
+      true,
+    );
+  }
+
+  if (
+    looksLikePixIntent(lastUserTextRaw) &&
+    !looksLikePlanIntent(lastUserTextRaw) &&
+    !parseClientTime(lastUserTextRaw) &&
+    routing.primaryIntent !== "schedule" &&
+    routing.primaryIntent !== "reschedule"
+  ) {
+    const pix = await aiTools.sendShopPix(effectiveBarbershopId, clientPhone);
+    const row =
+      pix && typeof pix === "object"
+        ? (pix as {
+            ok?: boolean;
+            pix_key?: string;
+            pix_key_type?: string | null;
+            pix_holder_name?: string | null;
+            shop_name?: string | null;
+          })
+        : null;
+    await persistTool("send_shop_pix", {}, JSON.stringify({ ok: Boolean(row?.ok && row?.pix_key) }).slice(0, 200));
+    turnTrace.toolsExecuted.push({ name: "send_shop_pix", ok: Boolean(row?.ok && row?.pix_key) });
+    if (row?.ok && row.pix_key) {
+      shopPixThisTurn = {
+        key: row.pix_key,
+        keyType: row.pix_key_type ?? null,
+        holderName: row.pix_holder_name ?? null,
+        shopName: row.shop_name ?? null,
+      };
+      return finishTurn("", true);
+    }
+    return finishTurn("A chave PIX a equipe te passa por aqui.", true);
+  }
+
+  if (routing.turnDirective === ASK_BOOKING_NAME && !routing.allowedTools.includes("create_appointment")) {
+    bookingDraft = mergeBookingDraft(bookingDraft, { status: "awaiting_name" });
+    await saveBookingDraft(conversationId, bookingDraft);
+    return finishTurn(ASK_BOOKING_NAME, true);
+  }
+
+  if (routing.turnDirective === PLAN_CHARGE_ACK) {
+    return finishTurn(PLAN_CHARGE_ACK, true);
+  }
+
+  if (
+    routing.turnDirective === ASK_SERVICE ||
+    routing.turnDirective === ASK_HOUR ||
+    routing.turnDirective === ASK_CORTE_OR_COMBO ||
+    routing.turnDirective === CLOCK_OUTSIDE_HOURS
+  ) {
+    if (routing.turnDirective === ASK_SERVICE && alignedSpoken) {
+      bookingDraft = mergeBookingDraft(bookingDraft, {
+        time: alignedSpoken,
+        date: desired.desiredDate || bookingDraft.date || dateOnlyStr,
+        status: "collecting",
+        lastAgentQuestion: "service",
+      });
+      await saveBookingDraft(conversationId, bookingDraft);
+    }
+    return finishTurn(routing.turnDirective, true);
+  }
+
+  if (
+    !alignedSpoken &&
+    !bookingDraft.time &&
+    bookingDraft.date &&
+    (bookingDraft.service_ids?.length ?? 0) > 0 &&
+    upcomingAppointments.length === 0 &&
+    !looksLikeCancelIntent(lastUserTextRaw) &&
+    !looksLikeRescheduleIntent(lastUserTextRaw) &&
+    !looksLikeConsultIntent(lastUserTextRaw) &&
+    !looksLikePixIntent(lastUserTextRaw) &&
+    !looksLikeLocationIntent(lastUserTextRaw) &&
+    !looksLikePlanIntent(lastUserTextRaw)
+  ) {
+    return finishTurn(ASK_HOUR, true);
+  }
+
+  if (
+    alignedSpoken &&
+    bookingDraft.status !== "offered" &&
+    bookingDraft.status !== "awaiting_name" &&
+    (bookingDraft.service_ids?.length ?? 0) > 0 &&
+    bookingDraft.barber_id &&
+    bookingDraft.date &&
+    upcomingAppointments.length === 0 &&
+    !looksLikeCancelIntent(lastUserTextRaw) &&
+    !looksLikeRescheduleIntent(lastUserTextRaw)
+  ) {
+    const date = String(bookingDraft.date).slice(0, 10);
+    const time = alignedSpoken.slice(0, 5);
+    const serviceIds = bookingDraft.service_ids ?? [];
+    const checked = await aiTools.checkAvailability(effectiveBarbershopId, {
+      date,
+      time,
+      barber_id: bookingDraft.barber_id,
+      ...(serviceIds.length === 1 ? { service_id: serviceIds[0] } : { service_ids: serviceIds }),
+    });
+    const snap = snapshotCheckAvailability(checked, bookingDraft.barber_id);
+    await persistTool(
+      "check_availability",
+      { date, time, barber_id: bookingDraft.barber_id },
+      JSON.stringify(checked).slice(0, 4096),
+    );
+    turnTrace.toolsExecuted.push({ name: "check_availability", ok: Boolean(snap) });
+    const offerHour = snap?.available
+      ? { date: snap.date, time: snap.time.slice(0, 5), barberId: snap.barberId || bookingDraft.barber_id, barberName: snap.barberName, serviceName: snap.serviceName, price: snap.totalPrice }
+      : snap?.lastFit?.time && snap.lastFit.barber_id
+        ? {
+            date: snap.date,
+            time: snap.lastFit.time.slice(0, 5),
+            barberId: snap.lastFit.barber_id,
+            barberName: snap.lastFit.barber_name || bookingDraft.barber_name,
+            serviceName: snap.serviceName || bookingDraft.service_name,
+            price: snap.totalPrice,
+          }
+        : null;
+    if (offerHour?.barberId && offerHour.serviceName) {
+      bookingDraft = lockOfferedSlot(bookingDraft, {
+        date: offerHour.date,
+        time: offerHour.time,
+        barber_id: offerHour.barberId,
+        barber_name: offerHour.barberName,
+        status: bookingName ? "offered" : "awaiting_name",
+      });
+      await saveBookingDraft(conversationId, bookingDraft);
+      const card = composeAvailableSlotConfirm({
+        serviceName: offerHour.serviceName,
+        barberName: offerHour.barberName || "o barbeiro",
+        dateIso: offerHour.date,
+        timeHHmm: offerHour.time,
+        totalPrice: offerHour.price ?? 0,
+        firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+        todayIso: dateOnlyStr,
+      });
+      const prefix =
+        offerHour.time !== time ? `Às ${formatTimePt(time)} não cabe nesse dia.[[MSG]]` : "";
+      return finishTurn(`${prefix}${card}`, true);
+    }
+    return finishTurn(ASK_HOUR, true);
+  }
+
   for (let round = 0; round < maxToolRounds; round++) {
     const maxTokens = settings?.max_output_tokens ?? 350;
+    const openAiStarted = Date.now();
     const completion = await openai.chat.completions.create({
       model,
       temperature: effectiveTemperature,
@@ -2430,6 +3701,19 @@ export async function runAgent(
       tool_choice: "auto",
     });
     const choice = completion.choices[0];
+    const toolsRequested = (choice?.message.tool_calls ?? []).map((tc) => {
+      const fn = "function" in tc ? (tc as { function?: { name?: string } }).function : undefined;
+      return fn?.name ?? "unknown";
+    });
+    turnTrace.openai.push({
+      round,
+      model,
+      latencyMs: Date.now() - openAiStarted,
+      finishReason: choice?.finish_reason ?? null,
+      promptTokens: completion.usage?.prompt_tokens ?? 0,
+      completionTokens: completion.usage?.completion_tokens ?? 0,
+      toolsRequested,
+    });
     if (completion.usage) {
       totalUsage = {
         prompt_tokens: completion.usage.prompt_tokens ?? 0,
@@ -2459,6 +3743,36 @@ export async function runAgent(
             return {};
           }
         })();
+        if (name !== "select_branch" && !routing.allowedTools.includes(name)) {
+          const refused = {
+            error: "fora_do_plano",
+            message: establishedFact || "Esta ação não faz parte deste turno.",
+          };
+          if (!routingApplied.includes("tool_not_in_plan")) routingApplied.push("tool_not_in_plan");
+          turnTrace.toolsExecuted.push({ name, ok: false });
+          const refusedContent = JSON.stringify(refused);
+          await persistTool(name, args, refusedContent);
+          loopMessages.push({ role: "tool", tool_call_id: tc.id, content: refusedContent });
+          continue;
+        }
+        if (currentBarbershopId === effectiveBarbershopId) {
+          const catalogCheck = validateToolCatalogArgs(name, args, {
+            serviceIds: catalogServices.map((s) => s.id),
+            barberIds: catalogBarbers.map((b) => b.id),
+          });
+          if (catalogCheck.rejected.length) {
+            for (const key of Object.keys(args)) delete args[key];
+            Object.assign(args, catalogCheck.args);
+            for (const field of catalogCheck.rejected) turnTrace.catalogRejections.push({ tool: name, field });
+            roundNotes.push({
+              role: "system" as const,
+              content:
+                `IDs fora do catálogo foram ignorados em ${name} (${catalogCheck.rejected.join(", ")}). ` +
+                "Use somente ids devolvidos por list_services/list_barbers. Não ofereça serviço ou barbeiro que a barbearia não tem.",
+            } as OpenAI.Chat.Completions.ChatCompletionMessageParam);
+          }
+        }
+        let bookingWriteFailed = false;
         const callToolOnce = async (): Promise<unknown> => {
           if (name === "select_branch") {
             const bid = args.barbershop_id as string;
@@ -2524,24 +3838,27 @@ export async function runAgent(
             const servicesUnknown = await aiTools.listServices(currentBarbershopId);
             const catalog = catalogFromUnknown(servicesUnknown);
             const named = resolveServiceForTurn(lastUserTextRaw, memoryServiceNames(), catalog);
-            if (!bookingDraft.service_ids?.length && !named.match) {
-              return {
-                error: named.ambiguous
-                  ? "Serviço ainda ambíguo. Pergunte se é o simples ou o combo. Não chame check_availability."
-                  : "Serviço ainda não está no rascunho. Pergunte corte, barba ou combo. Não chame check_availability.",
-              };
-            }
             const argServiceIds = idsKnownToCatalog(args.service_ids, catalog);
             const argServiceId = idKnownToCatalog(args.service_id, catalog);
-            const serviceIds = named.match
-              ? [named.match.id]
-              : argServiceIds.length
-                ? argServiceIds
-                : argServiceId
-                  ? [argServiceId]
-                  : bookingDraft.service_ids;
+            const resolvedServices = resolveCheckServiceIds({
+              namedMatchId: named.match?.id,
+              namedAmbiguous: Boolean(named.ambiguous),
+              draftServiceIds: bookingDraft.service_ids,
+              upcomingServiceIds: upcomingAppointments[0]?.service_ids,
+              argServiceIds: argServiceId ? [argServiceId, ...argServiceIds] : argServiceIds,
+            });
+            if ("ask" in resolvedServices) {
+              return {
+                error:
+                  resolvedServices.ask === "ambiguous"
+                    ? "Serviço ainda ambíguo. Pergunte se é o simples ou o combo. Não chame check_availability."
+                    : "Serviço ainda não está no rascunho. Pergunte corte, barba ou combo. Não chame check_availability.",
+              };
+            }
+            const serviceIds = resolvedServices.serviceIds;
             const serviceId = serviceIds?.length === 1 ? serviceIds[0] : argServiceId;
-            const barberId = idKnownToCatalog(args.barber_id, catalogBarbers) ?? bookingDraft.barber_id;
+            const barberId = barberForThisAvailabilityCheck(args.barber_id);
+            pinDraftBarber(barberId);
             args.date = date;
             args.time = time;
             if (serviceIds?.length) args.service_ids = serviceIds;
@@ -2557,6 +3874,7 @@ export async function runAgent(
               barber_id: barberId,
               service_id: serviceId,
               service_ids: serviceIds,
+              exclude_appointment_id: movingAppointmentId,
             });
           }
           if (name === "get_next_slots") {
@@ -2570,29 +3888,32 @@ export async function runAgent(
             const servicesUnknown = await aiTools.listServices(currentBarbershopId);
             const catalog = catalogFromUnknown(servicesUnknown);
             const named = resolveServiceForTurn(lastUserTextRaw, memoryServiceNames(), catalog);
-            const carriedServiceIds = bookingDraft.service_ids?.length
-              ? bookingDraft.service_ids
-              : upcomingAppointments[0]?.service_ids?.length
-                ? upcomingAppointments[0].service_ids
-                : lastVisit?.service_ids ?? [];
-            if (!carriedServiceIds.length && !named.match) {
-              return {
-                error: named.ambiguous
-                  ? "Serviço ainda ambíguo. Pergunte se é o simples ou o combo. Não chame get_next_slots."
-                  : "Serviço ainda não está no rascunho. Pergunte o serviço. Não chame get_next_slots.",
-              };
-            }
             const argServiceIds = idsKnownToCatalog(args.service_ids, catalog);
             const argServiceId = idKnownToCatalog(args.service_id, catalog);
-            const serviceIds = named.match
-              ? [named.match.id]
-              : argServiceIds.length
-                ? argServiceIds
-                : argServiceId
-                  ? [argServiceId]
-                  : carriedServiceIds;
+            const resolvedServices = resolveCheckServiceIds({
+              namedMatchId: named.match?.id,
+              namedAmbiguous: Boolean(named.ambiguous),
+              draftServiceIds: bookingDraft.service_ids,
+              upcomingServiceIds: upcomingAppointments[0]?.service_ids?.length
+                ? upcomingAppointments[0].service_ids
+                : lastVisit?.service_ids,
+              argServiceIds: argServiceId ? [argServiceId, ...argServiceIds] : argServiceIds,
+            });
+            if ("ask" in resolvedServices) {
+              return {
+                error:
+                  resolvedServices.ask === "ambiguous"
+                    ? "Serviço ainda ambíguo. Pergunte se é o simples ou o combo. Não chame get_next_slots."
+                    : "Serviço ainda não está no rascunho. Pergunte o serviço. Não chame get_next_slots.",
+              };
+            }
+            const serviceIds = resolvedServices.serviceIds;
             const serviceId = serviceIds?.length === 1 ? serviceIds[0] : argServiceId;
-            return aiTools.getNextSlots(currentBarbershopId, {
+            const nextSlotsBarberId =
+              barberForThisAvailabilityCheck(args.barber_id) ??
+              (upcomingAppointments.length === 0 ? lastVisit?.barber_id : undefined);
+            pinDraftBarber(nextSlotsBarberId);
+            const listed = await aiTools.getNextSlots(currentBarbershopId, {
               date,
               service_id: serviceId,
               service_ids: serviceIds,
@@ -2601,13 +3922,19 @@ export async function runAgent(
                 : isToday
                   ? ((args.after_time as string) || currentTimeHHmm)
                   : undefined,
-              barber_id:
-                idKnownToCatalog(args.barber_id, catalogBarbers) ??
-                bookingDraft.barber_id ??
-                upcomingAppointments[0]?.barber_id ??
-                lastVisit?.barber_id,
+              barber_id: nextSlotsBarberId,
               limit: typeof args.limit === "number" ? args.limit : undefined,
+              exclude_appointment_id: movingAppointmentId,
             });
+            if (listed && typeof listed === "object" && (listed as { more_later?: boolean }).more_later) {
+              partialSlotListThisTurn = true;
+              roundNotes.push({
+                role: "system" as const,
+                content:
+                  "LISTA PARCIAL: estes são os primeiros horários do dia, não o dia inteiro. Não diga que o restante do expediente está lotado.",
+              });
+            }
+            return listed;
           }
           if (name === "upsert_client")
             return aiTools.upsertClient(
@@ -2657,7 +3984,7 @@ export async function runAgent(
               };
             }
             const payload: Parameters<typeof aiTools.createAppointment>[1] = {
-              client_phone: (args.client_phone as string) ?? clientPhone,
+              client_phone: resolveToolClientPhone(args.client_phone, clientPhone),
               client_name: createName,
               barber_id: bookingDraft.barber_id as string,
               ...(bookingDraft.service_ids?.length === 1
@@ -2667,8 +3994,11 @@ export async function runAgent(
               time: bookingDraft.time as string,
               notes: args.notes as string | undefined,
             };
-            if (typeof args.client_id === "string" && args.client_id) payload.client_id = args.client_id;
             const r = await aiTools.createAppointment(currentBarbershopId, payload, conversationId);
+            const failureCode = r && typeof r === "object" ? String((r as { code?: unknown }).code ?? "") : "";
+            if (failureCode === "SLOT_CONFLICT" || failureCode === "PAST_TIME") {
+              bookingWriteFailed = true;
+            }
             // Fire-and-forget: update client memory from the newly created appointment
             if ((r as Record<string, unknown>)?.id) {
               state = "appointment_created";
@@ -2713,6 +4043,15 @@ export async function runAgent(
             return listed;
           }
           if (name === "cancel_appointment") {
+            if (routing.primaryIntent === "reschedule") {
+              if (!routingApplied.includes("block_cancel_on_reschedule")) {
+                routingApplied.push("block_cancel_on_reschedule");
+              }
+              return {
+                error:
+                  "O cliente pediu para remarcar, não para cancelar. Não cancele: ofereça o novo dia/horário e use reschedule_appointment depois do sim.",
+              };
+            }
             if (upcomingAppointments.length === 0 && listedUpcomingIdsThisTurn.length === 0) {
               return {
                 error:
@@ -2731,9 +4070,13 @@ export async function runAgent(
               resolveToolClientPhone(args.client_phone, clientPhone) || "",
               conversationId,
             );
+            const cancelCode = r && typeof r === "object" ? String((r as { code?: unknown }).code ?? "") : "";
+            if (cancelCode === "SLOT_CONFLICT" || cancelCode === "PAST_TIME") {
+              bookingWriteFailed = true;
+            }
             if (r && typeof r === "object" && (r as { ok?: boolean }).ok === true) {
               state = "appointment_cancelled";
-              bookingDraft = emptyBookingDraft();
+              bookingDraft = draftKeptAfterCancel(bookingDraft, upcomingAppointments[0]);
               await saveBookingDraft(conversationId, bookingDraft);
               updateClientMemoryFromAppointmentEvent({
                 eventType: "appointment_cancelled",
@@ -2744,20 +4087,32 @@ export async function runAgent(
             return r;
           }
           if (name === "reschedule_appointment") {
-            if (looksLikeRescheduleIntent(lastUserText) && !isAffirmativeOnly) {
+            if (movingAppointmentId && !bookingDraft.appointment_id) {
+              bookingDraft = mergeBookingDraft(bookingDraft, { appointment_id: movingAppointmentId });
+            }
+            const confirmingOffer =
+              isAffirmativeOnly &&
+              (assistantAskedConfirmation || assistantOfferedSingleHour(previousAssistant));
+            if (!confirmingOffer) {
               return {
                 deferred: true,
                 reason: "awaiting_client_confirmation",
                 instruction:
-                  "Não altere o horário neste turno. Envie um resumo do novo dia/hora e pergunte 'Posso confirmar?'. Só chame reschedule_appointment depois do sim.",
+                  "Não altere o horário neste turno. Envie um resumo do novo dia/hora e pergunte 'Posso confirmar?'. Só chame reschedule_appointment depois do sim. Não diga que houve falha.",
               };
             }
-            if (!draftIsCloseable(bookingDraft) || !bookingDraft.appointment_id) {
+            const offerMatches = rescheduleDraftMatchesOffer(bookingDraft.time, previousAssistant);
+            if (!offerMatches || !draftIsCloseable(bookingDraft) || !bookingDraft.appointment_id) {
+              if (confirmingOffer && offerMatches && draftIsCloseable(bookingDraft) && !bookingDraft.appointment_id) {
+                bookingWriteFailed = true;
+                return { error: "reschedule_unbound", code: "ACTION_FAILED" };
+              }
               return {
                 deferred: true,
                 reason: "awaiting_offered_draft",
-                instruction:
-                  "Só reagende a partir do rascunho já oferecido (check_availability + Posso confirmar?). Não invente data/hora.",
+                instruction: offerMatches
+                  ? "Só reagende a partir do rascunho já oferecido (check_availability + Posso confirmar?). Não invente data/hora e não diga que houve falha."
+                  : "O rascunho não é o horário que o cliente acabou de aceitar. Chame check_availability desse horário. Não diga que está ocupado e não diga que houve falha.",
               };
             }
             const r = await aiTools.rescheduleAppointmentByAgent(
@@ -2771,7 +4126,11 @@ export async function runAgent(
               },
               conversationId,
             );
-            if (r && typeof r === "object" && (r as { ok?: boolean }).ok === true) {
+            const rescheduleOk = r != null && typeof r === "object" && (r as { ok?: boolean }).ok === true;
+            if (!rescheduleOk) {
+              bookingWriteFailed = true;
+            }
+            if (rescheduleOk) {
               state = "appointment_rescheduled";
               bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed" });
               await saveBookingDraft(conversationId, bookingDraft);
@@ -2817,6 +4176,10 @@ export async function runAgent(
               resolveToolClientPhone(args.client_phone, clientPhone) || "",
               conversationId,
             );
+            const confirmCode = r && typeof r === "object" ? String((r as { code?: unknown }).code ?? "") : "";
+            if (confirmCode === "SLOT_CONFLICT" || confirmCode === "PAST_TIME") {
+              bookingWriteFailed = true;
+            }
             if (r && typeof r === "object" && (r as { ok?: boolean }).ok === true) {
               state = "appointment_confirmed";
             }
@@ -2827,10 +4190,12 @@ export async function runAgent(
               return { ok: true, already_sent: true, message: "Localização já enviada neste pedido." };
             }
             locationSentThisTurn = true;
-            return sendBarbershopLocationToClient(
+            const sent = await sendBarbershopLocationToClient(
               currentBarbershopId,
               resolveToolClientPhone(args.client_phone, clientPhone) || "",
             );
+            if ("ok" in sent && sent.ok) locationPinSentThisTurn = true;
+            return sent;
           }
           if (name === "send_sticker") {
             if (stickerSentThisTurn) {
@@ -2846,9 +4211,33 @@ export async function runAgent(
               client_phone: clientPhone,
               plan_id: (args.plan_id as string) ?? "",
               billing_day: typeof args.billing_day === "number" ? args.billing_day : undefined,
+              client_name: bookingName || undefined,
             });
             if (subResult && typeof subResult === "object" && !("error" in subResult)) {
               state = "plan_subscribed";
+              const created = subResult as { subscription_id?: string; plan_name?: string };
+              const planName = created.plan_name?.trim() || "plano";
+              let firstCharge: unknown = null;
+              if (created.subscription_id) {
+                firstCharge = await aiTools.sendPixPlanCharge(currentBarbershopId, {
+                  subscription_id: created.subscription_id,
+                  client_phone: clientPhone,
+                });
+                const chargeOk =
+                  firstCharge != null &&
+                  typeof firstCharge === "object" &&
+                  !("error" in (firstCharge as object));
+                turnTrace.toolsExecuted.push({ name: "send_pix_plan_charge", ok: chargeOk });
+              }
+              await recordOperationalActivity({
+                barbershopId: currentBarbershopId,
+                type: "plan_requested",
+                summary: `Pediu o plano ${planName}`,
+                conversationId,
+                clientPhone,
+                clientName: bookingName || null,
+              });
+              return { ...(subResult as object), first_charge: firstCharge };
             }
             return subResult;
           }
@@ -2859,10 +4248,24 @@ export async function runAgent(
             });
           if (name === "send_shop_pix") {
             const pix = await aiTools.sendShopPix(currentBarbershopId, clientPhone);
-            if (pix && typeof pix === "object" && (pix as { sent?: boolean }).sent) {
-              shopPixSentThisTurn = true;
-              shopPixKeyThisTurn = String((pix as { pix_key?: string }).pix_key ?? "");
-              delete (pix as { pix_key?: string }).pix_key;
+            if (pix && typeof pix === "object" && (pix as { ok?: boolean }).ok && (pix as { pix_key?: string }).pix_key) {
+              const row = pix as {
+                pix_key: string;
+                pix_key_type?: string | null;
+                pix_holder_name?: string | null;
+                shop_name?: string | null;
+              };
+              shopPixThisTurn = {
+                key: row.pix_key,
+                keyType: row.pix_key_type ?? null,
+                holderName: row.pix_holder_name ?? null,
+                shopName: row.shop_name ?? null,
+              };
+              return {
+                ok: true,
+                prepared: true,
+                instruction: "A mensagem com valor e chave será enviada pelo sistema. Não repita a chave.",
+              };
             }
             return pix;
           }
@@ -2894,14 +4297,15 @@ export async function runAgent(
             result = { error: e2 instanceof Error ? e2.message : "Tool error" };
           }
         }
-        if (
+        const toolFailed =
           result != null &&
           typeof result === "object" &&
           "error" in result &&
-          (result as { error?: unknown }).error
-        ) {
+          Boolean((result as { error?: unknown }).error);
+        if (toolFailed) {
           toolErrorCount++;
         }
+        turnTrace.toolsExecuted.push({ name, ok: !toolFailed });
         const content = JSON.stringify(result).slice(0, 4096);
         await persistTool(name, args, content);
         loopMessages.push({
@@ -2909,22 +4313,56 @@ export async function runAgent(
           tool_call_id: tc.id,
           content,
         });
+        if (bookingWriteFailed) {
+          return finishTurn(await speakUnwrittenSlot(), true);
+        }
+        if (state === "appointment_created" || state === "appointment_rescheduled") {
+          return finishTurn("", true);
+        }
+        const deferredReason =
+          result != null && typeof result === "object" && (result as { deferred?: boolean }).deferred === true
+            ? String((result as { reason?: unknown }).reason ?? "")
+            : "";
+        if (deferredReason === "awaiting_client_name") {
+          if (!routingApplied.includes("ask_name")) routingApplied.push("ask_name");
+          return finishTurn(askClientNameReply(), true);
+        }
+        // Waitlist success → fixed action text (Orchestrator contract: tool fact, not LLM improvisation).
+        if (name === "add_to_waitlist" && !toolFailed) {
+          if (!routingApplied.includes("waitlist_recorded")) routingApplied.push("waitlist_recorded");
+          roundNotes.push({
+            role: "system" as const,
+            content:
+              "AÇÃO CONCLUÍDA: cliente entrou na fila. " +
+              "Responda com uma confirmação curta e factual (ex.: 'Anotei! Se esse horário abrir eu te aviso.'). " +
+              "Não diga que houve falha. Não repita os dados do horário. Não prometa prazo.",
+          } as OpenAI.Chat.Completions.ChatCompletionMessageParam);
+        }
+
         if (name === "check_availability") {
           const snap = snapshotCheckAvailability(result, bookingDraft.barber_id);
           if (snap) lastCheckThisTurn = snap;
           if (snap) {
+            const alreadyConfirmed = isAffirmativeOnly && assistantAskedConfirmation;
             bookingDraft = mergeBookingDraft(bookingDraft, {
               ...draftPatchFromSnap(snap),
-              status: snap.available ? bookingDraft.status : "collecting",
+              ...(movingAppointmentId ? { appointment_id: movingAppointmentId } : {}),
+              status: snap.available
+                ? alreadyConfirmed
+                  ? "offered"
+                  : bookingDraft.status
+                : "collecting",
             });
             await saveBookingDraft(conversationId, bookingDraft);
-            const alreadyConfirmed = isAffirmativeOnly && assistantAskedConfirmation;
             roundNotes.push({
               role: "system" as const,
               content: snap.available
                 ? alreadyConfirmed
-                  ? `SLOT LIVRE em ${snap.date} às ${snap.time} com ${snap.barberName || "o barbeiro pedido"} (${snap.serviceName || "serviço"}, R$ ${snap.totalPrice}). ` +
-                    `O cliente já confirmou. Chame create_appointment agora. Não pergunte "Posso confirmar?" de novo.`
+                  ? movingAppointmentId
+                    ? `SLOT LIVRE em ${snap.date} às ${snap.time} com ${snap.barberName || "o barbeiro pedido"} (${snap.serviceName || "serviço"}, R$ ${snap.totalPrice}). ` +
+                      `O cliente já confirmou. Chame reschedule_appointment agora. Não use create_appointment e não diga que houve falha.`
+                    : `SLOT LIVRE em ${snap.date} às ${snap.time} com ${snap.barberName || "o barbeiro pedido"} (${snap.serviceName || "serviço"}, R$ ${snap.totalPrice}). ` +
+                      `O cliente já confirmou. Chame create_appointment agora. Não pergunte "Posso confirmar?" de novo.`
                   : `SLOT LIVRE em ${snap.date} às ${snap.time} com ${snap.barberName || "o barbeiro pedido"} (${snap.serviceName || "serviço"}, R$ ${snap.totalPrice}). ` +
                     `Responda só com um resumo (serviço, barbeiro, dia da semana, data, hora, valor) e pergunte "Posso confirmar?". ` +
                     `PROIBIDO neste turno: create_appointment, falar de outro dia fechado, "não conseguimos", "deu erro".`
@@ -2934,45 +4372,6 @@ export async function runAgent(
           }
         }
 
-        // After create_appointment fails, inject a mandatory system guardrail to
-        // prevent the model from hallucinating a booking confirmation.
-        if (
-          name === "create_appointment" &&
-          result != null &&
-          typeof result === "object" &&
-          "error" in result &&
-          (result as { error?: unknown }).error
-        ) {
-          const errCode = String((result as Record<string, unknown>).code ?? "ERRO");
-          roundNotes.push({
-            role: "system" as const,
-            content:
-              `⛔ AGENDAMENTO NÃO CRIADO (${errCode}): o horário solicitado NÃO foi reservado.\n` +
-              `ABSOLUTAMENTE PROIBIDO: dizer "Agendamento confirmado", "está marcado", "Aguardamos você", ` +
-              `"confirmei o agendamento" ou qualquer variação.\n` +
-              `AÇÃO IMEDIATA OBRIGATÓRIA: chame get_next_slots (limit=8) para obter novos horários ` +
-              `e ofereça 2 opções conversacionais (manhã + tarde) ao cliente.` +
-              (errCode === "SLOT_CONFLICT" ? " Não repita o horário rejeitado." : ""),
-          } as OpenAI.Chat.Completions.ChatCompletionMessageParam);
-        }
-        if (
-          name === "reschedule_appointment" &&
-          result != null &&
-          typeof result === "object" &&
-          "error" in result &&
-          (result as { error?: unknown }).error
-        ) {
-          const errCode = String((result as Record<string, unknown>).code ?? "ERRO");
-          roundNotes.push({
-            role: "system" as const,
-            content:
-              `⛔ REAGENDAMENTO NÃO EFETUADO (${errCode}): a agenda NÃO foi alterada.\n` +
-              `ABSOLUTAMENTE PROIBIDO: dizer "reagendado", "confirmado" ou "agendamento ajustado" até um reschedule_appointment bem-sucedido.\n` +
-              `Ao cliente: diga de forma humana que esse horário não está disponível (ou já foi preenchido) e pergunte se prefere manhã ou tarde. ` +
-              `Chame get_next_slots (limit=8) e ofereça 2–3 horários conversacionais sem lista numerada.` +
-              (errCode === "SLOT_CONFLICT" ? " Não repita o horário rejeitado." : ""),
-          } as OpenAI.Chat.Completions.ChatCompletionMessageParam);
-        }
       }
       for (const note of roundNotes) loopMessages.push(note);
       if (
@@ -2991,6 +4390,91 @@ export async function runAgent(
     if (looksLikePhoneRequest(reply)) {
       reply = "Me diz qual serviço você quer e pra qual dia e horário, que já te encaixo.";
     }
+    const understood = understoodBookableSlot(intentSet);
+    const soleUpcoming = upcomingAppointments.length === 1 ? upcomingAppointments[0] : undefined;
+    const moveServiceIds = soleUpcoming?.service_ids?.length
+      ? soleUpcoming.service_ids
+      : bookingDraft.service_ids ?? [];
+    const moveDate = soleUpcoming
+      ? (bookingDateFromUserTurn(lastUserTextRaw, dateOnlyStr)?.date ?? String(soleUpcoming.date).slice(0, 10))
+      : "";
+    const moveWindow = moveDate
+      ? shopWindowOnIso(moveDate, businessHoursRaw as Parameters<typeof shopWindowOnIso>[1])
+      : { start: null as string | null, end: null as string | null };
+    const moveSlot = soleUpcoming
+      ? pendingMoveSlot({
+          userText: lastUserTextRaw,
+          upcomingDate: String(soleUpcoming.date),
+          upcomingTime: String(soleUpcoming.time),
+          date: moveDate,
+          opensAt: moveWindow.start,
+          closesAt: moveWindow.end,
+        })
+      : null;
+    const acceptedClock =
+      soleUpcoming && !moveSlot && !draftIsCloseable(bookingDraft)
+        ? affirmedUnverifiedClock({
+            userText: lastUserTextRaw,
+            previousAssistant,
+            affirmative: isAffirmativeOnly,
+            askedConfirmation: assistantAskedConfirmation,
+            opensAt: moveWindow.start,
+            closesAt: moveWindow.end,
+          })
+        : null;
+    const forcedSlot = understood
+      ? {
+          date: understood.date,
+          time: understood.time,
+          barberId: understood.barberId,
+          serviceIds: understood.serviceIds,
+        }
+      : moveSlot && moveServiceIds.length
+        ? {
+            date: moveSlot.date,
+            time: moveSlot.time,
+            barberId: barberForThisAvailabilityCheck(undefined),
+            serviceIds: moveServiceIds,
+          }
+        : acceptedClock && moveServiceIds.length
+          ? {
+              date: String(soleUpcoming?.date ?? "").slice(0, 10),
+              time: acceptedClock,
+              barberId: barberForThisAvailabilityCheck(undefined),
+              serviceIds: moveServiceIds,
+            }
+          : null;
+    if (
+      routing.allowedTools.includes("check_availability") &&
+      forcedSlot?.barberId &&
+      forcedSlot.serviceIds.length &&
+      !lastCheckThisTurn &&
+      !turnTrace.toolsExecuted.some((tool) => tool.name === "check_availability")
+    ) {
+      const checked = await aiTools.checkAvailability(effectiveBarbershopId, {
+        date: forcedSlot.date,
+        time: forcedSlot.time,
+        barber_id: forcedSlot.barberId,
+        service_ids: forcedSlot.serviceIds,
+        exclude_appointment_id: movingAppointmentId,
+      });
+      const snap = snapshotCheckAvailability(checked, forcedSlot.barberId);
+      if (snap) {
+        lastCheckThisTurn = snap;
+        turnTrace.toolsExecuted.push({ name: "check_availability", ok: true });
+        if (!routingApplied.includes("check_before_draft")) routingApplied.push("check_before_draft");
+        await persistTool(
+          "check_availability",
+          {
+            date: forcedSlot.date,
+            time: forcedSlot.time,
+            barber_id: forcedSlot.barberId,
+            service_ids: forcedSlot.serviceIds,
+          },
+          JSON.stringify(checked).slice(0, 4096),
+        );
+      }
+    }
     if (lastCheckThisTurn?.available && lastCheckThisTurn.barberName && lastCheckThisTurn.serviceName) {
       const alreadyConfirmed = isAffirmativeOnly && assistantAskedConfirmation;
       if (!alreadyConfirmed) {
@@ -3004,32 +4488,157 @@ export async function runAgent(
             firstName: clientName ? firstNameFromClientName(clientName) : undefined,
             todayIso: dateOnlyStr,
           });
-        reply = withBarberSubstitutionDisclosure(reply, lastUserTextRaw, catalogBarbers, lastCheckThisTurn.barberName);
+        const recentUserTurnsForDisclosure = lastN
+          .filter((m) => m.role === "user")
+          .slice(-4, -1) // up to 3 previous user messages, excluding the current
+          .map((m) => String(m.content ?? ""));
+        reply = withBarberSubstitutionDisclosure(reply, lastUserTextRaw, catalogBarbers, lastCheckThisTurn.barberName, recentUserTurnsForDisclosure);
         composed = true;
       }
       bookingDraft = mergeBookingDraft(bookingDraft, {
         ...draftPatchFromSnap(lastCheckThisTurn),
+        ...(movingAppointmentId ? { appointment_id: movingAppointmentId } : {}),
         status: clientName ? "offered" : "awaiting_name",
       });
       await saveBookingDraft(conversationId, bookingDraft);
+      const acceptedThisCheck =
+        Boolean(acceptedClock) &&
+        alreadyConfirmed &&
+        lastCheckThisTurn.time.slice(0, 5) === acceptedClock &&
+        Boolean(movingAppointmentId) &&
+        draftIsCloseable(bookingDraft);
+      if (
+        acceptedThisCheck &&
+        movingAppointmentId &&
+        lastCheckThisTurn.barberId &&
+        routing.allowedTools.includes("reschedule_appointment")
+      ) {
+        const written = await aiTools.rescheduleAppointmentByAgent(
+          effectiveBarbershopId,
+          movingAppointmentId,
+          clientPhone,
+          {
+            date: lastCheckThisTurn.date,
+            time: lastCheckThisTurn.time,
+            barber_id: lastCheckThisTurn.barberId,
+          },
+          conversationId,
+        );
+        const ok = written != null && typeof written === "object" && (written as { ok?: boolean }).ok === true;
+        await persistTool(
+          "reschedule_appointment",
+          {
+            date: lastCheckThisTurn.date,
+            time: lastCheckThisTurn.time,
+            barber_id: lastCheckThisTurn.barberId,
+          },
+          JSON.stringify(written).slice(0, 4096),
+        );
+        turnTrace.toolsExecuted.push({ name: "reschedule_appointment", ok });
+        if (!ok) return finishTurn(await speakUnwrittenSlot(), true);
+        state = "appointment_rescheduled";
+        bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed" });
+        await saveBookingDraft(conversationId, bookingDraft);
+        reply = "";
+        composed = true;
+      }
     } else if (lastCheckThisTurn && !lastCheckThisTurn.available) {
-      reply = occupiedCopyFromSnap(
-        {
-          ...lastCheckThisTurn,
-          barberName: lastCheckThisTurn.barberName || bookingDraft.barber_name || "",
-          barberId: lastCheckThisTurn.barberId || bookingDraft.barber_id || "",
-        },
-        dateOnlyStr,
-        lastN.some(
-          (m) => m.role === "user" && clientPinnedBarberClockAndDay(String(m.content ?? ""), catalogBarbers, dateOnlyStr),
-        ),
-      );
+      const namedNow = resolveBarberFromText(lastUserTextRaw, catalogBarbers);
+      const boundBarberId = bookingDraft.barber_id || upcomingAppointments[0]?.barber_id;
+      const heldBarber = Boolean(boundBarberId) && !(namedNow && namedNow.id !== boundBarberId);
+      const unavailableSnap = {
+        ...lastCheckThisTurn,
+        barberName: lastCheckThisTurn.barberName || bookingDraft.barber_name || "",
+        barberId: lastCheckThisTurn.barberId || bookingDraft.barber_id || "",
+      };
+      reply = occupiedCopyFromSnap(unavailableSnap, dateOnlyStr, heldBarber);
       composed = true;
-      bookingDraft = mergeBookingDraft(bookingDraft, { ...draftPatchFromSnap(lastCheckThisTurn), status: "collecting" });
+      const alternative = concreteAlternativeToLock({
+        date: unavailableSnap.date,
+        reason: unavailableSnap.unavailableReason,
+        requestedTime: unavailableSnap.time,
+        requestedBarberId: unavailableSnap.barberId,
+        requestedBarberName: unavailableSnap.barberName,
+        holdRequestedBarber: heldBarber,
+        allowOtherBarber: !heldBarber,
+        lastFit: unavailableSnap.lastFit,
+        alternatives: unavailableSnap.alternatives,
+        sameTimeOthers: unavailableSnap.sameTimeOthers,
+      });
+      const spokenHour = assistantOfferedSingleHour(reply) ? parseClientTime(reply) : null;
+      const lockBarberId = alternative?.barber_id || unavailableSnap.barberId || bookingDraft.barber_id;
+      const lockTime = (spokenHour || alternative?.time || "").slice(0, 5);
+      if (lockBarberId && /^\d{2}:\d{2}$/.test(lockTime) && (spokenHour || alternative?.barber_id)) {
+        bookingDraft = lockOfferedSlot(
+          mergeBookingDraft(bookingDraft, draftPatchFromSnap(lastCheckThisTurn)),
+          {
+            date: alternative?.date || unavailableSnap.date,
+            time: lockTime,
+            barber_id: lockBarberId,
+            barber_name: alternative?.barber_name || unavailableSnap.barberName || bookingDraft.barber_name,
+            appointment_id: movingAppointmentId,
+            status: bookingName ? "offered" : "awaiting_name",
+          },
+        );
+      } else if (!parseClientTime(reply)) {
+        reply = await lockOneConcreteHour(reply, unavailableSnap);
+        if (!parseClientTime(reply)) {
+          bookingDraft = mergeBookingDraft(bookingDraft, {
+            ...draftPatchFromSnap(lastCheckThisTurn),
+            status: "collecting",
+            waitlistOffer: reply.includes("te aviso"),
+          });
+        }
+      } else {
+        bookingDraft = mergeBookingDraft(bookingDraft, {
+          ...draftPatchFromSnap(lastCheckThisTurn),
+          status: "collecting",
+          waitlistOffer: reply.includes("te aviso"),
+        });
+      }
       await saveBookingDraft(conversationId, bookingDraft);
+    }
+    if (
+      !composed &&
+      soleUpcoming &&
+      !state &&
+      replyClaimsOtherClock(reply, String(soleUpcoming.time).slice(0, 5))
+    ) {
+      reply = composeUpcomingRecap({
+        firstName: clientName ? firstNameFromClientName(clientName) : undefined,
+        serviceName: soleUpcoming.service_names || "seu horário",
+        when: formatResumoWhen(String(soleUpcoming.date).slice(0, 10), String(soleUpcoming.time).slice(0, 5), dateOnlyStr),
+        barberName: soleUpcoming.barber_name,
+        price: soleUpcoming.price,
+      });
+      composed = true;
+    }
+    const checkedSlotsThisTurn =
+      Boolean(lastCheckThisTurn) ||
+      turnTrace.toolsExecuted.some(
+        (tool) => (tool.name === "check_availability" || tool.name === "get_next_slots") && tool.ok,
+      );
+    const checkSaidUnavailable = Boolean(lastCheckThisTurn && !lastCheckThisTurn.available);
+    if (!composed && !checkSaidUnavailable && replyNarratesBookingFailure(reply)) {
+      return handoffAfterBookingFailure("narrated_booking_failure");
+    }
+    if (
+      !composed &&
+      partialSlotListThisTurn &&
+      /n[aã]o temos hor[aá]rios|restante do (dia|expediente) est[aá]/i.test(reply)
+    ) {
+      return handoffAfterBookingFailure("partial_day_claim");
+    }
+    if (!composed && !checkedSlotsThisTurn && replyNegotiatesUnverifiedSlots(reply)) {
+      return handoffAfterBookingFailure("unverified_slot_reply");
+    }
+    const checkFailed = turnTrace.toolsExecuted.some((tool) => tool.name === "check_availability" && !tool.ok);
+    if (!composed && checkFailed && replyClaimsSlotIsFree(reply)) {
+      return handoffAfterBookingFailure("check_failed_free_claim");
     }
     return finishTurn(reply, composed);
   }
 
+  turnTrace.silencedBy = "tool_loop_exhausted";
   return finishTurn("", false);
 }

@@ -117,10 +117,16 @@ describe("Public cancel/reschedule", () => {
 
   it("POST /api/public/appointments/:token/reschedule returns 400 when time outside business hours", async () => {
     if (!fixturesReschedule) return;
-    const tomorrow = await pool.query<{ d: string }>(
-      "SELECT (CURRENT_DATE + 1)::text AS d"
+    // Use next Mon–Sat so the fixture barbershop (which has sunday: null) is always open on that day.
+    // "08:00" is always before the 09:00 open time → guaranteed outside-hours 400.
+    const nextWeekday = await pool.query<{ d: string }>(
+      `SELECT (CURRENT_DATE + d)::text AS d
+       FROM generate_series(1, 7) AS d
+       WHERE extract(dow from CURRENT_DATE + d)::int BETWEEN 1 AND 6
+       LIMIT 1`
     );
-    const dateStr = tomorrow.rows[0].d;
+    const dateStr = nextWeekday.rows[0]?.d;
+    if (!dateStr) return; // guard — should never happen Mon-Sat
     const res = await request(app)
       .post(`/api/public/appointments/${fixturesReschedule.publicToken}/reschedule`)
       .send({
@@ -129,15 +135,21 @@ describe("Public cancel/reschedule", () => {
         barber_id: fixturesReschedule.barberId,
       })
       .expect(400);
-    expect(res.body.error).toMatch(/expediente|Horário/);
+    // "Horário fora do expediente" or, if that day has no hours at all, "Barbearia não abre neste dia"
+    expect(res.body.error).toMatch(/abre neste dia|expediente|Horário/i);
   });
 
   it("POST /api/public/appointments/:token/reschedule returns 200 for valid slot", async () => {
     if (!fixturesReschedule) return;
-    const tomorrow = await pool.query<{ d: string }>(
-      "SELECT (CURRENT_DATE + 1)::text AS d"
+    // Use next Mon–Sat to avoid Sunday (closed in defaultBusinessHours).
+    const nextWeekday = await pool.query<{ d: string }>(
+      `SELECT (CURRENT_DATE + d)::text AS d
+       FROM generate_series(1, 7) AS d
+       WHERE extract(dow from CURRENT_DATE + d)::int BETWEEN 1 AND 6
+       LIMIT 1`
     );
-    const dateStr = tomorrow.rows[0].d;
+    const dateStr = nextWeekday.rows[0]?.d;
+    if (!dateStr) return;
 
     const res = await request(app)
       .post(`/api/public/appointments/${fixturesReschedule.publicToken}/reschedule`)

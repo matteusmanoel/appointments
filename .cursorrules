@@ -54,3 +54,23 @@ Você está trabalhando no repositório "barber-harmony" (NavalhIA).
 - Não commitar arquivos de ambiente/segredos (ex.: `.env.prod`, `.env.staging`) nem outputs sensíveis.
 - Não criar mudanças grandes sem necessidade: prefira patches localizados, consistentes com o estilo existente.
 - Ao tocar UI/UX, mantenha consistência visual (Tailwind + componentes shadcn) e acessibilidade (labels/aria).
+
+## Arquitetura do agente WhatsApp
+- `runAgent` é thin coordinator: apenas sequencia as fases, sem lógica de negócio própria.
+- Cada fase em arquivo separado com interface TypeScript exportada (opção B — SRP em nível de arquivo):
+  - `agent/context-builder.ts` → `AgentContext`
+  - `agent/understanding.ts`   → `IntentSet`
+  - `agent/orchestrator.ts`    → `Plan`
+  - `agent/composer.ts`        → `Reply[]`
+- **Understanding** extrai sinais linguísticos. Nunca consulta catálogo, regras de negócio ou estado de conversa. Pode retornar campos `null` ou `"ambiguous"` — isso é esperado.
+- **Orchestrator** resolve ambiguidades de catálogo e domínio, verifica campos obrigatórios, decide perguntas e ações. Sempre determinístico — sem delegação ao LLM para decisões de negócio.
+- **Composer** traduz o `Plan` em linguagem natural. Nunca decide lógica de negócio.
+- Intents classificados como `unknown` com > 8 tokens (não saudação) devem ser registrados em `backend/benchmark/suggestions/new-intents.jsonl` para revisão futura.
+- Novos tipos de intent exigem atualização do conjunto fechado em `CONTEXT.md` antes de implementar — não adicionar heurísticas específicas de palavras ou frases.
+- Threshold de handoff por baixa confiança (`HANDOFF_LOW_CONFIDENCE_THRESHOLD = 0.35`) é constante nomeada em arquivo de config, nunca hardcoded inline.
+
+## Benchmark e qualidade do agente
+- Contratos comportamentais (Camada 2) verificam o trace estruturado (`debugContext`, `result.state`, ordem de tool calls) — nunca strings da resposta.
+- LLM-judge (Camada 3) avalia somente tom e naturalidade — nunca corretude de ação.
+- Qualquer mudança em `agent.ts`, `booking-draft.ts`, `conversation-intents.ts`, `tools.ts` ou `date-calendar.ts` exige um cenário golden cobrindo o comportamento modificado. Sem cenário → PR bloqueado por convenção.
+- Cenário golden = sequência de **Turnos** (não Eventos individuais) com `contracts[]` sobre trace. Ver `CONTEXT.md ##Agente` para definições de Turno, Intenção, Estado de conversa e Resultado de Turno.

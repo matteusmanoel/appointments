@@ -65,9 +65,11 @@ export type ConnectTabProps = {
   onNumberModeChange?: (mode: "account_wide" | "per_branch", primaryBarbershopId?: string | null) => void;
   numberModeLoading?: boolean;
   numberModeSaving?: boolean;
-  /** Chamado quando a barra de progresso atinge o timeout (para refetch do status/QR). */
-  onRefetchStatus?: () => void;
-  /** Tempo em segundos até considerar timeout e disparar refetch. Padrão 60. */
+  /** Sessão de pareamento aberta pelo clique em Conectar. Status antigo no banco não liga isso. */
+  pairingActive?: boolean;
+  /** Barra chegou a zero sem conexão: o pai encerra o pareamento e volta ao botão Conectar. */
+  onPairingExpired?: () => void;
+  /** Tempo em segundos da barra. Ao zerar sem conexão, o pareamento reseta. Padrão 60. */
   connectionTimeoutSeconds?: number;
 };
 
@@ -104,23 +106,23 @@ export function ConnectTab({
   onNumberModeChange,
   numberModeLoading = false,
   numberModeSaving = false,
-  onRefetchStatus,
+  pairingActive = false,
+  onPairingExpired,
   connectionTimeoutSeconds = 60,
 }: ConnectTabProps) {
   const [acceptedPolicy, setAcceptedPolicy] = useState(hasAcceptedPolicy);
   const [acceptedUse, setAcceptedUse] = useState(false);
   /** Percentual restante (100 → 0) para barra regressiva ao aguardar pareamento */
   const [connectingRemainingPct, setConnectingRemainingPct] = useState(100);
-  const connectCycleStartRef = useRef<number>(0);
-  /** Após fim da barra: exibir resultado do refetch (sucesso ou erro) */
+  /** Após fim da barra: exibir o reset ao usuário */
   const [refetchResult, setRefetchResult] = useState<"success" | "error" | null>(null);
   const [refetchResultMessage, setRefetchResultMessage] = useState<string | null>(null);
-  const refetchTriggeredByBarRef = useRef(false);
+  const expiredRef = useRef(onPairingExpired);
+  expiredRef.current = onPairingExpired;
+  const expiredFiredRef = useRef(false);
 
   const isConnected = !!(connection?.connected || statusData?.connected);
-  const isConnecting =
-    !isConnected &&
-    (statusData?.status === "connecting" || connection?.status === "connecting");
+  const isConnecting = !isConnected && (pairingActive || startPending);
 
   // Limpar resultado do refetch após alguns segundos
   useEffect(() => {
@@ -129,48 +131,31 @@ export function ConnectTab({
     return () => clearTimeout(t);
   }, [refetchResult]);
 
-  // Barra regressiva: 100 → 0 a cada connectionTimeoutSeconds; ao chegar em 0 dispara refetch e marca que foi pela barra
+  // Barra regressiva. No zero, sem conexão, o pareamento acaba e não recomeça.
   useEffect(() => {
     if (!isConnecting) {
       setConnectingRemainingPct(100);
+      expiredFiredRef.current = false;
       return;
     }
-    connectCycleStartRef.current = Date.now();
+    const start = Date.now();
     const durationMs = connectionTimeoutSeconds * 1000;
     const interval = setInterval(() => {
-      const start = connectCycleStartRef.current;
       const elapsed = Date.now() - start;
       const remainingPct = Math.max(0, 100 - (elapsed / durationMs) * 100);
       setConnectingRemainingPct(remainingPct);
-      if (remainingPct <= 0 && onRefetchStatus) {
-        refetchTriggeredByBarRef.current = true;
-        onRefetchStatus();
-        connectCycleStartRef.current = Date.now();
-        setConnectingRemainingPct(100);
+      if (elapsed >= durationMs && !expiredFiredRef.current) {
+        expiredFiredRef.current = true;
+        clearInterval(interval);
+        setRefetchResult("error");
+        setRefetchResultMessage(
+          "O tempo de pareamento acabou. Clique em Conectar para gerar um novo QR Code."
+        );
+        expiredRef.current?.();
       }
     }, 150);
     return () => clearInterval(interval);
-  }, [isConnecting, connectionTimeoutSeconds, onRefetchStatus]);
-
-  // Quando isConnecting deixa de ser true e o refetch foi disparado pela barra: sinalizar resultado ao usuário
-  const prevConnectingRef = useRef(false);
-  useEffect(() => {
-    const wasConnecting = prevConnectingRef.current;
-    prevConnectingRef.current = isConnecting;
-    if (wasConnecting && !isConnecting && refetchTriggeredByBarRef.current) {
-      refetchTriggeredByBarRef.current = false;
-      if (connection?.connected || statusData?.connected) {
-        setRefetchResult("success");
-        setRefetchResultMessage("Conexão estabelecida!");
-      } else {
-        setRefetchResult("error");
-        setRefetchResultMessage(
-          connection?.last_error?.trim() ||
-            "Ainda não conectado. Escaneie o QR Code ou tente novamente."
-        );
-      }
-    }
-  }, [isConnecting, connection?.connected, connection?.last_error, statusData?.connected, statusData?.status]);
+  }, [isConnecting, connectionTimeoutSeconds]);
 
   useEffect(() => {
     if (acceptedPolicy && acceptedUse && barbershopId) {
@@ -545,19 +530,17 @@ export function ConnectTab({
                 </p>
               )}
 
-              {onRefetchStatus && (
-                <div className="space-y-2 w-full max-w-sm">
-                  <div className="flex justify-between gap-2 text-xs text-muted-foreground">
-                    <span>Aguardando pareamento… O QR é atualizado automaticamente.</span>
-                    <span className="tabular-nums shrink-0">
-                      {connectingRemainingPct <= 0
-                        ? "Atualizando…"
-                        : `${Math.ceil((connectionTimeoutSeconds * connectingRemainingPct) / 100)}s`}
-                    </span>
-                  </div>
-                  <Progress value={connectingRemainingPct} className="h-2" />
+              <div className="space-y-2 w-full max-w-sm">
+                <div className="flex justify-between gap-2 text-xs text-muted-foreground">
+                  <span>Aguardando pareamento…</span>
+                  <span className="tabular-nums shrink-0">
+                    {connectingRemainingPct <= 0
+                      ? "Encerrando…"
+                      : `${Math.ceil((connectionTimeoutSeconds * connectingRemainingPct) / 100)}s`}
+                  </span>
                 </div>
-              )}
+                <Progress value={connectingRemainingPct} className="h-2" />
+              </div>
 
               {webhookWarning && (
                 <p className="text-xs text-amber-600 dark:text-amber-500 text-center max-w-sm">

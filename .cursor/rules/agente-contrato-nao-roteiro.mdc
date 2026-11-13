@@ -1,0 +1,44 @@
+---
+description: Agente WhatsApp evolui por contrato e guardrail, sem roteiro de frase por input. Prova no Evolution real.
+alwaysApply: true
+---
+
+# Agente: contrato, não roteiro
+
+O cliente fala de formas que o código não enumera. Ampliar o agente é alargar o que ele pode fazer dentro do escopo, não escrever a frase de cada input.
+
+Decisão de negócio fica no orquestrador e nas tools: o que é verdade, o que pode ser afirmado, qual ação executar. O modelo redige. Se a frase afirmasse um fato que o turno não estabeleceu, não entregue essa frase.
+
+## O que é contrato
+
+- Presença só existe depois de lembrete pendente e de `confirm_appointment` com sucesso. Afirmação solta ("Pode", "Sim", "Por favor") não confirma presença.
+- Horário novo de quem já tem agendamento só é dito depois de `check_availability`. Sem check, não afirmar que já está marcado nesse horário.
+- Reagendar só a hora mantém o profissional do horário atual, salvo se este turno nomeou outro.
+- Tool planejada executa e o resultado chega na resposta. Falha de gravação não vira texto de "não consegui" nem handoff inventado.
+
+## O que não fazer
+
+```typescript
+// ❌ frase presa ao exemplo
+if (/^pode$/i.test(text)) return "Presença confirmada, Mateus!";
+
+// ✅ o fato não foi estabelecido: não confirme
+if (replyClaimsPresenceConfirmed(reply) && state !== "appointment_confirmed") return "";
+```
+
+Não acrescentar heurística de palavra, gíria ou frase vista num teste. Ao tocar um template que já dita a fala (`compose*`), ver se ele decide negócio. Se decidir, mover a decisão para o contrato e deixar o texto livre, ou calar.
+
+Texto de ação permanece fixo: a ação já foi decidida e a frase é curta. Isso evita uma chamada ao modelo sem perder o tom. O modelo só redige o turno em que ainda não há ação fechada. Localização, PIX, cartão de oferta e lembrete são texto de ação.
+
+## Silêncio
+
+Representar uma pessoa. Se a alternativa é uma frase de sistema, handoff sem motivo ou um fato falso, não responda. Guardrail que zera a saída é preferível a uma resposta que denuncia o robô.
+
+## Prova
+
+Mudança de comportamento do agente se valida no Evolution, conversa real:
+
+- cliente `5545988230845` (`navalhia-lab`)
+- barbearia `5545988432998`
+
+Golden e Vitest cobrem o trace (estado, tools, o que não pode ser afirmado), não a string da resposta. O cenário ao vivo usa outro jeito de dizer a mesma coisa, não só a frase que quebrou.

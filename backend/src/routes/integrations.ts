@@ -5,7 +5,15 @@ import { pool } from "../db.js";
 import { config } from "../config.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
 import { whatsappRouter } from "./whatsapp.js";
-import { buildFollowUp30d } from "../outbound/templates.js";
+import { buildFollowUp30d, resolveReminderSendBody } from "../outbound/templates.js";
+import { appendReminderTranscript, loadReminderAppointment } from "../outbound/scheduled-messages.js";
+import {
+  DAILY_CAP_REACHED_MESSAGE,
+  dispatchWaitMessage,
+  reminderNotVigenteReason,
+  scheduledTypePurpose,
+} from "../outbound/dispatch-policy.js";
+import { barbershopTimezone, checkDispatchGate } from "../outbound/dispatch-gate.js";
 import { getWhatsAppOrNull, loadConnection } from "../integrations/whatsapp/index.js";
 import { fetchProfilePictureUrl } from "../integrations/whatsapp/evolution-client.js";
 import { recordAgendaChange } from "../agenda/record-agenda-change.js";
@@ -262,6 +270,16 @@ integrationsRouter.get("/automations/scheduled-messages", async (req: Request, r
     params.push(status);
     conditions.push(`status = $${params.length}`);
   }
+  conditions.push(`NOT (
+    m.status = 'queued' AND m.type IN ('reminder_24h', 'reminder_2h') AND NOT EXISTS (
+      SELECT 1 FROM public.appointments a
+      WHERE a.id::text = m.payload_json->>'appointment_id'
+        AND a.status IN ('pending', 'confirmed')
+        AND a.scheduled_date::text = m.payload_json->>'date'
+        AND to_char(a.scheduled_time, 'HH24:MI') = m.payload_json->>'time'
+        AND m.dedupe_key = m.type || ':' || a.id::text
+    )
+  )`);
   params.push(limit);
   const r = await pool.query<{
     id: string;
@@ -281,7 +299,7 @@ integrationsRouter.get("/automations/scheduled-messages", async (req: Request, r
             payload_json->>'service_names' AS service_names,
             payload_json->>'date' AS appt_date,
             payload_json->>'time' AS appt_time
-     FROM public.scheduled_messages
+     FROM public.scheduled_messages m
      WHERE ${conditions.join(" AND ")}
      ORDER BY created_at DESC
      LIMIT $${params.length}`,
@@ -385,124 +403,16 @@ integrationsRouter.get("/automations/followup/eligible", async (req: Request, re
   );
 });
 
-/** GET /api/integrations/automations/followup/credits — balance for manual follow-up */
-integrationsRouter.get("/automations/followup/credits", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
-  try {
-    const r = await pool.query<{ balance: string }>(
-      `SELECT balance FROM public.barbershop_message_credits
-       WHERE barbershop_id = $1 AND credit_type = 'followup_manual'`,
-      [barbershopId]
-    );
-    const balance = r.rows[0] ? parseInt(r.rows[0].balance, 10) : 0;
-    res.json({ balance, credit_type: "followup_manual" });
-  } catch (e) {
-    if (isUndefinedTable(e)) {
-      res.json({ balance: 0, credit_type: "followup_manual" });
-      return;
-    }
-    throw e;
-  }
+/** Follow-up manual aposentado. Endpoints mantidos para não quebrar chamadas antigas. */
+
+// GET /api/integrations/automations/followup/credits — aposentado
+integrationsRouter.get("/automations/followup/credits", (_req: Request, res: Response): void => {
+  res.status(410).json({ error: "Follow-up manual fora do produto. Use o painel de reativação." });
 });
 
-const dispatchFollowUpBody = z.object({
-  client_ids: z.array(z.string().uuid()).min(1).max(100),
-  days: z.number().int().min(7).max(365).optional(),
-});
-
-/** POST /api/integrations/automations/followup/dispatch — enqueue followup_30d for selected clients; dedupe monthly; debit credits */
-integrationsRouter.post("/automations/followup/dispatch", async (req: Request, res: Response): Promise<void> => {
-  const barbershopId = getBarbershopId(req);
-  const parsed = dispatchFollowUpBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
-    return;
-  }
-  const { client_ids } = parsed.data;
-  const now = new Date();
-  const yearMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-  const appUrl = (config.appUrl || "").replace(/\/$/, "");
-
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const balanceRow = await client.query<{ balance: string }>(
-      `SELECT balance FROM public.barbershop_message_credits
-       WHERE barbershop_id = $1 AND credit_type = 'followup_manual'
-       FOR UPDATE`,
-      [barbershopId]
-    );
-    let balance = balanceRow.rows[0] ? parseInt(balanceRow.rows[0].balance, 10) : 0;
-    if (balance < client_ids.length) {
-      await client.query("ROLLBACK");
-      res.status(402).json({
-        error: "Créditos insuficientes",
-        required: client_ids.length,
-        balance,
-      });
-      return;
-    }
-    const slugRow = await client.query<{ slug: string | null }>(
-      `SELECT slug FROM public.barbershops WHERE id = $1`,
-      [barbershopId]
-    );
-    const slug = slugRow.rows[0]?.slug ?? null;
-    const bookingLink = slug ? `${appUrl}/b/${slug}` : appUrl || "";
-    const clientsRow = await client.query<{ id: string; name: string | null; phone: string }>(
-      `SELECT id, name, phone FROM public.clients
-       WHERE barbershop_id = $1 AND id = ANY($2::uuid[]) AND marketing_opt_out = false`,
-      [barbershopId, client_ids]
-    );
-    let enqueued = 0;
-    let skippedDedupe = 0;
-    for (const c of clientsRow.rows) {
-      const phoneNorm = c.phone.replace(/\D/g, "");
-      if (!phoneNorm) continue;
-      const dedupeKey = `followup_30d:${barbershopId}:${c.id}:${yearMonth}`;
-      const exists = await client.query(
-        `SELECT 1 FROM public.scheduled_messages WHERE dedupe_key = $1 LIMIT 1`,
-        [dedupeKey]
-      );
-      if (exists.rows.length > 0) {
-        skippedDedupe++;
-        continue;
-      }
-      const body = buildFollowUp30d({
-        clientName: c.name ?? undefined,
-        bookingLink,
-      });
-      await client.query(
-        `INSERT INTO public.scheduled_messages (barbershop_id, type, to_phone, payload_json, status, run_after, dedupe_key, updated_at)
-         VALUES ($1, 'followup_30d', $2, $3, 'queued', now(), $4, now())`,
-        [barbershopId, phoneNorm, JSON.stringify({ body, client_id: c.id }), dedupeKey]
-      );
-      enqueued++;
-    }
-    balance -= enqueued;
-    await client.query(
-      `INSERT INTO public.barbershop_message_credits (barbershop_id, credit_type, balance, updated_at)
-       VALUES ($1, 'followup_manual', $2, now())
-       ON CONFLICT (barbershop_id, credit_type) DO UPDATE SET balance = $2, updated_at = now()`,
-      [barbershopId, balance]
-    );
-    await client.query("COMMIT");
-    res.json({
-      enqueued,
-      skipped_dedupe: skippedDedupe,
-      skipped_opt_out: client_ids.length - clientsRow.rows.length,
-      credits_remaining: balance,
-    });
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
-    if (isUndefinedTable(e)) {
-      res.status(503).json({ error: "Serviço de créditos indisponível. Execute as migrações do banco e reinicie a API." });
-      return;
-    }
-    console.error("followup dispatch error:", e);
-    res.status(500).json({ error: "Falha ao enfileirar follow-ups" });
-  } finally {
-    client.release();
-  }
+// POST /api/integrations/automations/followup/dispatch — aposentado
+integrationsRouter.post("/automations/followup/dispatch", (_req: Request, res: Response): void => {
+  res.status(410).json({ error: "Follow-up manual fora do produto. Use o painel de reativação." });
 });
 
 // --- Message templates (manual/campaign) ---
@@ -636,7 +546,7 @@ integrationsRouter.patch("/automations/scheduled-messages/:id/skip", async (req:
     [id, barbershopId],
   );
   if (r.rowCount === 0) {
-    res.status(404).json({ error: "Lembrete não encontrado ou não está na fila." });
+    res.status(404).json({ error: "Mensagem não encontrada ou não está na fila." });
     return;
   }
   res.json({ ok: true, id });
@@ -660,16 +570,71 @@ integrationsRouter.post("/automations/scheduled-messages/:id/dispatch-now", asyn
   const row = await pool.query<{
     to_phone: string;
     type: string;
-    payload_json: { body?: string; appointment_id?: string } | null;
+    dedupe_key: string | null;
+    payload_json: { body?: string; appointment_id?: string; date?: string; time?: string } | null;
   }>(
-    `SELECT to_phone, type, payload_json
+    `SELECT to_phone, type, dedupe_key, payload_json
      FROM public.scheduled_messages
      WHERE id = $1 AND barbershop_id = $2 AND status = 'queued'`,
     [id, barbershopId],
   );
   const job = row.rows[0];
-  const body = typeof job?.payload_json?.body === "string" ? job.payload_json.body.trim() : "";
-  if (!job || !body) {
+  const storedBody = typeof job?.payload_json?.body === "string" ? job.payload_json.body.trim() : "";
+  if (!job || !storedBody) {
+    res.status(404).json({ error: "Lembrete não encontrado ou não está na fila." });
+    return;
+  }
+  const appointmentId =
+    typeof job.payload_json?.appointment_id === "string" ? job.payload_json.appointment_id : null;
+  const appt = appointmentId ? await loadReminderAppointment(appointmentId) : null;
+  if (appt?.status === "cancelled") {
+    res.status(409).json({ error: "Agendamento cancelado." });
+    return;
+  }
+  if (job.type === "reminder_24h" || job.type === "reminder_2h") {
+    const notVigente = reminderNotVigenteReason({
+      type: job.type,
+      appointmentId,
+      dedupeKey: job.dedupe_key,
+      payload: job.payload_json ?? {},
+      appointment: appt,
+    });
+    if (notVigente) {
+      await pool.query(
+        `UPDATE public.scheduled_messages SET status = 'skipped', last_error = $1, updated_at = now()
+         WHERE id = $2 AND barbershop_id = $3 AND status = 'queued'`,
+        [notVigente, id, barbershopId],
+      );
+      res.status(409).json({ error: "Este lembrete não vale mais para o horário atual do cliente." });
+      return;
+    }
+  }
+  const tz = await barbershopTimezone(barbershopId);
+  if (scheduledTypePurpose(job.type)) {
+    const gate = await checkDispatchGate(barbershopId, tz);
+    if (gate.kind === "cap_reached") {
+      res.status(429).json({ error: DAILY_CAP_REACHED_MESSAGE });
+      return;
+    }
+    if (gate.kind === "wait") {
+      res.status(429).json({ error: dispatchWaitMessage(gate.until, tz) });
+      return;
+    }
+  }
+  const todayIso = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const body =
+    resolveReminderSendBody({
+      type: job.type,
+      storedBody,
+      todayIso,
+      appointment: appt,
+    }) ?? "";
+  if (!body) {
     res.status(404).json({ error: "Lembrete não encontrado ou não está na fila." });
     return;
   }
@@ -691,9 +656,10 @@ integrationsRouter.post("/automations/scheduled-messages/:id/dispatch-now", asyn
      WHERE id = $1 AND barbershop_id = $2 AND status = 'queued'`,
     [id, barbershopId],
   );
-  const appointmentId =
-    typeof job.payload_json?.appointment_id === "string" ? job.payload_json.appointment_id : null;
   if (job.type === "reminder_24h" || job.type === "reminder_2h") {
+    await appendReminderTranscript({ barbershopId, phone: job.to_phone, body }).catch((err) => {
+      console.warn("scheduled-messages dispatch-now transcript:", err instanceof Error ? err.message : err);
+    });
     await recordAgendaChange({
       barbershopId,
       appointmentId,

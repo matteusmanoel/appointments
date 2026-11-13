@@ -18,8 +18,11 @@ import {
 import { format, isToday, isTomorrow, parseISO, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { whatsappApi, integrationsApi, reportsApi, appointmentsApi, waitlistApi, barbersApi } from "@/lib/api";
+import { ReactivationPanel } from "@/components/intelligence/ReactivationPanel";
+import { CentralDoDia } from "@/components/intelligence/CentralDoDia";
 import type { WaitlistEntry } from "@/lib/api";
 import type { AppointmentListItem } from "@/lib/api";
+import { OPERATIONAL_TONE_CLASS, operationalActivity, operationalActivityText } from "@/lib/agenda-activity";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -219,6 +222,11 @@ const EVENT_MELODIES: Record<string, ToneStep[]> = {
     { freq: 392, dur: 0.12, at: 0 },
     { freq: 311.13, dur: 0.2, at: 0.14 },
   ],
+  plan_requested: [
+    { freq: 349.23, dur: 0.1, at: 0 },
+    { freq: 440, dur: 0.1, at: 0.12 },
+    { freq: 493.88, dur: 0.16, at: 0.24 },
+  ],
 };
 
 const LS_KEY = "intel_last_seen_event_id";
@@ -298,8 +306,9 @@ const EVENT_LABELS: Record<string, string> = {
   confirmed: "Confirmado",
   no_show: "Não compareceu",
   reminder_sent: "Lembrete",
-  waitlist_offered: "Encaixe",
+  waitlist_offered: "Fila de espera",
   conversation_started: "Novo contato",
+  plan_requested: "Pedido de plano",
 };
 
 function buildActivityLabel(e: ActivityEvent): string {
@@ -321,11 +330,13 @@ function buildActivityLabel(e: ActivityEvent): string {
       if (e.summary === "reminder_2h") return when ? `Recebeu lembrete de 2h para ${when}` : "Recebeu lembrete de 2h";
       return when ? `Recebeu lembrete de 24h para ${when}` : "Recebeu lembrete de 24h";
     case "waitlist_offered":
-      return when ? `Ofereceu encaixe em ${when}` : "Ofereceu encaixe ao próximo da fila";
+      return when ? `Avisou a fila sobre a vaga de ${when}` : "Avisou a fila sobre a vaga";
     case "conversation_started":
       return e.summary ? `Iniciou conversa: "${e.summary.slice(0, 60)}"` : "Iniciou conversa";
+    case "plan_requested":
+      return e.summary?.trim() || "Pediu o plano";
     default:
-      return EVENT_LABELS[e.type] ?? e.type;
+      return operationalActivityText(e.type, e.summary) ?? EVENT_LABELS[e.type] ?? e.type;
   }
 }
 
@@ -344,9 +355,13 @@ function activityBadge(e: ActivityEvent): { label: string; className: string } |
   }
   if (e.type === "waitlist_offered") {
     return {
-      label: "Encaixe",
+      label: "Fila de espera",
       className: "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
     };
+  }
+  const operational = operationalActivity(e.type);
+  if (operational) {
+    return { label: operational.label, className: OPERATIONAL_TONE_CLASS[operational.tone] };
   }
   const tone = EVENT_BADGE[e.type];
   if (!tone) return null;
@@ -624,10 +639,10 @@ function FilaDeEncaixe() {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["intel-waitlist"] });
       queryClient.invalidateQueries({ queryKey: ["intel-agenda-activity"] });
-      toastSuccess(res.message || "Encaixe enviado.");
+      toastSuccess(res.message || "Aviso enviado.");
     },
     onError: (e) => {
-      toastError("Não foi possível disparar o encaixe.", e);
+      toastError("Não foi possível avisar a fila de espera.", e);
     },
   });
   const rows = data ?? [];
@@ -646,7 +661,7 @@ function FilaDeEncaixe() {
           className="my-auto min-h-[12rem] flex-1"
           icon={<Users className="h-12 w-12" strokeWidth={1.5} />}
           title="Não foi possível carregar"
-          description="A fila de encaixe não respondeu. Tente de novo em instantes."
+          description="A fila de espera não respondeu. Tente de novo em instantes."
         />
       )}
       {!isLoading && !isError && rows.length === 0 && (
@@ -654,7 +669,7 @@ function FilaDeEncaixe() {
           className="my-auto min-h-[12rem] flex-1"
           icon={<Users className="h-12 w-12" strokeWidth={1.5} />}
           title="Fila vazia"
-          description="Nenhum cliente aguardando encaixe."
+          description="Nenhum cliente aguardando na fila de espera."
         />
       )}
       <ul className="divide-y">
@@ -756,9 +771,10 @@ function ProximosAtendimentos() {
           Próximos Atendimentos
           <span className="ml-auto text-xs text-muted-foreground font-normal">48h</span>
         </CardTitle>
-        <TabsList className="grid h-9 w-full grid-cols-2">
+        <TabsList className="grid h-9 w-full grid-cols-3">
           <TabsTrigger value="proximos" className="text-xs">Próximos</TabsTrigger>
-          <TabsTrigger value="fila" className="text-xs">Fila de encaixe</TabsTrigger>
+          <TabsTrigger value="fila" className="text-xs">Fila de espera</TabsTrigger>
+          <TabsTrigger value="reativacao" className="text-xs">Reativação</TabsTrigger>
         </TabsList>
       </CardHeader>
       <CardContent className="p-0 flex-1 min-h-0">
@@ -837,6 +853,9 @@ function ProximosAtendimentos() {
         </TabsContent>
         <TabsContent value="fila" className="mt-0 h-full min-h-0">
           <FilaDeEncaixe />
+        </TabsContent>
+        <TabsContent value="reativacao" className="mt-0 h-full min-h-0">
+          <ReactivationPanel />
         </TabsContent>
       </CardContent>
       </Tabs>
@@ -1168,9 +1187,10 @@ export default function Inteligencia() {
           <div className="flex min-h-0 flex-[1.25]">
             <FeedAtividade />
           </div>
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-3">
             <ProximosAtendimentos />
             <LembretesPendentes />
+            <CentralDoDia />
           </div>
         </div>
       )}

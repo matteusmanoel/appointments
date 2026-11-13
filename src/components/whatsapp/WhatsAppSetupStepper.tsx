@@ -386,7 +386,7 @@ function NotificationsTabContent({
               <SelectItem value="__all__">Todos os tipos</SelectItem>
               <SelectItem value="reminder_24h">Lembrete 24h</SelectItem>
               <SelectItem value="reminder_2h">Lembrete 2h</SelectItem>
-              <SelectItem value="followup_30d">Follow-up 30d</SelectItem>
+              <SelectItem value="reactivation">Reativação</SelectItem>
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>

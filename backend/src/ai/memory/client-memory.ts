@@ -154,8 +154,8 @@ async function ensureClientMemory(
 ): Promise<string | null> {
   try {
     const r = await pool.query<{ id: string }>(
-      `INSERT INTO public.client_ai_memory (client_id, barbershop_id)
-       VALUES ($1, $2)
+      `INSERT INTO public.client_ai_memory (client_id, barbershop_id, overall_confidence)
+       VALUES ($1, $2, 0.0)
        ON CONFLICT (client_id, barbershop_id) DO UPDATE SET updated_at = now()
        RETURNING id`,
       [clientId, barbershopId]
@@ -911,7 +911,7 @@ async function recomputeOverallConfidence(
   // Compute as weighted average of non-zero confidence fields
   await pool.query(
     `UPDATE public.client_ai_memory
-     SET overall_confidence = ROUND(
+     SET overall_confidence = COALESCE(ROUND(
        (COALESCE(preferred_services_conf, 0) * 2 +
         COALESCE(preferred_barber_conf, 0) * 1.5 +
         COALESCE(preferred_days_conf, 0) * 0.5 +
@@ -926,7 +926,7 @@ async function recomputeOverallConfidence(
          0
        ),
        2
-     ),
+     ), 0),
      updated_at = now()
      WHERE client_id = $1 AND barbershop_id = $2`,
     [clientId, barbershopId]

@@ -103,6 +103,17 @@ export function alignSpokenHour(
   return `${String(shifted).padStart(2, "0")}:${minute}`;
 }
 
+/** Human sentence for the shop status. The internal label never leaves this function. */
+export function describeShopOpenStatus(status: ShopOpenStatus): string {
+  if (status.open) return `A loja está aberta agora e fecha às ${status.closesAt}.`;
+  if (!status.open && status.notYetOpen) return `A loja ainda não abriu hoje. Começa às ${status.opensAt}.`;
+  const closedAt = status.closedAt ? ` às ${status.closedAt}` : "";
+  const next = status.nextOpenWeekdayPt
+    ? ` Abre de novo ${status.nextOpenWeekdayPt}${status.nextOpensAt ? ` às ${status.nextOpensAt}` : ""}.`
+    : "";
+  return `A loja já encerrou${closedAt}.${next}`.replace(/\s+/g, " ").trim();
+}
+
 export function shopOpensOnIso(
   iso: string,
   businessHours: Record<string, { start?: string; end?: string } | null | undefined> | null | undefined,
@@ -115,8 +126,16 @@ export function shopOpensOnIso(
 }
 
 export type ShopOpenStatus =
-  | { open: true; closesAt: string }
-  | { open: false; closedAt: string | null; nextOpenDate: string | null; nextOpenWeekdayPt: string | null; nextOpensAt: string | null };
+  | { open: true; closesAt: string; notYetOpen?: false }
+  | { open: false; notYetOpen: true; opensAt: string }
+  | {
+      open: false;
+      notYetOpen?: false;
+      closedAt: string | null;
+      nextOpenDate: string | null;
+      nextOpenWeekdayPt: string | null;
+      nextOpensAt: string | null;
+    };
 
 /**
  * Whether the shop is open *right now*, computed from the configured hours — so the agent
@@ -134,6 +153,9 @@ export function shopOpenStatusNow(params: {
 
   if (start && end && now >= start && now < end) {
     return { open: true, closesAt: end };
+  }
+  if (start && end && now < start) {
+    return { open: false, notYetOpen: true, opensAt: start };
   }
 
   const next = nextOpenIso(params.todayIso, params.businessHours);
@@ -314,17 +336,36 @@ function normalizeHHmm(hRaw: string, mRaw?: string): string | null {
  */
 export function parseClientTime(text: string): string | null {
   const raw = text ?? "";
-  const hm = raw.match(/\b(\d{1,2})\s*[:hH]\s*(\d{2})h?\b/i);
-  if (hm?.[1] && hm[2]) return normalizeHHmm(hm[1], hm[2]);
 
-  const asHm = raw.match(/\b(?:às|as|a)\s*(\d{1,2}):(\d{2})h?\b/i);
+  // "18h30", "18:30", "18;30", "18.30" — separators people type instead of a colon.
+  // Must run before the hour-only match, which would otherwise read "as 14;30" as 14:00.
+  for (const hm of raw.matchAll(/\b(\d{1,2})\s*[:hH;.]\s*(\d{2})h?\b/gi)) {
+    const parsed = normalizeHHmm(hm[1] ?? "", hm[2] ?? "");
+    if (parsed) return parsed;
+  }
+
+  // `\b` does not see "à" as a word char, so "às 15" never matched. Anchor on a non-letter instead.
+  const asPrefix = String.raw`(?:^|[^\p{L}\p{N}_])(?:às|as|à)`;
+
+  // "às 18 horas", "as 18 hora", "à 18 horas" — must come before asHour to be more specific
+  const asHoras = raw.match(new RegExp(`${asPrefix}\\s+(\\d{1,2})\\s+horas?\\b`, "iu"));
+  if (asHoras?.[1]) return normalizeHHmm(asHoras[1], "0");
+
+  // "às 18:30", "as 18;30", "as 18.30"
+  const asHm = raw.match(new RegExp(`${asPrefix}\\s*(\\d{1,2})\\s*[:;.]\\s*(\\d{2})h?\\b`, "iu"));
   if (asHm?.[1] && asHm[2]) return normalizeHHmm(asHm[1], asHm[2]);
 
-  const asHour = raw.match(/\b(?:às|as|à)\s*(\d{1,2})\s*h?\b/i);
+  // "às 18h", "às 18"
+  const asHour = raw.match(new RegExp(`${asPrefix}\\s*(\\d{1,2})\\s*h?\\b`, "iu"));
   if (asHour?.[1]) return normalizeHHmm(asHour[1], "0");
 
+  // "18h"
   const hOnly = raw.match(/\b(\d{1,2})\s*h\b/i);
   if (hOnly?.[1]) return normalizeHHmm(hOnly[1], "0");
+
+  // "18 horas" / "18 hora" without "às" — restrict to 7–22 to avoid "em 2 horas" ambiguity
+  const horasOnly = raw.match(/\b([7-9]|1\d|2[0-2])\s+horas?\b/i);
+  if (horasOnly?.[1]) return normalizeHHmm(horasOnly[1], "0");
 
   return null;
 }

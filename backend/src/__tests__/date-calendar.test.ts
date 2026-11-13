@@ -65,7 +65,7 @@ describe("shopOpenStatusNow", () => {
   it("is closed after hours and points at the next opening", () => {
     const status = shopOpenStatusNow({ todayIso: "2026-09-21", nowHHmm: "22:00", businessHours: HOURS });
     expect(status.open).toBe(false);
-    if (!status.open) {
+    if (!status.open && !status.notYetOpen) {
       expect(status.closedAt).toBe("19:00");
       expect(status.nextOpenDate).toBe("2026-09-22");
       expect(status.nextOpensAt).toBe("09:00");
@@ -75,7 +75,7 @@ describe("shopOpenStatusNow", () => {
   it("is closed all day on a day with no hours", () => {
     const status = shopOpenStatusNow({ todayIso: "2026-09-20", nowHHmm: "12:00", businessHours: HOURS });
     expect(status.open).toBe(false);
-    if (!status.open) expect(status.nextOpenDate).toBe("2026-09-21");
+    if (!status.open && !status.notYetOpen) expect(status.nextOpenDate).toBe("2026-09-21");
   });
 });
 
@@ -149,6 +149,31 @@ describe("parseClientTime", () => {
     expect(parseClientTime("terça 14h30")).toBe("14:30");
     expect(parseClientTime("Pode ser as 17")).toBe("17:00");
     expect(formatTimePt("18:30")).toBe("18h30");
+  });
+
+  it("parses 'às N horas' and plain 'N horas' variants — regression Cavalier 25/09", () => {
+    // "às N horas" — unambiguously a clock time regardless of hour
+    expect(parseClientTime("às 18 horas")).toBe("18:00");
+    expect(parseClientTime("as 18 horas")).toBe("18:00");
+    expect(parseClientTime("à 18 hora")).toBe("18:00");
+    expect(parseClientTime("às 9 horas")).toBe("09:00");
+    expect(parseClientTime("Gostaria de marcar às 14 horas")).toBe("14:00");
+    expect(parseClientTime("Pode ser às 10 horas?")).toBe("10:00");
+    // plain "N horas" — restricted to 7–22 to avoid "em 2 horas" ambiguity
+    expect(parseClientTime("18 horas")).toBe("18:00");
+    expect(parseClientTime("10 horas")).toBe("10:00");
+    // should NOT match ambiguous durations below 7
+    expect(parseClientTime("em 2 horas")).toBeNull();
+    expect(parseClientTime("aguardo em 1 hora")).toBeNull();
+    // existing patterns must still pass
+    expect(parseClientTime("18h")).toBe("18:00");
+    expect(parseClientTime("18h30")).toBe("18:30");
+    expect(parseClientTime("18:30")).toBe("18:30");
+    expect(parseClientTime("às 15")).toBe("15:00");
+    expect(parseClientTime("amanhã às 15")).toBe("15:00");
+    expect(parseClientTime("As 14;30")).toBe("14:30");
+    expect(parseClientTime("as 14.30")).toBe("14:30");
+    expect(parseClientTime("as 14")).toBe("14:00");
   });
 });
 

@@ -258,8 +258,8 @@ clientsRouter.patch("/:id/memory", async (req: Request, res: Response): Promise<
   }
   const client = clientCheck.rows[0] as { id: string; barbershop_id: string };
   const r = await pool.query(
-    `INSERT INTO public.client_ai_memory (client_id, barbershop_id, notes_safe)
-     VALUES ($1, $2, $3)
+    `INSERT INTO public.client_ai_memory (client_id, barbershop_id, notes_safe, overall_confidence)
+     VALUES ($1, $2, $3, 0.0)
      ON CONFLICT (client_id, barbershop_id) DO UPDATE SET notes_safe = EXCLUDED.notes_safe, updated_at = now()
      RETURNING *`,
     [client.id, client.barbershop_id, parsed.data.notes_safe]

@@ -30,6 +30,8 @@ export type BookingDraft = {
   pendingProposal?: PendingProposal | null;
   /** What the agent asked in its last turn. Used to resolve bare affirmations. */
   lastAgentQuestion?: "service" | "datetime" | "confirm" | null;
+  /** Previous turn offered the waitlist for the clock already on this draft. */
+  waitlistOffer?: boolean;
 };
 
 export type CatalogService = {
@@ -105,6 +107,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
     ...(phase ? { phase } : {}),
     ...(lastAgentQuestion ? { lastAgentQuestion } : {}),
     ...(pendingProposal !== undefined ? { pendingProposal } : {}),
+    ...(r.waitlistOffer === true ? { waitlistOffer: true } : {}),
   };
 }
 
@@ -130,6 +133,7 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     "phase",
     "pendingProposal",
     "lastAgentQuestion",
+    "waitlistOffer",
   ];
   let materialChanged = false;
   for (const key of keys) {
@@ -146,6 +150,10 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
       const n = Number(value);
       if (!Number.isFinite(n)) continue;
       next.total_price = n;
+      continue;
+    }
+    if (key === "waitlistOffer") {
+      next.waitlistOffer = value === true;
       continue;
     }
     const asText = String(value).trim();
@@ -195,13 +203,21 @@ export function applyTurnToDraft(
 /** Concrete offer the client can accept. The floor is no longer the search key. */
 export function lockOfferedSlot(
   prev: BookingDraft,
-  slot: { date: string; time: string; barber_id?: string; barber_name?: string; status?: BookingDraftStatus },
+  slot: {
+    date: string;
+    time: string;
+    barber_id?: string;
+    barber_name?: string;
+    appointment_id?: string;
+    status?: BookingDraftStatus;
+  },
 ): BookingDraft {
   const next = mergeBookingDraft(prev, {
     date: slot.date,
     time: slot.time,
     ...(slot.barber_id ? { barber_id: slot.barber_id } : {}),
     ...(slot.barber_name ? { barber_name: slot.barber_name } : {}),
+    ...(slot.appointment_id ? { appointment_id: slot.appointment_id } : {}),
     status: slot.status ?? "offered",
   });
   delete next.after_time;
@@ -237,6 +253,7 @@ export function inferServiceKeyword(
 ): "corte" | "barba" | "sobrancelha" | "combo" | null {
   const t = fold(text);
   if (/\bcorte\s*\+\s*barba\b|\bcorte\s+e\s+barba\b|\bcombo\b/.test(t)) return "combo";
+  if (/\bcorte\b/.test(t) && /\bbarba\b/.test(t) && !/\bcorte\b.{0,16}\bou\b.{0,16}\bbarba\b/.test(t)) return "combo";
   if (/\bbarba\b/.test(t)) return "barba";
   if (/\bsobrancelha\b/.test(t)) return "sobrancelha";
   if (/\bcabelo|cortar|corte\b/.test(t)) return "corte";
@@ -294,6 +311,15 @@ export function resolveServiceFromText(
   if (/\bcorte\s+e\s+barba\b|\bcorte\s*\+\s*barba\b|\bcombo\b/.test(t)) {
     return combo ? { match: combo } : {};
   }
+  // Both parts of the combo, with or without "e": "corte de barba", "corte com barba".
+  if (
+    /\bcorte\b/.test(t) &&
+    /\bbarba\b/.test(t) &&
+    !/\bcorte\b.{0,16}\bou\b.{0,16}\bbarba\b/.test(t) &&
+    combo
+  ) {
+    return { match: combo };
+  }
   if (/\b(so|apenas|somente)\s+corte\b|\bcorte\s+masculino\b/.test(t)) {
     return simple ? { match: simple } : {};
   }
@@ -306,6 +332,30 @@ export function resolveServiceFromText(
   if (looksLikeCorte && simple) return { match: simple };
   if (/\bbarba\b/.test(t) && !/\bcorte\b/.test(t) && barbaOnly) return { match: barbaOnly };
   return {};
+}
+
+/**
+ * Service ids for a availability check.
+ * A service named in this turn wins. Otherwise the appointment already on file wins.
+ * "Corte" against a booked combo is not a new choice.
+ */
+export function resolveCheckServiceIds(params: {
+  namedMatchId?: string;
+  namedAmbiguous: boolean;
+  draftServiceIds?: string[];
+  upcomingServiceIds?: string[];
+  argServiceIds?: string[];
+}): { serviceIds: string[] } | { ask: "ambiguous" | "missing" } {
+  if (params.namedMatchId) return { serviceIds: [params.namedMatchId] };
+  const carried = params.draftServiceIds?.length
+    ? params.draftServiceIds
+    : params.upcomingServiceIds?.length
+      ? params.upcomingServiceIds
+      : [];
+  if (carried.length) return { serviceIds: carried };
+  if (params.namedAmbiguous) return { ask: "ambiguous" };
+  if (params.argServiceIds?.length) return { serviceIds: params.argServiceIds };
+  return { ask: "missing" };
 }
 
 /**
@@ -505,10 +555,14 @@ export function composeHoursOverflow(params: {
     const when = formatTimePt(params.lastFitTime);
     const day = params.isToday ? "hoje" : "nesse dia";
     const requested = (params.requestedTime ?? "").slice(0, 5);
+    const offered = params.lastFitTime.slice(0, 5);
     const opens = (params.opensAt ?? "").slice(0, 5);
     const beforeOpening = Boolean(requested && opens && requested < opens);
     if (beforeOpening) {
       return `Abrimos às ${formatTimePt(opens)}, então o primeiro horário ${day} é às ${when}${who}[[MSG]]Fica bom pra você?`;
+    }
+    if (requested && requested !== offered) {
+      return `Às ${formatTimePt(requested)} não cabe ${day}. Posso te encaixar às ${when}${who}[[MSG]]Fica bom pra você?`;
     }
     return `Posso te encaixar ${day} às ${when}${who}[[MSG]]Fica bom pra você?`;
   }
@@ -530,6 +584,13 @@ export function composeOccupiedSlot(params: {
   const rawName = params.barberName.trim().replace(/^o\s+/i, "");
   const who = rawName ? `o ${firstNameOf(rawName)}` : "o barbeiro";
   if (params.holdRequestedBarber) {
+    const alt = (params.alternatives ?? []).find((slot) => slot.time && slot.time !== params.timeHHmm);
+    if (alt?.time) {
+      return (
+        `Nesse horário ${who} está atendendo[[MSG]]` +
+        `${formatTimePt(alt.time)} com ele está livre. Quer esse?`
+      );
+    }
     return (
       `Nesse horário ${who} está atendendo[[MSG]]` +
       `Se quiser, te aviso se esse horário das ${timePt} com ele abrir.`
@@ -588,6 +649,111 @@ export function composeUnavailableReply(params: {
     sameTimeOthers: params.holdRequestedBarber ? [] : params.sameTimeOthers,
     holdRequestedBarber: params.holdRequestedBarber,
   });
+}
+
+/**
+ * One concrete slot the client can accept with a short yes.
+ * Two options, or a day with no clock, stay unlocked.
+ */
+export function concreteAlternativeToLock(params: {
+  date: string;
+  reason: UnavailableReason | null;
+  requestedTime: string;
+  requestedBarberId?: string;
+  requestedBarberName?: string;
+  holdRequestedBarber?: boolean;
+  /** This message named another catalog barber. Otherwise the current barber stays. */
+  allowOtherBarber?: boolean;
+  lastFit?: { time: string; barber_id?: string; barber_name?: string } | null;
+  alternatives: Array<{ time: string; barber_id?: string; barber_name?: string }>;
+  sameTimeOthers?: Array<{ barber_id?: string; barber_name?: string }>;
+}): { date: string; time: string; barber_id?: string; barber_name?: string } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date)) return null;
+  const clock = (value?: string) => {
+    const time = (value ?? "").slice(0, 5);
+    return /^\d{2}:\d{2}$/.test(time) ? time : "";
+  };
+  if (params.reason === "hours_overflow" || params.reason === "past") {
+    const time = clock(params.lastFit?.time);
+    if (!time) return null;
+    return {
+      date: params.date,
+      time,
+      barber_id: params.lastFit?.barber_id || params.requestedBarberId,
+      barber_name: params.lastFit?.barber_name || params.requestedBarberName,
+    };
+  }
+  if (params.reason !== "occupied") return null;
+  const requested = clock(params.requestedTime);
+  if (params.holdRequestedBarber) {
+    const alts = params.alternatives.filter((slot) => {
+      const time = clock(slot.time);
+      if (!time || time === requested) return false;
+      if (params.requestedBarberId && slot.barber_id && slot.barber_id !== params.requestedBarberId) return false;
+      return true;
+    });
+    if (alts.length !== 1) return null;
+    const alt = alts[0]!;
+    return {
+      date: params.date,
+      time: clock(alt.time),
+      barber_id: params.requestedBarberId || alt.barber_id,
+      barber_name: params.requestedBarberName || alt.barber_name,
+    };
+  }
+  const others = params.allowOtherBarber
+    ? (params.sameTimeOthers ?? []).filter((barber) => barber.barber_id || barber.barber_name)
+    : [];
+  if (others.length === 1 && requested) {
+    const other = others[0]!;
+    return {
+      date: params.date,
+      time: requested,
+      barber_id: other.barber_id,
+      barber_name: other.barber_name,
+    };
+  }
+  if (params.alternatives.length === 1 && clock(params.alternatives[0]?.time)) {
+    const alt = params.alternatives[0]!;
+    return {
+      date: params.date,
+      time: clock(alt.time),
+      barber_id: alt.barber_id || params.requestedBarberId,
+      barber_name: alt.barber_name || params.requestedBarberName,
+    };
+  }
+  return null;
+}
+
+/** Service and clock are already on the draft, and this message names a barber without a new hour. */
+export function shouldComposeNamedBarberCard(params: {
+  messageNamesCatalogBarber: boolean;
+  draftHasService: boolean;
+  draftHasClock: boolean;
+  messageHasClock: boolean;
+}): boolean {
+  return (
+    params.messageNamesCatalogBarber &&
+    params.draftHasService &&
+    params.draftHasClock &&
+    !params.messageHasClock
+  );
+}
+
+/** The first concrete hour that can be locked. A day with no clock stays unlocked. */
+export function firstLockableSlot(
+  slots: Array<{ time?: string; barber_id?: string; barber_name?: string }>,
+): { time: string; barber_id: string; barber_name?: string } | null {
+  for (const slot of slots) {
+    const time = String(slot.time ?? "").slice(0, 5);
+    if (!/^\d{2}:\d{2}$/.test(time) || !slot.barber_id) continue;
+    return {
+      time,
+      barber_id: slot.barber_id,
+      ...(slot.barber_name ? { barber_name: slot.barber_name } : {}),
+    };
+  }
+  return null;
 }
 
 export async function loadBookingDraft(conversationId: string): Promise<BookingDraft> {

@@ -1,7 +1,7 @@
 import { pool } from "../../db.js";
 import { config } from "../../config.js";
 import * as evo from "./evolution-client.js";
-import { shouldOpenWhatsAppSocket } from "./evolution-policy.js";
+import { clearPairing, fetchPairing, peekPairing } from "./evolution-pairing.js";
 import type {
   ConnectResult,
   ConnectionRow,
@@ -103,66 +103,72 @@ export class EvolutionSession implements WhatsAppSession {
       }
     }
 
-    const hook = await ensureWebhookAndSettings(name);
-    let live = evo.mapEvolutionState(await evo.connectionState(name).catch(() => null));
+    return this.openSocket(name, opts?.phone);
+  }
 
+  private async openSocket(name: string, phone?: string): Promise<ConnectResult> {
+    const live = evo.mapEvolutionState(await evo.connectionState(name).catch(() => null));
     await pool.query(
       `UPDATE public.barbershop_whatsapp_connections
-       SET evolution_instance_name = $1, last_error = $2, updated_at = now()
-       WHERE barbershop_id = $3 AND provider = 'evolution'`,
-      [name, hook.webhook_warning ?? null, this.barbershopId],
+       SET evolution_instance_name = $1, updated_at = now()
+       WHERE barbershop_id = $2 AND provider = 'evolution'`,
+      [name, this.barbershopId],
     );
 
-    if (!shouldOpenWhatsAppSocket(live)) {
-      if (live === "connected") {
-        await persistEvolutionSocketState(this.barbershopId, "connected");
-      } else {
-        await persistEvolutionSocketState(this.barbershopId, "connecting");
-      }
-      return {
-        status: live === "connected" ? "connected" : "connecting",
-        webhook_set: hook.webhook_set,
-        webhook_warning: hook.webhook_warning,
-      };
+    if (live === "connected") {
+      clearPairing(name);
+      const hook = await ensureWebhookAndSettings(name);
+      await persistEvolutionSocketState(this.barbershopId, "connected", {
+        lastError: hook.webhook_warning ?? null,
+      });
+      return { status: "connected", webhook_set: hook.webhook_set, webhook_warning: hook.webhook_warning };
     }
 
     await persistEvolutionSocketState(this.barbershopId, "connecting");
-    const raw = await evo.connectInstance(name, opts?.phone);
-    const { qr, pairingCode } = evo.extractQr(raw);
-    live = evo.mapEvolutionState(raw);
-    const status = live === "connected" ? "connected" : "connecting";
-    await persistEvolutionSocketState(this.barbershopId, status);
-    return { status, qr, pairingCode, webhook_set: hook.webhook_set, webhook_warning: hook.webhook_warning };
+    const pairing = await fetchPairing(name, phone);
+    const hook = await ensureWebhookAndSettings(name);
+    await persistEvolutionSocketState(this.barbershopId, "connecting", {
+      lastError: hook.webhook_warning ?? null,
+    });
+    return {
+      status: "connecting",
+      qr: pairing.qr,
+      pairingCode: pairing.pairingCode,
+      webhook_set: hook.webhook_set,
+      webhook_warning: hook.webhook_warning,
+    };
   }
 
   async status(): Promise<StatusResult> {
+    let live: "disconnected" | "connecting" | "connected" = "disconnected";
     try {
-      const raw = await evo.connectionState(this.instanceName);
-      const live = evo.mapEvolutionState(raw);
-      if (live === "connected") {
-        if (this.row.status !== "connected") {
-          await persistEvolutionSocketState(this.barbershopId, "connected");
-        }
-        void ensureWebhookAndSettings(this.instanceName).catch(() => {});
-      } else if (live === "connecting" && this.row.status !== "connected") {
-        if (this.row.status !== "connecting") {
-          await persistEvolutionSocketState(this.barbershopId, "connecting");
-        }
-      }
-      const status = this.row.status === "connected" ? "connected" : live;
-      return {
-        status,
-        connected: live === "connected",
-        qr: undefined,
-        pairingCode: undefined,
-        phone: this.row.whatsapp_phone,
-      };
+      live = evo.mapEvolutionState(await evo.connectionState(this.instanceName, 8_000));
     } catch {
-      return { status: this.row.status, connected: this.row.status === "connected", phone: this.row.whatsapp_phone };
+      live = this.row.status === "connected" ? "connected" : "disconnected";
     }
+    if (live === "connected") {
+      clearPairing(this.instanceName);
+      if (this.row.status !== "connected") {
+        await persistEvolutionSocketState(this.barbershopId, "connected");
+      }
+      void ensureWebhookAndSettings(this.instanceName).catch(() => {});
+      return { status: "connected", connected: true, phone: this.row.whatsapp_phone };
+    }
+    if (this.row.status !== "connecting") {
+      return { status: "disconnected", connected: false, phone: this.row.whatsapp_phone };
+    }
+    const pairing = peekPairing(this.instanceName) ?? {};
+    return {
+      status: "connecting",
+      connected: false,
+      qr: pairing.qr,
+      pairingCode: pairing.pairingCode,
+      phone: this.row.whatsapp_phone,
+    };
   }
 
   async disconnect(): Promise<void> {
+    clearPairing(this.instanceName);
     try {
       await evo.logoutInstance(this.instanceName);
     } finally {

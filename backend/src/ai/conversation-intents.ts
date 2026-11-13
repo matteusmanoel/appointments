@@ -24,6 +24,24 @@ function fold(text: string): string {
     .trim();
 }
 
+const CONFIRMATION_TOKEN =
+  /^(sim|s|pode|podes|ok|okay|beleza|boa|bom|confirmo|isso|mesmo|fechado|combinado|manda|ver|top|show|claro|excelente|perfeito|otimo|fica|ta|entao|por|gentileza|favor|obrigado|obrigada|agendar|marcar|confirmar|ser|contar|comigo|estarei|ai|la|presente|vou|compareco|comparecerei|irei|ate)$/;
+
+const CONFIRMATION_CLAIM =
+  /^(sim|s|pode|podes|ok|okay|beleza|confirmo|isso|fechado|combinado|top|show|claro|excelente|perfeito|otimo|fica|estarei|compareco|comparecerei|vou|obrigado|obrigada|gentileza|favor)$/;
+
+/**
+ * The whole message is a short yes: affirmative words and courtesy only.
+ * A leading "beleza" followed by another subject is not a confirmation.
+ */
+function isShortConfirmation(text: string): boolean {
+  if (/\bnao\b/.test(text)) return false;
+  const words = text.replace(/[,!.]+/g, " ").split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 8) return false;
+  if (!words.some((word) => CONFIRMATION_CLAIM.test(word))) return false;
+  return words.every((word) => CONFIRMATION_TOKEN.test(word));
+}
+
 /** "Sim, por gentileza" / "Pode confirmar" / "Perfeito, pode agendar" — escolha de horário novo não é confirmação. */
 export function isClientConfirmation(text: string): boolean {
   const t = fold(text);
@@ -36,27 +54,13 @@ export function isClientConfirmation(text: string): boolean {
   ) {
     return false;
   }
-  if (/^(perfeito|otimo|claro|excelente)([,!.\s]|$)/.test(t)) return true;
-  if (/^estarei\s+(ai|la|presente)\b/.test(t)) return true;
-  if (/^vou\s+sim\b/.test(t)) return true;
-  if (/^(compareco|comparecerei)\b/.test(t)) return true;
-  if (/^irei\s+sim\b/.test(t)) return true;
-  if (/^ate\s+la\b/.test(t)) return true;
-  if (/^pode\s+contar\s+comigo\b/.test(t)) return true;
-  if (/\b(pode|podes)\s+(agendar|marcar|confirmar)\b/.test(t)) return true;
-  if (
-    /^(sim|s|pode|ok|okay|beleza|confirmo|isso|fechado|combinado|manda ver|top|show|claro|excelente)([,!.\s]|$)/.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  if (/^(sim|pode|ok).{0,40}(confirmar|gentileza|favor|obrigad)/.test(t)) return true;
-  if (/^(por gentileza|gentileza|por favor|obrigado|obrigada)([,!.\s]|$)/.test(t)) return true;
-  // Same affirmative vocabulary as above, but not anchored to the first word — a filler
-  // lead-in ("Fica sim", "Show, fechado") is the same claim as "Sim" in different word
-  // order and must resolve the same way (RC3: anchored-regex word-order brittleness).
-  return /\b(sim|confirmo|fechado|combinado)\b/.test(t) && !/\bnao\b/.test(t);
+  if (/^estarei\s+(ai|la|presente)$/.test(t)) return true;
+  if (/^vou\s+sim$/.test(t)) return true;
+  if (/^(compareco|comparecerei)$/.test(t)) return true;
+  if (/^irei\s+sim$/.test(t)) return true;
+  if (/^ate\s+la$/.test(t)) return true;
+  if (/^pode\s+contar\s+comigo$/.test(t)) return true;
+  return isShortConfirmation(t);
 }
 
 export function looksLikeConsultIntent(text: string): boolean {
@@ -80,6 +84,12 @@ export function looksLikePixIntent(text: string): boolean {
   return /\bpix\b/.test(t);
 }
 
+/** The outbound plan-charge template, not a client phrase. */
+export function assistantMessageIsPlanCharge(text: string): boolean {
+  const t = fold(text);
+  return /\bplano\b/.test(t) && /\bpix\b/.test(t) && (/\brenovacao\b/.test(t) || /\bvenceu\b/.test(t) || /\bvencimento\b/.test(t));
+}
+
 export function looksLikeLocationIntent(text: string): boolean {
   const t = fold(text);
   return (
@@ -95,11 +105,11 @@ export function looksLikeLocationIntent(text: string): boolean {
 export function looksLikeCancelIntent(text: string): boolean {
   const t = fold(text);
   return (
-    /\bcancel(ar|e|o)\b/.test(t) ||
-    /\bdesmarcar\b/.test(t) ||
-    /nao (vou|consigo|poderei) (poder )?ir\b/.test(t) ||
-    /n[aã]o (vou poder|poderei) (ir|comparecer)\b/.test(t) ||
-    /\bnao vou (poder )?ir\b/.test(t) ||
+    /\bcancela(r|m|s)?\b/.test(t) ||
+    /\bcancele(m)?\b/.test(t) ||
+    /\bcancelo(u)?\b/.test(t) ||
+    /\bdesmarca(r|m|s)?\b/.test(t) ||
+    /\bnao\b.{0,40}\b(vou|consigo|poderei|posso|irei)\b.{0,24}\b(ir|comparecer)\b/.test(t) ||
     /\bimprevisto\b/.test(t) ||
     /nao vai dar/.test(t)
   );
@@ -189,7 +199,7 @@ export function looksLikeZeroIntentUnknown(text: string): boolean {
 
 export function looksLikePlanIntent(text: string): boolean {
   const t = fold(text);
-  return /\b(plano|assinatura|assinar|mensalidade)\b/.test(t);
+  return /\b(planos?|assinaturas?|assinar|mensalidades?)\b/.test(t);
 }
 
 export function looksLikeWaitlistIntent(text: string): boolean {
@@ -270,18 +280,24 @@ export function lastUserTurnText(
   return chunks.reverse().join("\n").trim();
 }
 
+/** One clock the client can accept with a short yes. "Fica bom?" and "Quer esse?" are the same offer. */
+export function assistantOfferedSingleHour(text: string): boolean {
+  const t = fold(text.replace(/\[\[MSG\]\]/g, " "));
+  if (/\bqual prefere\b/.test(t)) return false;
+  if (/\bou seria so com\b/.test(t)) return false;
+  if (!/\bfica bom\b/.test(t) && !/\bquer esse\b/.test(t)) return false;
+  if (!parseClientTime(text)) return false;
+  const marked = text.match(/\b(?:às|as|à)\s*\d{1,2}(?:\s*[:hH]\s*\d{2})?h?\b/gi) ?? [];
+  const bare = text.match(/\b\d{1,2}\s*h(?:\d{2})?\b/gi) ?? [];
+  const clocks = marked.length > 0 ? marked.length : bare.length;
+  return clocks === 1;
+}
+
 /** Last assistant offered a single clock ("Posso te encaixar … às 18h. Fica bom?"). */
 export function assistantOfferedFitSlot(text: string): boolean {
   const t = fold(text.replace(/\[\[MSG\]\]/g, " "));
   if (!/\bfica bom\b/.test(t)) return false;
-  if (/\bqual prefere\b/.test(t)) return false;
-  // Occupied-slot with alt-barber has the same "fica bom" pattern — but is a different contract.
-  // Discriminate via the tail phrase generated by composeOccupiedSlot with sameTimeOthers.
-  if (/\bou seria so com\b/.test(t)) return false;
-  if (!parseClientTime(text)) return false;
-  const clockMentions = text.match(/\b(?:às|as|à)\s*\d{1,2}(?:\s*[:hH]\s*\d{2})?h?\b/gi) ?? [];
-  if (clockMentions.length > 1) return false;
-  return /\bencaixar\b/.test(t) || /\btenho\b/.test(t);
+  return assistantOfferedSingleHour(text) && (/\bencaixar\b/.test(t) || /\btenho\b/.test(t));
 }
 
 /**
@@ -324,11 +340,16 @@ export function acceptsOfferedFit(text: string): boolean {
   return isClientConfirmation(text) || acceptsOfferedDay(text);
 }
 
+/** A barber named now is checked at the hour the client already asked, not at our alternative. */
+export function clockForNamedBarber(previousUser: string, draftTime: string): string {
+  return (parseClientTime(previousUser) || draftTime || "").slice(0, 5);
+}
+
 export function offeredFitClockIfAccepted(params: {
   lastAssistant: string;
   lastUser: string;
 }): string | null {
-  if (!assistantOfferedFitSlot(params.lastAssistant)) return null;
+  if (!assistantOfferedSingleHour(params.lastAssistant)) return null;
   if (!acceptsOfferedFit(params.lastUser)) return null;
   return parseClientTime(params.lastAssistant);
 }
@@ -382,10 +403,6 @@ export function assistantAskedReminderRsvp(text: string): boolean {
     // buildReminder2h (pending)
     /\bainda nao recebemos sua confirmacao\b/.test(t) ||
     /\bconfirme agora para mantermos seu horario reservado\b/.test(t) ||
-    // composeHumanConsult / greeting-with-appointment check-in copy
-    /\btudo certo com seu horario\b/.test(t) ||
-    // legacy/alternate copy kept for backward compatibility
-    /\bcancela ou remarca\b/.test(t) ||
     /\bresponde \*confirmo\*/.test(t) ||
     /\bainda nao tivemos sua confirmacao\b/.test(t) ||
     /\bso lembrando do seu horario\b/.test(t)
@@ -459,7 +476,7 @@ export function composeHumanConsult(params: {
   const prep = isRelative ? "" : /^(s[áa]bado|domingo)$/i.test(wd) ? "no " : "na ";
   const timeBit = params.timeHHmm ? ` às ${formatTimePt(params.timeHHmm)}` : "";
   return (
-    `${hi}Tudo certo com seu horário para ${service} ${prep}${wd}${timeBit} com o ${params.barberName}? ` +
-    `Se preferir reagendar, me diz o novo dia/horário.`
+    `${hi}Tudo certo com seu horário para ${service} ${prep}${wd} com o ${params.barberName}${timeBit}? ` +
+    `Se quiser cancelar ou reagendar é só me dizer o novo dia e horário.`
   );
 }

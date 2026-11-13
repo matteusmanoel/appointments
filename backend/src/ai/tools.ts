@@ -18,8 +18,7 @@ import { dateToolMeta, weekdayKeyFromIso } from "./date-calendar.js";
 import { appendClientNote } from "./memory/client-memory.js";
 import {
   classifyRequestedSlot,
-  firstFitStartMins,
-  lastFitStartMins,
+  lastBookableStartMins,
   minutesToHHmm,
   type UnavailableReason,
 } from "./slot-fit.js";
@@ -213,6 +212,8 @@ export async function checkAvailability(
     service_id?: string;
     service_ids?: string[];
     after_time?: string;
+    /** Appointment being moved. Its own block must not make the new slot look busy. */
+    exclude_appointment_id?: string;
   },
 ): Promise<unknown> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date))
@@ -460,13 +461,14 @@ export async function checkAvailability(
   }
 
   const appts = await pool.query<{
+    id: string;
     barber_id: string;
     scheduled_time: string;
     duration_minutes: number;
     status: string;
     completed_time: string | null;
   }>(
-    `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time
+    `SELECT id, barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time
      FROM public.appointments
      WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show')
      ${params.barber_id ? "AND barber_id = $3" : ""}`,
@@ -476,6 +478,7 @@ export async function checkAvailability(
   );
   const byBarber = new Map<string, { start: number; end: number }[]>();
   for (const a of appts.rows) {
+    if (params.exclude_appointment_id && a.id === params.exclude_appointment_id) continue;
     const t = String(a.scheduled_time ?? "").slice(0, 5);
     const s = timeToMinutes(t);
     if (s == null) continue;
@@ -561,13 +564,6 @@ export async function checkAvailability(
   // Asked for a time before opening → offer the first slot of the day. Asked for one that runs
   // past closing → offer the last slot that still fits. Same direction the client was aiming for.
   const askedBeforeOpening = requestedStart < win.start;
-  const fitMins = (askedBeforeOpening ? firstFitStartMins : lastFitStartMins)({
-    durationMins: totalDuration,
-    windowStart: win.start,
-    windowEnd: win.end,
-    minStart: effectiveAfterMins,
-  });
-  const lastFitMins = fitMins;
 
   const alternatives: {
     time: string;
@@ -607,10 +603,21 @@ export async function checkAvailability(
   // Before opening, the window math alone can name a barber who is already booked at that
   // clock. alternatives is built from real occupancy, so use the earliest free slot.
   // Prefer the requested barber when they are free at that same clock.
+  const bookableMins =
+    windowForReason == null
+      ? null
+      : lastBookableStartMins({
+          durationMins: totalDuration,
+          windowStart: win.start,
+          windowEnd: win.end,
+          minStart: effectiveAfterMins,
+          busy: byBarber.get(windowForReason.id) ?? [],
+          bufferMins,
+        });
   const windowFit =
-    lastFitMins != null && windowForReason
+    bookableMins != null && windowForReason
       ? {
-          time: minutesToHHmm(lastFitMins),
+          time: minutesToHHmm(bookableMins),
           barber_id: windowForReason.id,
           barber_name: windowForReason.name,
         }
@@ -636,13 +643,14 @@ export async function checkAvailability(
       [barbershopId, params.barber_id],
     );
     const otherAppts = await pool.query<{
+      id: string;
       barber_id: string;
       scheduled_time: string;
       duration_minutes: number;
       status: string;
       completed_time: string | null;
     }>(
-      `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time
+      `SELECT id, barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time
        FROM public.appointments
        WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show')
          AND barber_id <> $3`,
@@ -650,6 +658,7 @@ export async function checkAvailability(
     );
     const otherByBarber = new Map<string, { start: number; end: number }[]>();
     for (const a of otherAppts.rows) {
+      if (params.exclude_appointment_id && a.id === params.exclude_appointment_id) continue;
       const t = String(a.scheduled_time ?? "").slice(0, 5);
       const s = timeToMinutes(t);
       if (s == null) continue;
@@ -896,6 +905,7 @@ export async function getNextSlots(
     after_time?: string;
     barber_id?: string;
     limit?: number;
+    exclude_appointment_id?: string;
   },
 ): Promise<unknown> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(params.date))
@@ -958,13 +968,14 @@ export async function getNextSlots(
         params.barber_id ? [barbershopId, params.barber_id] : [barbershopId],
       ),
       pool.query<{
+        id: string;
         barber_id: string;
         scheduled_time: string;
         duration_minutes: number;
         status: string;
         completed_time: string | null;
       }>(
-        `SELECT barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time FROM public.appointments
+        `SELECT id, barber_id, scheduled_time::text as scheduled_time, duration_minutes, status, completed_time::text as completed_time FROM public.appointments
        WHERE barbershop_id = $1 AND scheduled_date = $2::date AND status NOT IN ('cancelled', 'no_show') ${params.barber_id ? "AND barber_id = $3" : ""}`,
         params.barber_id
           ? [barbershopId, params.date, params.barber_id]
@@ -1085,6 +1096,7 @@ export async function getNextSlots(
 
   const byBarber = new Map<string, { start: number; end: number }[]>();
   for (const a of apptsRows.rows) {
+    if (params.exclude_appointment_id && a.id === params.exclude_appointment_id) continue;
     const t = String(a.scheduled_time ?? "").slice(0, 5);
     const s = timeToMinutes(t);
     if (s == null) continue;
@@ -1104,11 +1116,8 @@ export async function getNextSlots(
 
   const slots: { time: string; barber_id: string; barber_name: string }[] = [];
   const STEP = 30;
-  for (
-    let slotStart = startM;
-    slotStart < slotEndMax && slots.length < limit;
-    slotStart += STEP
-  ) {
+  let slotStart = startM;
+  for (; slotStart < slotEndMax && slots.length < limit; slotStart += STEP) {
     const slotEnd = slotStart + totalDuration;
     if (
       unavailIntervals.some((u) => overlaps(slotStart, slotEnd, u.start, u.end))
@@ -1149,6 +1158,7 @@ export async function getNextSlots(
     date: params.date,
     slots,
     duration_minutes: totalDuration,
+    more_later: slots.length >= limit && slotStart < slotEndMax,
   });
 }
 
@@ -1663,8 +1673,9 @@ export async function listClientUpcomingAppointments(
     barber_id: string;
     service_ids: string[];
     status: string;
+    price: number | null;
   }>(
-    `SELECT a.id, a.scheduled_date::text, a.scheduled_time::text, a.status, a.barber_id::text AS barber_id,
+    `SELECT a.id, a.scheduled_date::text, a.scheduled_time::text, a.status, a.price::float8 AS price, a.barber_id::text AS barber_id,
             (SELECT string_agg(aps.service_name, ', ' ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_names,
             COALESCE((SELECT array_agg(aps.service_id::text ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id), '{}'::text[]) AS service_ids,
             b.name AS barber_name
@@ -1687,6 +1698,7 @@ export async function listClientUpcomingAppointments(
       barber_id: row.barber_id,
       barber_name: row.barber_name,
       status: row.status,
+      price: row.price != null && Number.isFinite(Number(row.price)) ? Number(row.price) : undefined,
     })),
   );
 }
@@ -1900,20 +1912,22 @@ export async function rescheduleAppointmentByAgent(
   const appRow = await pool.query<{
     barber_id: string;
     duration_minutes: number;
+    status: string;
   }>(
-    `SELECT a.barber_id, a.duration_minutes FROM public.appointments a
+    `SELECT a.barber_id, a.duration_minutes, a.status FROM public.appointments a
      JOIN public.clients c ON c.id = a.client_id
-     WHERE a.id = $1 AND a.barbershop_id = $2 AND a.status NOT IN ('cancelled')
+     WHERE a.id = $1 AND a.barbershop_id = $2 AND a.status IN ('pending', 'confirmed', 'cancelled')
        AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])`,
     [appointmentId, barbershopId, matchKeys],
   );
   if (appRow.rows.length === 0)
     return {
       error:
-        "Agendamento não encontrado, já cancelado ou não pertence a este cliente",
+        "Agendamento não encontrado ou não pertence a este cliente",
     };
-  const { barber_id: currentBarberId, duration_minutes: duration } =
+  const { barber_id: currentBarberId, duration_minutes: duration, status: previousStatus } =
     appRow.rows[0];
+  const nextStatus = previousStatus === "cancelled" ? "pending" : previousStatus;
   const barberId = params.barber_id ?? currentBarberId;
 
   const bufferMins = await getBookingBufferMinutes(barbershopId);
@@ -1955,8 +1969,14 @@ export async function rescheduleAppointmentByAgent(
   }
   await cancelReminderForAppointment(appointmentId);
   await pool.query(
-    `UPDATE public.appointments SET scheduled_date = $1::date, scheduled_time = $2::time, barber_id = $3, updated_at = now() WHERE id = $4`,
-    [params.date, timeNorm, barberId, appointmentId],
+    `UPDATE public.appointments
+     SET scheduled_date = $1::date,
+         scheduled_time = $2::time,
+         barber_id = $3,
+         status = $5,
+         updated_at = now()
+     WHERE id = $4`,
+    [params.date, timeNorm, barberId, appointmentId, nextStatus],
   );
   const hasAutomation = await barbershopHasAutomation(barbershopId);
   if (hasAutomation) {
@@ -2102,11 +2122,40 @@ export async function addToWaitlist(
   if (params.barber_id && !isValidUuid(params.barber_id))
     return { error: "barber_id inválido" };
 
+  // Same client, same day, hour, service and barber (when named) is one entry.
+  // A second request returns the row already there. NULL barber matches only NULL barber.
   const r = await pool.query(
-    `INSERT INTO public.appointment_waitlist
-      (barbershop_id, client_phone, client_name, desired_date, desired_time, service_id, barber_id, source, notes, status, updated_at)
-     VALUES ($1, $2, $3, $4::date, $5::time, $6, $7, 'ai', $8, 'active', now())
-     RETURNING id, barbershop_id, client_phone, client_name, desired_date, desired_time, service_id, barber_id, status, created_at`,
+    `WITH existing AS (
+       SELECT id
+       FROM public.appointment_waitlist
+       WHERE barbershop_id = $1
+         AND client_phone = $2
+         AND desired_date = $4::date
+         AND desired_time = $5::time
+         AND service_id = $6
+         AND status = 'active'
+         AND barber_id IS NOT DISTINCT FROM $7::uuid
+       ORDER BY created_at
+       LIMIT 1
+     ),
+     updated AS (
+       UPDATE public.appointment_waitlist w
+       SET notes = COALESCE($8, w.notes), updated_at = now()
+       FROM existing
+       WHERE w.id = existing.id
+       RETURNING w.id, w.barbershop_id, w.client_phone, w.client_name, w.desired_date,
+                 w.desired_time, w.service_id, w.barber_id, w.status, w.created_at
+     ),
+     inserted AS (
+       INSERT INTO public.appointment_waitlist
+         (barbershop_id, client_phone, client_name, desired_date, desired_time, service_id, barber_id, source, notes, status, updated_at)
+       SELECT $1, $2, $3, $4::date, $5::time, $6, $7, 'ai', $8, 'active', now()
+       WHERE NOT EXISTS (SELECT 1 FROM existing)
+       RETURNING id, barbershop_id, client_phone, client_name, desired_date, desired_time, service_id, barber_id, status, created_at
+     )
+     SELECT * FROM updated
+     UNION ALL
+     SELECT * FROM inserted`,
     [
       barbershopId,
       phone,
@@ -2156,7 +2205,7 @@ export async function listPlans(barbershopId: string): Promise<unknown> {
 
 export async function subscribeClientToPlan(
   barbershopId: string,
-  params: { client_phone: string; plan_id: string; billing_day?: number },
+  params: { client_phone: string; plan_id: string; billing_day?: number; client_name?: string },
 ): Promise<unknown> {
   if (!isValidUuid(params.plan_id)) return { error: "plan_id inválido" };
   const phone = params.client_phone.replace(/\D/g, "");
@@ -2174,8 +2223,20 @@ export async function subscribeClientToPlan(
     `SELECT id FROM public.clients WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = $2 LIMIT 1`,
     [barbershopId, phone],
   );
-  if (!clientRow.rows[0]) return { error: "Cliente não encontrado. Realize um agendamento primeiro para criar o cadastro." };
-  const clientId = clientRow.rows[0].id;
+  let clientId = clientRow.rows[0]?.id;
+  if (!clientId) {
+    const person = params.client_name?.trim();
+    if (!person) return { error: "Peça o nome antes de assinar." };
+    await upsertClient(barbershopId, phone, person);
+    const created = await pool.query<{ id: string }>(
+      `SELECT id FROM public.clients WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = $2 LIMIT 1`,
+      [barbershopId, phone],
+    );
+    clientId = created.rows[0]?.id;
+    if (!clientId) return { error: "Não foi possível criar o cadastro." };
+  } else if (params.client_name?.trim()) {
+    await upsertClient(barbershopId, phone, params.client_name.trim());
+  }
 
   const today = new Date();
   const billingDay = Math.min(Math.max(params.billing_day ?? today.getDate(), 1), 28);
@@ -2214,6 +2275,18 @@ export async function subscribeClientToPlan(
   });
 }
 
+/**
+ * Envia a chave PIX do plano via chat (atendimento — fora do teto diário de 50).
+ *
+ * Contratos do glossário (Q28-Q31):
+ * - Marca como enviada a cobrança em aberto mais antiga que ainda não foi enviada
+ *   (status 'pending' ou 'overdue_1'/'overdue_2'). Não usa next_billing_date.
+ * - Um envio, um mês. O próximo ciclo não é marcado.
+ * - Segundo pedido / décimo dia: chave sai como texto, mês já marcado não avança.
+ * - Sem cobrança em aberto: chave sai, nada é marcado.
+ * - Sem sendPixRequest (provedor não suporta PIX nativo): chave sai como texto.
+ * - Toda chamada desta função via chat = atendimento, não entra nos 50 disparos.
+ */
 export async function sendPixPlanCharge(
   barbershopId: string,
   params: { subscription_id: string; client_phone: string },
@@ -2224,9 +2297,8 @@ export async function sendPixPlanCharge(
     plan_name: string;
     price: string;
     client_phone: string;
-    next_billing_date: string;
   }>(
-    `SELECT bp.name AS plan_name, bp.price, c.phone AS client_phone, s.next_billing_date
+    `SELECT bp.name AS plan_name, bp.price, c.phone AS client_phone
      FROM public.client_plan_subscriptions s
      JOIN public.barbershop_plans bp ON bp.id = s.plan_id
      JOIN public.clients c ON c.id = s.client_id
@@ -2236,43 +2308,90 @@ export async function sendPixPlanCharge(
   if (!subRow.rows[0]) return { error: "Assinatura não encontrada ou inativa." };
   const sub = subRow.rows[0];
 
-  const shopRow = await pool.query<{ pix_key: string | null; name: string; address: string | null }>(
-    `SELECT pix_key, name, address FROM public.barbershops WHERE id = $1`,
+  const shopRow = await pool.query<{
+    pix_key: string | null;
+    pix_holder_name: string | null;
+    pix_key_type: string | null;
+    name: string;
+    address: string | null;
+  }>(
+    `SELECT pix_key, pix_holder_name, pix_key_type, name, address FROM public.barbershops WHERE id = $1`,
     [barbershopId],
   );
   const shop = shopRow.rows[0];
-  if (!shop?.pix_key) return { error: "Chave PIX não cadastrada. Configure em Configurações → Dados da NavalhIA." };
+  if (!shop?.pix_key?.trim()) {
+    return { error: "Chave PIX não cadastrada. Configure em Configurações → Dados da NavalhIA." };
+  }
+  const pixKey = shop.pix_key.trim();
 
-  const session = await getWhatsAppOrNull(barbershopId);
-  if (!session?.sendPixRequest) return { error: "WhatsApp não conectado ou PIX indisponível neste provedor." };
+  // Find the oldest open charge not yet sent (pending / overdue).
+  const openChargeRow = await pool.query<{ id: string; amount: string; due_date: string }>(
+    `SELECT id, amount, due_date
+     FROM public.plan_pix_charges
+     WHERE subscription_id = $1
+       AND status IN ('pending', 'overdue_1', 'overdue_2')
+     ORDER BY due_date ASC
+     LIMIT 1`,
+    [params.subscription_id],
+  );
+  const openCharge = openChargeRow.rows[0] ?? null;
 
   const clientPhone = (params.client_phone || sub.client_phone).replace(/\D/g, "");
-  const amount = Number(sub.price);
+  const amount = openCharge ? Number(openCharge.amount) : Number(sub.price);
   const city = (shop.address ?? "").split(",").pop()?.trim() || "Brasil";
 
-  try {
-    await session.sendPixRequest({
-      to: clientPhone,
-      amount,
-      description: `Plano ${sub.plan_name} — NavalhIA`,
-      pixKey: shop.pix_key,
-      name: shop.name,
-      city,
-    });
-  } catch (e) {
-    return { error: `Falha ao enviar PIX: ${e instanceof Error ? e.message : String(e)}` };
+  const session = await getWhatsAppOrNull(barbershopId);
+  let sentNative = false;
+
+  // Try native PIX (e.g. Evolution); fall back to text if not supported.
+  if (session?.sendPixRequest) {
+    try {
+      await session.sendPixRequest({
+        to: clientPhone,
+        amount,
+        description: `Plano ${sub.plan_name} — NavalhIA`,
+        pixKey,
+        name: shop.name,
+        city,
+      });
+      sentNative = true;
+    } catch (e) {
+      console.warn(
+        "[sendPixPlanCharge] sendPixRequest failed, falling back to text key: %s",
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
-  await pool.query(
-    `UPDATE public.plan_pix_charges SET status = 'sent', sent_at = now()
-     WHERE subscription_id = $1 AND status = 'pending' AND due_date = $2`,
-    [params.subscription_id, sub.next_billing_date],
-  );
+  // If native PIX was not sent (not supported or failed), send the key as plain text.
+  if (!sentNative) {
+    if (!session) return { error: "WhatsApp não conectado." };
+    const holderLine = shop.pix_holder_name?.trim()
+      ? `\n*Titular:* ${shop.pix_holder_name.trim()}`
+      : "";
+    const amountLine = openCharge ? `\n*Valor:* R$ ${amount.toFixed(2).replace(".", ",")}` : "";
+    const text =
+      `*Chave PIX do plano ${sub.plan_name}*\n*Chave:* ${pixKey}${holderLine}${amountLine}` +
+      `\n\nDeposite o valor e envie o comprovante por aqui.`;
+    await session.sendText(clientPhone, text);
+  }
+
+  // Mark the oldest open charge as sent — only if there was one (Q28-Q30).
+  if (openCharge) {
+    await pool.query(
+      `UPDATE public.plan_pix_charges SET status = 'sent', sent_at = now()
+       WHERE id = $1 AND status IN ('pending', 'overdue_1', 'overdue_2')`,
+      [openCharge.id],
+    );
+  }
 
   return {
     ok: true,
     amount,
-    message: `Cobrança PIX de R$ ${amount.toFixed(2)} enviada para o plano "${sub.plan_name}".`,
+    charged_month: openCharge?.due_date ?? null,
+    message: openCharge
+      ? `Cobrança PIX de R$ ${amount.toFixed(2)} enviada para o plano "${sub.plan_name}".`
+      : `Chave PIX enviada para o plano "${sub.plan_name}". Nenhuma cobrança em aberto no momento.`,
   };
 }
 
@@ -2285,9 +2404,8 @@ export async function sendShopPix(
     pix_holder_name: string | null;
     pix_key_type: string | null;
     name: string;
-    address: string | null;
   }>(
-    `SELECT pix_key, pix_holder_name, pix_key_type, name, address FROM public.barbershops WHERE id = $1`,
+    `SELECT pix_key, pix_holder_name, pix_key_type, name FROM public.barbershops WHERE id = $1`,
     [barbershopId],
   );
   const shop = shopRow.rows[0];
@@ -2300,63 +2418,15 @@ export async function sendShopPix(
   }
   const to = clientPhone.replace(/\D/g, "");
   if (!to) return { error: "client_phone required" };
-  const city = (shop?.address ?? "").split(",").pop()?.trim() || "Brasil";
 
-  const typeLabel: Record<string, string> = {
-    cpf: "CPF",
-    cnpj: "CNPJ",
-    telefone: "Telefone",
-    email: "E-mail",
-    aleatoria: "Chave aleatória",
-  };
-  const typeLine = shop?.pix_key_type
-    ? `\nTipo: ${typeLabel[shop.pix_key_type] ?? shop.pix_key_type}`
-    : "";
-  const holderLine = shop?.pix_holder_name ? `\nRecebedor: ${shop.pix_holder_name}` : "";
-  const textFallback = `💰 *PIX da ${shop?.name ?? "barbearia"}*${typeLine}\nChave: ${pixKey}${holderLine}`;
-
-  const session = await getWhatsAppOrNull(barbershopId);
-  if (session?.sendPixRequest) {
-    try {
-      await session.sendPixRequest({
-        to,
-        amount: 0,
-        description: `PIX ${shop?.name ?? "barbearia"}`,
-        pixKey,
-        name: shop?.name ?? "Barbearia",
-        city,
-      });
-      return {
-        ok: true,
-        channel: "native",
-        sent: true,
-        pix_key: pixKey,
-        message: "PIX nativo já enviado. Não repita a chave nem o bloco de PIX no texto.",
-      };
-    } catch (e) {
-      console.warn("[sendShopPix] native failed, falling back to text:", e instanceof Error ? e.message : e);
-    }
-  }
-  if (session) {
-    try {
-      await session.sendText(to, textFallback);
-      return {
-        ok: true,
-        channel: "text",
-        sent: true,
-        pix_key: pixKey,
-        message: "Chave PIX já enviada em texto. Não repita a chave na resposta.",
-      };
-    } catch (e) {
-      console.warn("[sendShopPix] text send failed:", e instanceof Error ? e.message : e);
-    }
-  }
   return {
     ok: true,
-    channel: "text_unsent",
+    channel: "compose",
     pix_key: pixKey,
-    message: textFallback,
-    warning: "Entrega WhatsApp falhou. Inclua a chave PIX no texto da resposta.",
+    pix_key_type: shop?.pix_key_type ?? null,
+    pix_holder_name: shop?.pix_holder_name ?? null,
+    shop_name: shop?.name ?? null,
+    message: "Chave pronta. O sistema envia valor e chave numa mensagem. Não repita a chave.",
   };
 }
 

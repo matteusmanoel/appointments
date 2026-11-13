@@ -42,6 +42,39 @@ vi.mock("@/lib/api", () => ({
             created_at: new Date().toISOString(),
             conversation_id: null,
           },
+          {
+            id: "act-4",
+            type: "send_failure",
+            actor: "system",
+            client_name: "Ana",
+            scheduled_date: null,
+            scheduled_time: null,
+            summary: "Lembrete não entregue — WhatsApp desconectado",
+            created_at: new Date().toISOString(),
+            conversation_id: null,
+          },
+          {
+            id: "act-5",
+            type: "agent_silenced",
+            actor: "system",
+            client_name: "Bruno",
+            scheduled_date: null,
+            scheduled_time: null,
+            summary: null,
+            created_at: new Date().toISOString(),
+            conversation_id: null,
+          },
+          {
+            id: "act-6",
+            type: "payment_failed",
+            actor: "system",
+            client_name: "Carla",
+            scheduled_date: null,
+            scheduled_time: null,
+            summary: null,
+            created_at: new Date().toISOString(),
+            conversation_id: null,
+          },
         ],
       }),
     ),
@@ -67,5 +100,22 @@ describe("AgendaActivityFeed", () => {
     expect(screen.getByText(/agendou/)).toBeInTheDocument();
     expect(screen.getByText(/confirmou presença/)).toBeInTheDocument();
     expect(screen.getByText(/PIX recebido/)).toBeInTheDocument();
+  });
+
+  it("renders operational failures with their own copy instead of the raw type", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <AgendaActivityFeed />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/Lembrete não entregue/)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Agente silenciado — revisar/)).toBeInTheDocument();
+    expect(screen.getByText(/Cobrança falhou/)).toBeInTheDocument();
+    expect(screen.queryByText(/send_failure|agent_silenced|payment_failed/)).not.toBeInTheDocument();
   });
 });

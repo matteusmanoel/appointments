@@ -1,6 +1,28 @@
 import { pool } from "../db.js";
 import { brPhoneMatchKeys, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
 
+/** scheduled_messages has no appointment_id column: reminders point to it via payload/dedupe_key. */
+async function deleteReminders(params: {
+  barbershopId: string;
+  appointmentIds: string[];
+  phoneKeys: string[];
+}): Promise<void> {
+  await pool
+    .query(
+      `DELETE FROM public.scheduled_messages
+       WHERE barbershop_id = $1
+         AND type IN ('reminder_24h', 'reminder_2h')
+         AND (
+           payload_json->>'appointment_id' = ANY($2::text[])
+           OR (status = 'queued' AND regexp_replace(to_phone, '[^0-9]', '', 'g') = ANY($3::text[]))
+         )`,
+      [params.barbershopId, params.appointmentIds, params.phoneKeys],
+    )
+    .catch((e) => {
+      console.warn("[wipe-test-context] reminders:", e instanceof Error ? e.message : e);
+    });
+}
+
 /**
  * Limpa conversa WhatsApp, agendamentos e o cliente deste telefone nesta barbearia.
  * Usado pelo comando /deletar em testes ponta a ponta.
@@ -61,11 +83,10 @@ export async function wipeWhatsAppTestContext(params: {
     : { rows: [] as Array<{ id: string }> };
   const appointmentIds = appts.rows.map((r) => r.id);
 
+  await deleteReminders({ barbershopId: params.barbershopId, appointmentIds, phoneKeys: keys });
+
   if (appointmentIds.length) {
     await pool.query(`DELETE FROM public.appointment_services WHERE appointment_id = ANY($1::uuid[])`, [
-      appointmentIds,
-    ]).catch(() => {});
-    await pool.query(`DELETE FROM public.scheduled_messages WHERE appointment_id = ANY($1::uuid[])`, [
       appointmentIds,
     ]).catch(() => {});
     await pool.query(`DELETE FROM public.agenda_activity WHERE appointment_id = ANY($1::uuid[])`, [
@@ -158,9 +179,7 @@ export async function wipeTestAppointments(params: {
   await pool.query(`DELETE FROM public.appointment_services WHERE appointment_id = ANY($1::uuid[])`, [
     appointmentIds,
   ]).catch(() => {});
-  await pool.query(`DELETE FROM public.scheduled_messages WHERE appointment_id = ANY($1::uuid[])`, [
-    appointmentIds,
-  ]).catch(() => {});
+  await deleteReminders({ barbershopId: params.barbershopId, appointmentIds, phoneKeys: [] });
   await pool.query(`DELETE FROM public.agenda_activity WHERE appointment_id = ANY($1::uuid[])`, [
     appointmentIds,
   ]).catch(() => {});

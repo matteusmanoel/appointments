@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, CreditCard, Users } from "lucide-react";
+import { Plus, CreditCard, Receipt, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { plansApi, type BarbershopPlan } from "@/lib/api";
 import { PlanCard } from "@/components/plans/PlanCard";
 import { PlanFormModal } from "@/components/plans/PlanFormModal";
 import { SubscriptionTable } from "@/components/plans/SubscriptionTable";
+import { ChargesTable } from "@/components/plans/ChargesTable";
 import { ConfirmDialog } from "@/components/shared";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { LoadingState } from "@/components/LoadingState";
@@ -88,6 +89,10 @@ export default function Planos() {
             <Users className="h-4 w-4" />
             Assinaturas ({activeSubscriptions.length})
           </TabsTrigger>
+          <TabsTrigger value="cobrancas" className="gap-2">
+            <Receipt className="h-4 w-4" />
+            Cobranças
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="planos" className="mt-4">
@@ -144,6 +149,10 @@ export default function Planos() {
 
         <TabsContent value="assinaturas" className="mt-4">
           <SubscriptionTable subscriptions={subscriptions} isLoading={subsLoading} />
+        </TabsContent>
+
+        <TabsContent value="cobrancas" className="mt-4">
+          <ChargesTable />
         </TabsContent>
       </Tabs>
 
