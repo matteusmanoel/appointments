@@ -362,10 +362,12 @@ async function bumpOrEnqueueJob(params: {
      AND NOT EXISTS (
        SELECT 1 FROM public.ai_jobs
        WHERE conversation_id = $2 AND status = 'processing'
-         AND locked_at > now() - interval '2 minutes'
+         AND COALESCE(locked_at, updated_at) > now() - make_interval(secs => $5::int)
      )
      RETURNING id`,
-    [params.barbershopId, params.conversationId, JSON.stringify(payloadJson), quietSecs],
+    // Mesmo limite do reaper (Lambda + margem, lib/ai-job-timing.ts): enquanto o job pode estar vivo não cria outro,
+    // e o reaper só o devolve depois disso, então nunca coexistem dois jobs da mesma conversa.
+    [params.barbershopId, params.conversationId, JSON.stringify(payloadJson), quietSecs, config.aiJobProcessingTimeoutSeconds],
   );
   if (jobInsert.rows[0]?.id) {
     await notifyAiJobScheduled(quietSecs, { barbershopId: params.barbershopId, conversationId: params.conversationId });
