@@ -25,6 +25,14 @@ import {
 import { billingApi, type BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
 import {
+  CHECKOUT_FIELD_DOM_ID,
+  checkoutErrorMessage,
+  firstInvalidField,
+  validateCheckoutField,
+  validateCheckoutForm,
+  type CheckoutField,
+} from "@/lib/checkout-validation";
+import {
   WHATSAPP_RISK_CHECKBOX_LABEL,
   WHATSAPP_RISK_NOTICE_TEXT,
   WHATSAPP_RISK_NOTICE_VERSION,
@@ -35,18 +43,6 @@ const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
 const EXTRA_NUMBER_PRICE = 39;
 const MAX_EXTRA_NUMBERS = 10;
-
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function phoneDigits(value: string): string {
-  return value.replace(/\D/g, "");
-}
-
-function cnpjDigits(value: string): string {
-  return value.replace(/\D/g, "");
-}
 
 type Props = {
   open: boolean;
@@ -95,37 +91,27 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     ? planInfo.priceValue + effectiveExtraNumbers * EXTRA_NUMBER_PRICE
     : 0;
 
-  const isFormValid = useMemo(() => {
-    const name = form.barbershop_name.trim();
-    const emailVal = form.email.trim();
-    const phoneVal = form.phone.trim();
-    const cnpjVal = form.cnpj.trim();
-    if (!name.length) return false;
-    if (!isValidEmail(emailVal)) return false;
-    if (phoneDigits(phoneVal).length < 10 || phoneDigits(phoneVal).length > 11) return false;
-    if (cnpjVal.length > 0 && cnpjDigits(cnpjVal).length !== 14) return false;
-    if (!riskAccepted) return false;
-    return true;
-  }, [form.barbershop_name, form.email, form.phone, form.cnpj, riskAccepted]);
-
   const validateAndSetErrors = (): boolean => {
-    const errors: Record<string, string> = {};
-    if (!form.barbershop_name.trim()) errors.barbershop_name = "Nome é obrigatório";
-    if (!form.email.trim()) errors.email = "E-mail é obrigatório";
-    else if (!isValidEmail(form.email.trim())) errors.email = "E-mail inválido";
-    const ph = phoneDigits(form.phone);
-    if (ph.length < 10 || ph.length > 11) errors.phone = "Telefone deve ter 10 ou 11 dígitos";
-    const cn = cnpjDigits(form.cnpj);
-    if (cn.length > 0 && cn.length !== 14) errors.cnpj = "CNPJ deve ter 14 dígitos";
-    if (!riskAccepted) errors.risk = WHATSAPP_RISK_REQUIRED_MESSAGE;
-    setFieldErrors(errors);
-    return Object.keys(errors).length === 0;
+    const errors = validateCheckoutForm({ ...form, whatsapp_risk_accepted: riskAccepted });
+    setFieldErrors(errors as Record<string, string>);
+    const first = firstInvalidField(errors);
+    if (first) {
+      // Leva o dono até o primeiro campo com problema (o botão nunca fica "morto").
+      const el = document.getElementById(CHECKOUT_FIELD_DOM_ID[first]);
+      el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+      el?.focus?.({ preventScroll: true });
+    }
+    return !first;
+  };
+
+  const validateOnBlur = (field: CheckoutField) => {
+    setFieldErrors((prev) => ({ ...prev, [field]: validateCheckoutField(field, form) }));
   };
 
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!validateAndSetErrors() || !isFormValid) return;
+    if (!validateAndSetErrors()) return;
     setLoading(true);
     try {
       const extra = plan === "essential" ? 0 : extraNumbers;
@@ -158,7 +144,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         window.location.href = url;
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar checkout");
+      setError(checkoutErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -186,7 +172,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       });
       window.location.href = url;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro ao criar checkout");
+      setError(checkoutErrorMessage(err));
       setLoading(false);
     }
   };
@@ -333,6 +319,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   }}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.barbershop_name}
+                  onBlur={() => validateOnBlur("barbershop_name")}
                 />
                 {fieldErrors.barbershop_name && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.barbershop_name}</p>
@@ -347,6 +334,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   onChange={handleCnpjChange}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.cnpj}
+                  onBlur={() => validateOnBlur("cnpj")}
                 />
                 {fieldErrors.cnpj && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.cnpj}</p>
@@ -362,6 +350,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   onChange={handlePhoneChange}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.phone}
+                  onBlur={() => validateOnBlur("phone")}
                 />
                 {fieldErrors.phone && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.phone}</p>
@@ -381,6 +370,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   }}
                   className="mt-1 min-h-[44px] text-base sm:text-sm"
                   aria-invalid={!!fieldErrors.email}
+                  onBlur={() => validateOnBlur("email")}
                 />
                 {fieldErrors.email && (
                   <p className="text-xs text-destructive mt-1">{fieldErrors.email}</p>
@@ -410,9 +400,12 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                 </p>
               </div>
 
-              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm space-y-2" data-testid="whatsapp-risk-notice">
+              <div
+                className={`rounded-lg border bg-muted/20 px-3 py-2.5 text-sm space-y-2 ${fieldErrors.risk ? "border-destructive" : "border-border"}`}
+                data-testid="whatsapp-risk-notice"
+              >
                 <p className="font-medium text-foreground">Aviso sobre o WhatsApp</p>
-                <p className="text-muted-foreground text-xs sm:text-sm">{WHATSAPP_RISK_NOTICE_TEXT}</p>
+                <p id="whatsapp_risk_text" className="text-muted-foreground text-sm">{WHATSAPP_RISK_NOTICE_TEXT}</p>
                 <div className="flex items-start gap-2">
                   <Checkbox
                     id="whatsapp_risk"
@@ -421,23 +414,26 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                       setRiskAccepted(v === true);
                       setFieldErrors((fe) => ({ ...fe, risk: "" }));
                     }}
-                    aria-describedby="whatsapp_risk_help"
-                    className="mt-0.5"
+                    aria-describedby="whatsapp_risk_text whatsapp_risk_error"
+                    aria-invalid={!!fieldErrors.risk}
+                    className="mt-0.5 h-5 w-5"
                   />
                   <Label htmlFor="whatsapp_risk" className="text-sm font-normal leading-snug cursor-pointer">
                     {WHATSAPP_RISK_CHECKBOX_LABEL}
                   </Label>
                 </div>
-                <p id="whatsapp_risk_help" className="text-xs text-destructive" role="alert">
-                  {fieldErrors.risk ?? ""}
-                </p>
+                {fieldErrors.risk && (
+                  <p id="whatsapp_risk_error" className="text-sm text-destructive" role="alert">
+                    {fieldErrors.risk}
+                  </p>
+                )}
               </div>
 
               {error && <p className="text-sm text-destructive">{error}</p>}
               <Button
                 type="submit"
                 className="w-full min-h-[44px] text-base sm:text-sm"
-                disabled={loading || !isFormValid}
+                disabled={loading}
               >
                 {loading ? "Preparando..." : "Ir para pagamento"}
               </Button>
