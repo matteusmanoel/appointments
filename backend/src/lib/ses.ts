@@ -247,7 +247,8 @@ export type PaymentFailedEmailParams = {
 /** Aviso ao dono quando a cobrança da assinatura falha. Só é chamado com BILLING_NOTIFY_PAYMENT_FAILED=true (ver lib/billing-notify.ts). */
 export async function sendPaymentFailedEmail(params: PaymentFailedEmailParams): Promise<void> {
   const from = process.env.FROM_EMAIL;
-  if (!from) return;
+  // Lança (não retorna em silêncio): quem chama NÃO pode registrar «enviado» (lib/billing-notify.ts reenvia depois).
+  if (!from) throw new Error("FROM_EMAIL ausente: aviso de pagamento não enviado");
   const settingsUrl = `${ensureNoTrailingSlash(params.appUrl)}/app/configuracoes`;
   const until = params.graceEndsAt.toLocaleDateString("pt-BR");
   const textBody = `

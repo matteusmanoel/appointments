@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { pool } from "../db.js";
 import { config } from "../config.js";
+import { getSubscriptionAccess } from "../billing-access.js";
 
 const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_MS = 2000;
@@ -76,7 +77,21 @@ export async function dispatchOutboundEvents(): Promise<number> {
 
   const rows = await fetchPendingEvents();
   let sent = 0;
+  const blockedCache = new Map<string, boolean>();
   for (const row of rows) {
+    // Assinatura inativa (carência vencida): não envia ao n8n (que dispararia mensagens). O evento fica `dead` com o motivo.
+    let blocked = blockedCache.get(row.barbershop_id);
+    if (blocked === undefined) {
+      blocked = !(await getSubscriptionAccess(row.barbershop_id)).allowed;
+      blockedCache.set(row.barbershop_id, blocked);
+    }
+    if (blocked) {
+      await pool.query(
+        `UPDATE public.outbound_events SET status = 'dead', last_error = $2, updated_at = now() WHERE id = $1`,
+        [row.id, "assinatura inativa: evento não enviado ao n8n"],
+      );
+      continue;
+    }
     const body = JSON.stringify({
       barbershop_id: row.barbershop_id,
       type: row.type,

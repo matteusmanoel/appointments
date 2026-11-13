@@ -21,6 +21,7 @@ import {
 import type { InstanceStatusResult } from "../integrations/uazapi/client.js";
 import { getAiPauseState, setAiPaused, clearAiPause, setConversationPaused, clearConversationPause } from "../ai/runtime-pause.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
+import { requireWhatsAppConnectAllowed } from "../lib/billing-gates.js";
 import { knowledgeRouter } from "./knowledge.js";
 import { brPhoneMatchKeys, brPhonesMatch, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
 import {
@@ -184,7 +185,7 @@ whatsappRouter.get("/connectivity", async (_req: Request, res: Response): Promis
 });
 
 /** POST /api/integrations/whatsapp/connect — QR/pairing; setWebhook interno na sessão */
-whatsappRouter.post("/connect", async (req: Request, res: Response): Promise<void> => {
+whatsappRouter.post("/connect", requireWhatsAppConnectAllowed, async (req: Request, res: Response): Promise<void> => {
   try {
     res.setHeader("Cache-Control", "no-store");
     const barbershopId = getBarbershopId(req);
@@ -1028,7 +1029,7 @@ whatsappRouter.get("/uazapi/connectivity", async (_req: Request, res: Response):
 });
 
 /** POST /api/integrations/whatsapp/uazapi/start — cria instância (se não existir), seta webhook, inicia conexão */
-whatsappRouter.post("/uazapi/start", async (req: Request, res: Response): Promise<void> => {
+whatsappRouter.post("/uazapi/start", requireWhatsAppConnectAllowed, async (req: Request, res: Response): Promise<void> => {
   try {
     res.setHeader("Cache-Control", "no-store");
     const barbershopId = getBarbershopId(req);
@@ -1177,7 +1178,7 @@ const linkExistingBody = z.object({
 });
 
 /** POST /api/integrations/whatsapp/uazapi/link-existing — vincula instância já existente (evita 429 ao zerar o banco) */
-whatsappRouter.post("/uazapi/link-existing", async (req: Request, res: Response): Promise<void> => {
+whatsappRouter.post("/uazapi/link-existing", requireWhatsAppConnectAllowed, async (req: Request, res: Response): Promise<void> => {
   try {
     res.setHeader("Cache-Control", "no-store");
     const barbershopId = getBarbershopId(req);

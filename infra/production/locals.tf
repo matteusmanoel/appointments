@@ -50,5 +50,6 @@ locals {
     EVOLUTION_API_KEY               = ""
     N8N_CHAT_TRIGGER_URL            = ""
     TOOLS_API_KEY                   = ""
+    BILLING_NOTIFY_PAYMENT_FAILED   = tostring(var.billing_notify_payment_failed)
   }
 }
