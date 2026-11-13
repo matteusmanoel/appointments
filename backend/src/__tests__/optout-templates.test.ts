@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  OPT_OUT_CONFIRMATION_LINE,
   OPT_OUT_MARKETING_LINE,
   OPT_OUT_PROMO_LINE,
   buildBirthdayMessage,
@@ -10,6 +9,7 @@ import {
   buildReminder2hConfirmed,
   buildReminder2hPending,
   resolveReminderSendBody,
+  hasOptOutInstruction,
   withOptOutLine,
 } from "../outbound/templates.js";
 import { reactivationMessage } from "../outbound/reactivation.js";
@@ -25,6 +25,7 @@ describe("instrução PARAR nas mensagens automáticas (lp-correcoes §16.6)", (
     expect(once).toBe(`Oi\n\n${OPT_OUT_MARKETING_LINE}`);
     expect(withOptOutLine(once)).toBe(once);
     expect(withOptOutLine("responda parar para sair")).toBe("responda parar para sair");
+    expect(withOptOutLine("Para sair, envie SAIR")).toBe("Para sair, envie SAIR");
     expect(withOptOutLine("   ")).toBe("");
   });
 
@@ -63,7 +64,10 @@ describe("instrução PARAR nas mensagens automáticas (lp-correcoes §16.6)", (
   it("confirmação de agendamento traz a instrução (com e sem lembrete 2h)", () => {
     const base = { firstName: "Mateus", serviceName: "Corte", when: "amanhã às 18h" };
     const plain = composeBookingCreated(base);
-    expect(plain.endsWith(OPT_OUT_CONFIRMATION_LINE)).toBe(true);
+    // sem lembrete de 2h NÃO promete lembretes (o review apontou a promessa falsa), só a instrução de opt-out
+    expect(plain.endsWith(OPT_OUT_PROMO_LINE)).toBe(true);
+    expect(plain).not.toMatch(/receberá lembretes/i);
+    expect(plain.match(/PARAR/g)).toHaveLength(1);
     const withRemind = composeBookingCreated({ ...base, remindBefore: true });
     expect(withRemind).toContain("[[MSG]]Enviaremos um lembrete 2h antes");
     expect(withRemind.endsWith(OPT_OUT_PROMO_LINE)).toBe(true);
@@ -71,14 +75,18 @@ describe("instrução PARAR nas mensagens automáticas (lp-correcoes §16.6)", (
   });
 });
 
-describe("o opt-out do cliente é reconhecido (PARAR e SAIR)", () => {
-  // Mesmo padrão de integrations/whatsapp/inbound.ts (testado por cópia: a função é interna ao handler).
-  const src = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../integrations/whatsapp/inbound.ts"), "utf8") as string;
-  const m = src.match(/const optOutPattern =\s*(\/\^[^;]+\/i);/);
-  it("o padrão existe no código e reconhece parar/sair exatos", () => {
-    expect(m).toBeTruthy();
-    const re = new RegExp(m![1]!.slice(1, m![1]!.lastIndexOf("/")), "i");
-    for (const t of ["parar", "PARAR", "sair", "Sair", "sair da lista", "remover", "opt out"]) expect(re.test(t.trim())).toBe(true);
-    for (const t of ["sair às 18h?", "quero marcar", "pararam de vir"]) expect(re.test(t)).toBe(false);
+describe("a linha de opt-out some só quando o texto já TEM a instrução (não a palavra «parar» solta)", () => {
+  it("«parar» em outro sentido NÃO suprime a linha", () => {
+    for (const t of ["Vamos parar para um café na semana?", "Passa aqui, sem parar!", "Vou parar aí amanhã"]) {
+      const out = withOptOutLine(t);
+      expect(out).toBe(`${t}\n\n${OPT_OUT_MARKETING_LINE}`);
+      expect(hasOptOutInstruction(t)).toBe(false);
+    }
+    expect(reactivationMessage({ reason: "birthday", clientName: null, bookingLink: link, bodyOverride: "Vamos parar para um café?" })).toBe(
+      `Vamos parar para um café?\n\n${OPT_OUT_MARKETING_LINE}`,
+    );
+  });
+  it("a instrução de verdade é reconhecida", () => {
+    for (const t of ["Responda PARAR para sair", "para não receber, responda *PARAR*.", "Envie SAIR", "digite \"parar\""]) expect(hasOptOutInstruction(t)).toBe(true);
   });
 });

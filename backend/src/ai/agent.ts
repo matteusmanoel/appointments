@@ -1,4 +1,4 @@
-import { OPT_OUT_CONFIRMATION_LINE, OPT_OUT_PROMO_LINE } from "../outbound/templates.js";
+import { OPT_OUT_PROMO_LINE } from "../outbound/templates.js";
 import OpenAI from "openai";
 import { pool } from "../db.js";
 import * as aiTools from "./tools.js";
@@ -1201,7 +1201,8 @@ export function composeBookingCreated(params: {
   const withPro = barber ? `, com o profissional ${barber}` : "";
   const booked = `✅ Agendado, ${params.firstName}! Seu horário de ${params.serviceName} está marcado para ${params.when}${withPro}.`;
   // Instrução de opt-out em toda confirmação (lp-correcoes §16.6, parecer I-04).
-  if (!params.remindBefore) return `${booked}\n\n${OPT_OUT_CONFIRMATION_LINE}`;
+  // Sem lembrete de 2h (horário próximo): NÃO promete lembretes, só a instrução de opt-out.
+  if (!params.remindBefore) return `${booked}\n\n${OPT_OUT_PROMO_LINE}`;
   return `${booked}[[MSG]]Enviaremos um lembrete 2h antes e pedimos que confirme para garantir o seu horário. Até lá!\n\n${OPT_OUT_PROMO_LINE}`;
 }
 

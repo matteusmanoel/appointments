@@ -20,16 +20,25 @@ export type ReminderVars = {
   alreadyConfirmed?: boolean;
 };
 
-/** Instrução de opt-out (parecer I-04 / lp-correcoes §16.6). O padrão reconhecido em inbound.ts inclui "parar" e "sair". */
+/**
+ * Instrução de opt-out (parecer I-04 / lp-correcoes §16.6). O cliente sai respondendo só «PARAR»/«SAIR»
+ * (ver lib/opt-out.ts: mensagem inteira, não a palavra solta numa frase).
+ * Ficam DE FORA de propósito (não são promoção nem lembrete de horário): remarcação concluída (composeRescheduleDone) e
+ * as cobranças/lembretes de pagamento do plano, que são transacionais e não podem ser bloqueados por opt-out.
+ */
 export const OPT_OUT_MARKETING_LINE = "Para não receber mais mensagens, responda PARAR.";
 export const OPT_OUT_PROMO_LINE = "Para não receber mensagens promocionais, responda PARAR.";
-export const OPT_OUT_CONFIRMATION_LINE = "Você receberá lembretes por WhatsApp. Para não receber mensagens promocionais, responda PARAR.";
 
-/** Acrescenta a linha de opt-out ao fim do texto, uma única vez (idempotente se o texto já cita PARAR). */
+/** O texto já TEM a instrução («responda PARAR»/«envie SAIR»…)? Detecta a instrução, não a palavra solta («vamos parar para um café»). */
+export function hasOptOutInstruction(text: string): boolean {
+  return /\b(responda|responder|envie|enviar|digite|mande|mandar)\s+(?:a\s+palavra\s+)?["“'*_]*\s*(parar|sair)\b/i.test(text);
+}
+
+/** Acrescenta a linha de opt-out ao fim do texto, uma única vez (idempotente se o texto já traz a instrução). */
 export function withOptOutLine(body: string, line: string = OPT_OUT_MARKETING_LINE): string {
   const text = body.trim();
   if (!text) return text;
-  if (/\bparar\b/i.test(text)) return text;
+  if (hasOptOutInstruction(text)) return text;
   return `${text}\n\n${line}`;
 }
 
