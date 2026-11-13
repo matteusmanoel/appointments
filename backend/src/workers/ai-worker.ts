@@ -13,12 +13,12 @@ import { logTurnTrace, maskPhone, previewError, previewText, type AgentTurnTrace
 import { persistTurnSheet } from "../ai/turn-sheet-store.js";
 import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
-import { maybeAlertAiUsage } from "../ai/usage-alert.js";
 import { enqueueOutboundEvent, dispatchOutboundEvents } from "../outbound/n8n-events.js";
 import { ensureCriticalSchema } from "../db/ensure-schema.js";
 import { classifySendError } from "../integrations/whatsapp/send-error-policy.js";
 import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
 import OpenAI from "openai";
+import { maybeAlertAiUsage } from "../ai/usage-alert.js";
 
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
 const POLL_MS = 1500;
@@ -527,12 +527,6 @@ async function processOneJob(): Promise<boolean> {
       turnSink.replyText = reply;
     } else {
       const usage = await getUsageAndLimit(barbershopId);
-      // Aviso ao dono em 80% do limite (atrás de AI_USAGE_ALERT_ENABLED; desligado por padrão; nunca bloqueia o turno).
-      // AGUARDADO com teto de 3 s (um `void` solto podia ser congelado pelo fim do ciclo da Lambda no meio do envio).
-      await Promise.race([
-        maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit }),
-        new Promise<void>((resolve) => setTimeout(resolve, 3000).unref?.()),
-      ]);
       if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         turnSink.state = "hard_limit";
@@ -542,6 +536,12 @@ async function processOneJob(): Promise<boolean> {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         }
+        // Aviso ao dono em 80% do limite (atrás de AI_USAGE_ALERT_ENABLED; desligado por padrão; nunca bloqueia o turno).
+        // AGUARDADO com teto de 3 s (um `void` solto podia ser congelado pelo fim do ciclo da Lambda no meio do envio).
+        await Promise.race([
+          maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit }),
+          new Promise<void>((resolve) => setTimeout(resolve, 3000).unref?.()),
+        ]);
         const openai = new OpenAI({ apiKey: config.openaiApiKey });
         const result = await runAgent(barbershopId, conversationId, fromPhone, openai, {
           persistAssistantMessages: false,
