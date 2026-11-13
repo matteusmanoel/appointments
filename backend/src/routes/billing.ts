@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { config } from "../config.js";
+import { notifyOwnerPaymentFailed } from "../lib/billing-notify.js";
 import { sendOnboardingEmail } from "../lib/ses.js";
 import { requireJwt, getBarbershopId, type JwtPayload } from "../middleware/auth.js";
 import { schedulePaymentReminder } from "../outbound/scheduled-messages.js";
@@ -172,23 +173,35 @@ async function handleStripeEvent(event: Stripe.Event): Promise<void> {
     const customerId = typeof invoice.customer === "string" ? invoice.customer : (invoice.customer?.id ?? "");
     if (!customerId) return;
     // Inicia a tolerância (BILLING_GRACE_DAYS) só na primeira falha; falhas seguintes não renovam o prazo.
-    await pool.query(
+    // Ordem: evento mais velho que o último aplicado (ex.: payment_failed atrasado depois de invoice.paid) é ignorado.
+    const r = await pool.query<{ id: string }>(
       `UPDATE public.barbershops
-       SET subscription_status = 'past_due', subscription_status_changed_at = now(), updated_at = now()
-       WHERE stripe_customer_id = $1 AND COALESCE(subscription_status, 'active') IN ('active', 'trialing')`,
-      [customerId]
+       SET subscription_status = 'past_due', subscription_status_changed_at = now(),
+           subscription_event_at = to_timestamp($2), updated_at = now()
+       WHERE stripe_customer_id = $1 AND COALESCE(subscription_status, 'active') IN ('active', 'trialing')
+         AND (subscription_event_at IS NULL OR subscription_event_at <= to_timestamp($2))
+       RETURNING id`,
+      [customerId, event.created]
     );
+    // Aviso ao dono (atrás de BILLING_NOTIFY_PAYMENT_FAILED; desligado por padrão): só na transição para past_due.
+    for (const row of r.rows) {
+      await notifyOwnerPaymentFailed({ barbershopId: row.id, invoiceId: invoice.id ?? event.id });
+    }
     return;
   }
   if (event.type === "invoice.paid" || event.type === "invoice.payment_succeeded") {
     const invoice = event.data.object as Stripe.Invoice;
     const customerId = typeof invoice.customer === "string" ? invoice.customer : (invoice.customer?.id ?? "");
     if (!customerId) return;
+    // invoice.paid e invoice.payment_succeeded chegam juntos para a mesma fatura (event.id diferentes): o segundo é no-op
+    // porque a linha já saiu de past_due; a guarda de ordem impede que um pagamento antigo reverta uma falha mais nova.
     await pool.query(
       `UPDATE public.barbershops
-       SET subscription_status = 'active', subscription_status_changed_at = now(), updated_at = now()
-       WHERE stripe_customer_id = $1 AND subscription_status IN ('past_due', 'unpaid', 'incomplete')`,
-      [customerId]
+       SET subscription_status = 'active', subscription_status_changed_at = now(),
+           subscription_event_at = to_timestamp($2), updated_at = now()
+       WHERE stripe_customer_id = $1 AND subscription_status IN ('past_due', 'unpaid', 'incomplete')
+         AND (subscription_event_at IS NULL OR subscription_event_at <= to_timestamp($2))`,
+      [customerId, event.created]
     );
     return;
   }

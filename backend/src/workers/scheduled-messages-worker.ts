@@ -394,6 +394,13 @@ async function processOne(): Promise<boolean> {
     }
 
     try {
+      // Assinatura inativa pausa TODO envio automático (inclui cobrança de planos e reativação, que têm gate próprio).
+      const subscription = await getSubscriptionAccess(barbershopId);
+      if (!subscription.allowed) {
+        await markSkipped(id, "Assinatura inativa: envio automático pausado");
+        continue;
+      }
+
       const tzRows = await pool.query<{ timezone: string }>(
         `SELECT timezone FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
         [barbershopId]
@@ -479,12 +486,6 @@ async function processOne(): Promise<boolean> {
 
       if (!sendBody) {
         await markSkipped(id, "Mensagem vazia");
-        continue;
-      }
-
-      const subscription = await getSubscriptionAccess(barbershopId);
-      if (!subscription.allowed) {
-        await markSkipped(id, "Assinatura inativa: envio automático pausado");
         continue;
       }
 

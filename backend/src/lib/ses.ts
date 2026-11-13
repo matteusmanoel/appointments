@@ -235,3 +235,48 @@ Se você não pediu a recuperação de senha, ignore este e-mail. Sua senha atua
     })
   );
 }
+
+export type PaymentFailedEmailParams = {
+  to: string;
+  barbershopName: string;
+  appUrl: string;
+  /** Fim da tolerância (BILLING_GRACE_DAYS) antes de pausar a IA e os envios automáticos. */
+  graceEndsAt: Date;
+};
+
+/** Aviso ao dono quando a cobrança da assinatura falha. Só é chamado com BILLING_NOTIFY_PAYMENT_FAILED=true (ver lib/billing-notify.ts). */
+export async function sendPaymentFailedEmail(params: PaymentFailedEmailParams): Promise<void> {
+  const from = process.env.FROM_EMAIL;
+  if (!from) return;
+  const settingsUrl = `${ensureNoTrailingSlash(params.appUrl)}/app/configuracoes`;
+  const until = params.graceEndsAt.toLocaleDateString("pt-BR");
+  const textBody = `
+Olá,
+
+Não conseguimos cobrar a assinatura da NavalhIA de ${params.barbershopName}.
+
+Atualize a forma de pagamento até ${until} para não pausar o atendimento automático (IA e lembretes).
+
+Atualizar pagamento: ${settingsUrl}
+`.trim();
+  const htmlBody = buildEmailLayout({
+    baseUrl: params.appUrl,
+    title: "Problema no pagamento",
+    bodyHtml: `
+    <p style="margin: 0 0 12px 0;">Olá,</p>
+    <p style="margin: 0 0 16px 0;">Não conseguimos cobrar a assinatura da NavalhIA de <strong>${escapeHtml(params.barbershopName)}</strong>.</p>
+    <p style="margin: 0 0 16px 0;">Atualize a forma de pagamento até <strong>${escapeHtml(until)}</strong> para não pausar o atendimento automático (IA e lembretes).</p>`.trim(),
+    buttonText: "Atualizar pagamento",
+    buttonUrl: settingsUrl,
+  });
+  await ses.send(
+    new SendEmailCommand({
+      Source: from,
+      Destination: { ToAddresses: [params.to] },
+      Message: {
+        Subject: { Data: "Problema no pagamento da sua assinatura - NavalhIA" },
+        Body: { Text: { Data: textBody }, Html: { Data: htmlBody } },
+      },
+    }),
+  );
+}

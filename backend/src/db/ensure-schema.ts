@@ -46,6 +46,19 @@ export async function ensureCriticalSchema(): Promise<void> {
     )
     .catch(() => {});
 
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.billing_notice_log (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        barbershop_id uuid NOT NULL REFERENCES public.barbershops(id) ON DELETE CASCADE,
+        kind text NOT NULL,
+        ref text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (barbershop_id, kind, ref)
+      )`
+    )
+    .catch(() => {});
+
   // Conversation runtime: pause handoff + optional account-wide selected barbershop.
   await pool
     .query(

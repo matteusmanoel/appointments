@@ -1,3 +1,4 @@
+import { getSubscriptionAccess } from "../billing-access.js";
 import type { PoolClient } from "pg";
 import { pool } from "../db.js";
 import { config } from "../config.js";
@@ -771,6 +772,11 @@ export async function runOverduePlanBillingReminderSweep(): Promise<void> {
 
       if (!row.pix_key) {
         console.warn("[overdue-billing-sweep] barbershop %s has no pix_key — skipping charge %s", row.barbershop_id, row.charge_id);
+        continue;
+      }
+
+      if (!(await getSubscriptionAccess(row.barbershop_id)).allowed) {
+        console.warn("[overdue-billing-sweep] assinatura inativa barbershop %s — envio automático pausado (charge %s)", row.barbershop_id, row.charge_id);
         continue;
       }
 
