@@ -25,7 +25,7 @@ describe("Terraform: trava contra apply com placeholder", () => {
     expect(b).toContain("var.allow_placeholder_deploy");
   });
   it("allow_placeholder_deploy é false por padrão", () => {
-    expect(tf("variables.tf")).toMatch(/variable "allow_placeholder_deploy"[\s\S]*?default\s*=\s*false/);
+    expect(tf("variables-lambda-zips.tf")).toMatch(/variable "allow_placeholder_deploy"[\s\S]*?default\s*=\s*false/);
   });
   it("locals resolvem zip por função com fallback no zip legado", () => {
     expect(locals).toMatch(/lookup\(var\.lambda_zip_paths, fn, var\.lambda_zip_path\)/);
