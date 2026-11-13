@@ -47,8 +47,8 @@ export function providerDefaultNotice(env: Env = process.env): string | null {
 
 /**
  * Problemas de configuração do provider escolhido (para log de startup; não lança).
- * Os segredos de webhook (WHATSAPP_WEBHOOK_SECRET / WHATSAPP_APP_SECRET / WHATSAPP_VERIFY_TOKEN) pertencem ao PR #1
- * (fix/webhook-auth, que deve entrar ANTES deste): lá os webhooks respondem 503 sem eles; sem o #1 o aviso é só informativo.
+ * Os segredos de webhook (WHATSAPP_WEBHOOK_SECRET / WHATSAPP_APP_SECRET / WHATSAPP_VERIFY_TOKEN) são exigidos pelos webhooks:
+ * sem eles respondem 503 (fail closed) e nenhuma mensagem chega. A ordem de merge fica só em docs/WHATSAPP_PROVIDER.md.
  */
 export function whatsappConfigProblems(env: Env = process.env): string[] {
   const provider = resolveWhatsAppProvider(env);
@@ -65,13 +65,13 @@ export function whatsappConfigProblems(env: Env = process.env): string[] {
   }
   if (!(env.WHATSAPP_WEBHOOK_SECRET ?? "").trim()) {
     out.push(
-      "WHATSAPP_WEBHOOK_SECRET vazio: com o PR #1 (fix/webhook-auth) os webhooks Uazapi/Evolution respondem 503 (fail closed) e nenhuma mensagem chega; " +
+      "WHATSAPP_WEBHOOK_SECRET vazio: os webhooks Uazapi/Evolution respondem 503 (fail closed) e nenhuma mensagem chega; " +
         "o EVOLUTION_API_KEY NÃO serve de segredo de webhook"
     );
   }
   const metaInUse = Boolean((env.WHATSAPP_ACCESS_TOKEN ?? "").trim() || (env.WHATSAPP_PHONE_NUMBER_ID ?? "").trim());
   if (metaInUse) {
-    if (!(env.WHATSAPP_APP_SECRET ?? "").trim()) out.push("Meta Cloud API configurada mas WHATSAPP_APP_SECRET vazio: POST /api/webhooks/whatsapp responde 503 com o PR #1");
+    if (!(env.WHATSAPP_APP_SECRET ?? "").trim()) out.push("Meta Cloud API configurada mas WHATSAPP_APP_SECRET vazio: POST /api/webhooks/whatsapp responde 503 (fail closed)");
     if (!(env.WHATSAPP_VERIFY_TOKEN ?? "").trim()) out.push("Meta Cloud API configurada mas WHATSAPP_VERIFY_TOKEN vazio: o handshake GET do webhook falha");
   }
   return out;

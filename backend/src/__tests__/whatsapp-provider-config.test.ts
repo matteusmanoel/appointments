@@ -63,7 +63,7 @@ describe("aviso de mudança do provider padrão e segredos de webhook", () => {
     expect(msg).toContain("autentica a chamada à API");
     expect(msg).not.toContain("falham fechados");
   });
-  it("avisa WHATSAPP_WEBHOOK_SECRET ausente (variável do PR #1), e que a chave mestra não serve", () => {
+  it("avisa WHATSAPP_WEBHOOK_SECRET ausente , e que a chave mestra não serve", () => {
     const p = whatsappConfigProblems({ WHATSAPP_PROVIDER: "uazapi", UAZAPI_BASE_URL: "u", UAZAPI_ADMIN_TOKEN: "t" });
     expect(p).toHaveLength(1);
     expect(p[0]).toContain("WHATSAPP_WEBHOOK_SECRET");
@@ -82,5 +82,11 @@ describe("aviso de mudança do provider padrão e segredos de webhook", () => {
     const lines = startupWhatsappWarnings({});
     expect(lines[0]).toContain("não definido");
     expect(lines.length).toBeGreaterThan(2);
+  });
+
+  it("mensagens de log não citam número de PR (depois do merge isso não diz nada ao operador)", () => {
+    const lines = [...whatsappConfigProblems({}), ...whatsappConfigProblems({ WHATSAPP_ACCESS_TOKEN: "x" })].join("\n");
+    expect(lines).not.toMatch(/PR #\d+/);
+    expect(lines).toContain("fail closed");
   });
 });
