@@ -39,14 +39,48 @@ export type AccessRule = {
 };
 
 /**
+ * Normaliza o caminho como o Express (case-insensitive, strict:false): minúsculas,
+ * decodifica percent-encoding, remove barra final e resolve "." / "..".
+ * Assim as regexes de accessRules acompanham o handler que o roteador escolhe
+ * (ex.: /API-KEYS e /api-keys/ caem na mesma rota /api-keys).
+ */
+export function normalizePathForRbac(path: string): string {
+  let p = path && path.length > 0 ? path : "/";
+  const q = p.indexOf("?");
+  if (q >= 0) p = p.slice(0, q);
+  const h = p.indexOf("#");
+  if (h >= 0) p = p.slice(0, h);
+  for (let i = 0; i < 5; i++) {
+    try {
+      const decoded = decodeURIComponent(p);
+      if (decoded === p) break;
+      p = decoded;
+    } catch {
+      break;
+    }
+  }
+  const parts: string[] = [];
+  for (const part of p.normalize("NFC").toLowerCase().split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return "/" + parts.join("/");
+}
+
+/**
  * Tabela de regras por router: a primeira regra que casa (método + caminho) decide; sem match vale `fallback`.
  * Montar logo depois de `router.use(requireJwt)`.
  */
 export function accessRules(rules: readonly AccessRule[], fallback: readonly Role[]): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     const method = req.method.toUpperCase();
+    const path = normalizePathForRbac(req.path);
     const hit = rules.find(
-      (r) => (!r.methods || r.methods.includes(method)) && r.path.test(req.path)
+      (r) => (!r.methods || r.methods.includes(method)) && r.path.test(path)
     );
     requireRole(...(hit ? hit.roles : fallback))(req, res, next);
   };

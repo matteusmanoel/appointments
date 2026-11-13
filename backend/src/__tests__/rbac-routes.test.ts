@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import express from "express";
 import { app } from "../app.js";
 import { config } from "../config.js";
-import { accessRules, requireRole } from "../middleware/rbac.js";
+import { accessRules, normalizePathForRbac, requireRole } from "../middleware/rbac.js";
 
 // Tenant que não existe: qualquer escrita acidental de um papel permitido não atinge dado real.
 const GHOST_TENANT = "00000000-0000-4000-8000-0000000000aa";
@@ -54,6 +54,9 @@ const MATRIX: Case[] = [
   { method: "post", path: "/api/barbershops/closures", allowed: AM },
   { method: "post", path: "/api/barbershops", allowed: ["admin"], skipAllowedCall: true },
   { method: "get", path: "/api/integrations/api-keys", allowed: ["admin"] },
+  { method: "get", path: "/api/integrations/API-KEYS", allowed: ["admin"] },
+  { method: "delete", path: `/api/integrations/Api-Keys/${ZERO}`, allowed: ["admin"] },
+  { method: "patch", path: "/api/integrations/N8N-WEBHOOK", allowed: ["admin"], skipAllowedCall: true },
   { method: "post", path: "/api/integrations/api-keys", allowed: ["admin"], skipAllowedCall: true },
   { method: "patch", path: "/api/integrations/n8n-webhook", allowed: ["admin"], skipAllowedCall: true },
   { method: "get", path: "/api/integrations/automations/templates", allowed: AM },
@@ -133,5 +136,38 @@ describe("RBAC nas rotas autenticadas (admin / manager / attendant)", () => {
     });
     only.get("/x", requireRole("manager"), (_req, res) => res.json({ ok: true }));
     expect((await request(only).get("/x")).status).toBe(403);
+  });
+
+  it("bypass de caixa/encoding/barra final: gerente e atendente recebem 403 em /API-KEYS e variantes", async () => {
+    const variants: { method: "get" | "patch" | "delete"; path: string }[] = [
+      { method: "get", path: "/api/integrations/API-KEYS" },
+      { method: "get", path: "/api/integrations/Api-Keys" },
+      { method: "get", path: "/api/integrations/api-keys/" },
+      { method: "delete", path: `/api/integrations/Api-Keys/${ZERO}` },
+      { method: "get", path: "/api/integrations/%41PI-KEYS" },
+      { method: "get", path: "/api/integrations/api%2Dkeys" },
+      { method: "patch", path: "/api/integrations/N8N-WEBHOOK" },
+      { method: "get", path: "/api/integrations/n8n-webhook/" },
+    ];
+    for (const v of variants) {
+      for (const role of ["manager", "attendant"] as R[]) {
+        const res = await request(app)[v.method](v.path).set("X-Forwarded-For", nextIp()).set("Authorization", `Bearer ${tok(role)}`).send({});
+        expect(res.status, `${role} ${v.method.toUpperCase()} ${v.path}`).toBe(403);
+        expect(res.body.error).toMatch(/permiss/i);
+      }
+      const admin = await request(app)[v.method](v.path).set("X-Forwarded-For", nextIp()).set("Authorization", `Bearer ${tok("admin")}`).send({});
+      expect(admin.status, `admin ${v.method.toUpperCase()} ${v.path}`).not.toBe(403);
+    }
+  });
+
+  it("normalizePathForRbac: caixa, barra final, encoding e '..'", () => {
+    expect(normalizePathForRbac("/API-KEYS")).toBe("/api-keys");
+    expect(normalizePathForRbac("/Api-Keys/")).toBe("/api-keys");
+    expect(normalizePathForRbac("/api-keys/")).toBe("/api-keys");
+    expect(normalizePathForRbac("/%41PI-KEYS")).toBe("/api-keys");
+    expect(normalizePathForRbac("/api%2Dkeys")).toBe("/api-keys");
+    expect(normalizePathForRbac("/whatsapp/../API-KEYS")).toBe("/api-keys");
+    expect(normalizePathForRbac("/n8n-webhook/")).toBe("/n8n-webhook");
+    expect(normalizePathForRbac("/")).toBe("/");
   });
 });
