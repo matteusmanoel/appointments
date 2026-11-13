@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { pool } from "../db.js";
+import { isLockTimeout, lockBarberDay } from "../lib/booking-lock.js";
 import { validateUuidIds, isValidUuid } from "../lib/uuid.js";
 import {
   canonicalizeBrPhoneDigits,
@@ -1395,26 +1395,24 @@ export async function createAppointment(
         "Horário indisponível. Chame get_next_slots ou check_availability e ofereça 2–3 alternativas.",
     };
   }
-  const lockKeyBuf = createHash("md5")
-    .update(barbershopId + params.barber_id + params.date)
-    .digest();
-  // Advisory locks in Postgres take a signed bigint; using unsigned can overflow.
-  const lockKey = lockKeyBuf.readBigInt64BE(0);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const lockRow = await client.query<{ pg_try_advisory_xact_lock: boolean }>(
-      "SELECT pg_try_advisory_xact_lock($1::bigint)",
-      [lockKey.toString()],
-    );
-    if (!lockRow.rows[0]?.pg_try_advisory_xact_lock) {
-      await client.query("ROLLBACK");
-      return {
-        error: "Conflito ao reservar; tente novamente.",
-        code: "SLOT_CONFLICT" as const,
-        message:
-          "Outro agendamento em andamento. Chame get_next_slots e ofereça alternativas.",
-      };
+    // Mesmo lock (e mesma chave) do painel, do link público e do /tools: antes o agente usava outra chave
+    // com try-lock, então não se excluía com os outros caminhos de criação.
+    try {
+      await lockBarberDay(client, params.barber_id, params.date);
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      if (isLockTimeout(e)) {
+        return {
+          error: "Conflito ao reservar; tente novamente.",
+          code: "SLOT_CONFLICT" as const,
+          message:
+            "Outro agendamento em andamento. Chame get_next_slots e ofereça alternativas.",
+        };
+      }
+      throw e;
     }
     const recheck = await client.query(
       `SELECT 1 FROM public.appointments a
@@ -1944,40 +1942,62 @@ export async function rescheduleAppointmentByAgent(
         "Escolha um horário a partir de agora. Use get_next_slots ou check_availability.",
     };
   }
-  const conflictCheck = await pool.query(
-    `SELECT 1 FROM public.appointments
-   WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled') AND id != $4
-   AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes::int + $7::int > $5::int
-   AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int - $7::int < $6::int`,
-    [
-      barbershopId,
-      barberId,
-      params.date,
-      appointmentId,
-      startMins,
-      endMins,
-      bufferMins,
-    ],
-  );
-  if (conflictCheck.rows.length > 0) {
-    return {
-      error: "Horário já ocupado ou intervalo insuficiente para este barbeiro.",
-      code: "SLOT_CONFLICT" as const,
-      message:
-        "Horário indisponível. Chame get_next_slots ou check_availability e ofereça alternativas.",
-    };
-  }
-  await cancelReminderForAppointment(appointmentId);
-  await pool.query(
-    `UPDATE public.appointments
+  // Conferir conflito e gravar na MESMA transação, sob o lock por barbeiro/dia (o mesmo do painel e do link
+  // público). Antes: check fora de transação + UPDATE solto → duas remarcações/criações podiam sobrepor.
+  const txc = await pool.connect();
+  try {
+    await txc.query("BEGIN");
+    await lockBarberDay(txc, barberId, params.date);
+    const conflictCheck = await txc.query(
+      `SELECT 1 FROM public.appointments
+     WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled', 'no_show') AND id != $4
+     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes::int + $7::int > $5::int
+     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int - $7::int < $6::int`,
+      [
+        barbershopId,
+        barberId,
+        params.date,
+        appointmentId,
+        startMins,
+        endMins,
+        bufferMins,
+      ],
+    );
+    if (conflictCheck.rows.length > 0) {
+      await txc.query("ROLLBACK");
+      return {
+        error: "Horário já ocupado ou intervalo insuficiente para este barbeiro.",
+        code: "SLOT_CONFLICT" as const,
+        message:
+          "Horário indisponível. Chame get_next_slots ou check_availability e ofereça alternativas.",
+      };
+    }
+    await txc.query(
+      `UPDATE public.appointments
      SET scheduled_date = $1::date,
          scheduled_time = $2::time,
          barber_id = $3,
          status = $5,
          updated_at = now()
-     WHERE id = $4`,
-    [params.date, timeNorm, barberId, appointmentId, nextStatus],
-  );
+     WHERE id = $4 AND barbershop_id = $6`,
+      [params.date, timeNorm, barberId, appointmentId, nextStatus, barbershopId],
+    );
+    await txc.query("COMMIT");
+  } catch (e) {
+    await txc.query("ROLLBACK").catch(() => undefined);
+    if (isLockTimeout(e)) {
+      return {
+        error: "Conflito ao remarcar; tente novamente.",
+        code: "SLOT_CONFLICT" as const,
+        message:
+          "Outra alteração na agenda está em andamento. Chame get_next_slots e ofereça alternativas.",
+      };
+    }
+    throw e;
+  } finally {
+    txc.release();
+  }
+  await cancelReminderForAppointment(appointmentId);
   const hasAutomation = await barbershopHasAutomation(barbershopId);
   if (hasAutomation) {
     const reminderRow = await pool.query<{
