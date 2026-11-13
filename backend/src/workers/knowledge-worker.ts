@@ -7,7 +7,22 @@ import OpenAI from "openai";
 import mammoth from "mammoth";
 
 const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse");
+// pdf-parse 2.x exporta a classe `PDFParse` (não mais uma função como na 1.x): `require("pdf-parse")` NÃO é chamável.
+// Fica externo ao bundle (copyModules no bundle-lambdas) e é carregado via require.
+const { PDFParse } = require("pdf-parse") as {
+  PDFParse: new (opts: { data: Uint8Array }) => { getText(): Promise<{ text?: string }>; destroy?(): Promise<void> };
+};
+
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  if (typeof PDFParse !== "function") throw new Error("pdf-parse: export PDFParse ausente (versão incompatível?)");
+  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  try {
+    const result = await parser.getText();
+    return typeof result.text === "string" ? result.text : "";
+  } finally {
+    await parser.destroy?.().catch(() => undefined);
+  }
+}
 
 const WORKER_ID = `knowledge-${process.pid}-${Date.now()}`;
 const POLL_MS = 5000;
@@ -136,15 +151,14 @@ function chunkText(text: string, size = CHUNK_SIZE, overlap = CHUNK_OVERLAP): st
   return chunks.filter((c) => c.length > 0);
 }
 
-async function extractTextFromBuffer(
+export async function extractTextFromBuffer(
   buffer: Buffer,
   mimeType: string,
   _title: string
 ): Promise<string> {
   const mime = (mimeType || "").toLowerCase();
   if (mime.includes("pdf")) {
-    const data = await pdfParse(buffer);
-    return typeof data.text === "string" ? data.text : "";
+    return extractPdfText(buffer);
   }
   if (
     mime.includes("vnd.openxmlformats") ||

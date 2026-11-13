@@ -46,26 +46,25 @@ try {
   writeFileSync(join(tmp, "sample.pdf"), minimalPdf("Ola NavalhIA conhecimento"));
   writeFileSync(
     probe,
-    `import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
-const require = createRequire(import.meta.url);
+    `import { readFileSync } from "node:fs";
 const root = new URL("../../", import.meta.url).pathname;
 // 1) o bundle da função carrega (mesmo caminho que o Lambda usa)
 const mod = await import("./lambda-knowledge.mjs");
 if (typeof mod.handler !== "function") throw new Error("handler ausente no bundle");
-// 2) pdf-parse resolve pdfjs-dist e o binário nativo e lê um PDF de verdade
-const { PDFParse } = require("pdf-parse");
-const parser = new PDFParse({ data: new Uint8Array(readFileSync(root + "sample.pdf")) });
-const r = await parser.getText();
-if (!String(r.text).includes("NavalhIA")) throw new Error("texto do PDF não extraído: " + JSON.stringify(r.text));
-await parser.destroy?.();
-const canvas = require("@napi-rs/canvas");
+// 2) o MESMO helper que o worker usa para ler PDF (extractTextFromBuffer), exportado pelo bundle, lê um PDF de verdade
+if (typeof mod.extractTextFromBuffer !== "function") throw new Error("extractTextFromBuffer não exportado pelo bundle");
+const text = await mod.extractTextFromBuffer(readFileSync(root + "sample.pdf"), "application/pdf", "sample.pdf");
+if (!String(text).includes("NavalhIA")) throw new Error("texto do PDF não extraído: " + JSON.stringify(text));
+// 3) o binário nativo do canvas (usado pelo pdfjs) está no zip
+const { createRequire } = await import("node:module");
+const canvas = createRequire(import.meta.url)("@napi-rs/canvas");
 if (typeof canvas.createCanvas !== "function") throw new Error("@napi-rs/canvas sem binário nativo");
-console.log("OK: handler carregado; PDF lido ->", JSON.stringify(String(r.text).trim()));
+console.log("OK: handler carregado; PDF lido ->", JSON.stringify(String(text).trim()));
 process.exit(0);
 `,
   );
-  execFileSync(process.execPath, [probe], { cwd: tmp, stdio: "inherit", env: { PATH: process.env.PATH, HOME: tmp, NODE_ENV: "test", DATABASE_URL: "postgres://x:x@127.0.0.1:1/x", JWT_SECRET: "verify-only", APP_ENCRYPTION_KEY: "verify-only-verify-only-verify-only" } });
+  execFileSync(process.execPath, [probe], { cwd: tmp, stdio: "inherit", env: { PATH: process.env.PATH, AWS_LAMBDA_FUNCTION_NAME: "verify-only", // evita iniciar o loop de polling do worker ao importar
+     HOME: tmp, NODE_ENV: "test", DATABASE_URL: "postgres://x:x@127.0.0.1:1/x", JWT_SECRET: "verify-only", APP_ENCRYPTION_KEY: "verify-only-verify-only-verify-only" } });
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
