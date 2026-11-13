@@ -23,7 +23,7 @@ export function RankingCard({ range }: RankingCardProps) {
   const toStr =
     range?.from && range?.to ? format(range.to, "yyyy-MM-dd") : undefined;
 
-  const { data: appointments = [], isLoading } = useQuery({
+  const { data: appointments = [], isLoading, isError } = useQuery({
     queryKey: ["appointments", "ranking", fromStr ?? "", toStr ?? ""],
     queryFn: () =>
       fromStr && toStr
@@ -122,6 +122,10 @@ export function RankingCard({ range }: RankingCardProps) {
       </div>
       {isLoading ? (
         <LoadingState />
+      ) : isError ? (
+        <p className="py-6 text-center text-sm text-destructive">
+          Não conseguimos carregar o ranking agora.
+        </p>
       ) : !fromStr || !toStr ? (
         <EmptyState
           icon={<TrendingUp className="h-12 w-12" strokeWidth={1.5} />}

@@ -106,6 +106,47 @@ describe("Dashboard: erro de API não vira zero atendimentos", () => {
   });
 });
 
+describe("Dashboard: falha de API não vira 'R$ 0,00' nem 'Desconectado'", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWhatsappGet.mockResolvedValue({ connected: true, status: "connected" });
+    mockSummaryGet.mockResolvedValue({ queued: 0, sent: 0, failed: 0, skipped: 0 });
+  });
+
+  it("agenda falhando: cartões mostram '—' e 'Indisponível agora', sem R$ 0,00", async () => {
+    mockAppointmentsList.mockRejectedValue(new Error("boom"));
+    renderDashboard();
+    await screen.findByRole("button", { name: /Tentar de novo/i });
+    expect(screen.queryByText(/R\$\s*0,00/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(4);
+    expect(screen.getAllByText("Indisponível agora").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("agenda ok e vazia continua mostrando zero de verdade", async () => {
+    mockAppointmentsList.mockResolvedValue([]);
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText(/R\$\s*0,00/)).toBeInTheDocument());
+    expect(screen.queryByText("Indisponível agora")).not.toBeInTheDocument();
+  });
+
+  it("WhatsApp indisponível não é exibido como 'Desconectado' e não oferece 'Conectar WhatsApp'", async () => {
+    mockAppointmentsList.mockResolvedValue([]);
+    mockWhatsappGet.mockRejectedValue(new Error("boom"));
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText(/não foi possível verificar/)).toBeInTheDocument());
+    expect(screen.queryByText("Desconectado")).not.toBeInTheDocument();
+    expect(screen.queryByText("Conectar WhatsApp →")).not.toBeInTheDocument();
+  });
+
+  it("WhatsApp respondendo desconectado continua como 'Desconectado' com o link de conectar", async () => {
+    mockAppointmentsList.mockResolvedValue([]);
+    mockWhatsappGet.mockResolvedValue({ connected: false, status: "disconnected" });
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("Desconectado")).toBeInTheDocument());
+    expect(screen.getByText("Conectar WhatsApp →")).toBeInTheDocument();
+  });
+});
+
 describe("ErrorState", () => {
   it("chama onRetry ao clicar e não mostra botão sem onRetry", async () => {
     const onRetry = vi.fn();

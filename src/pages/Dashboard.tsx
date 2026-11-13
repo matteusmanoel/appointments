@@ -88,7 +88,11 @@ export default function Dashboard() {
         : appointmentsApi.list({ date: today }),
     refetchInterval: 5000,
   });
-  const { data: whatsapp } = useQuery({
+  const {
+    data: whatsapp,
+    isError: whatsappError,
+    refetch: refetchWhatsapp,
+  } = useQuery({
     queryKey: ["whatsapp"],
     queryFn: () => whatsappApi.get(),
     retry: false,
@@ -152,6 +156,10 @@ export default function Dashboard() {
     capacityMinutes > 0
       ? Math.min(100, Math.round((bookedMinutes / capacityMinutes) * 100))
       : 0;
+
+  // Com a agenda indisponível, nunca mostrar "R$ 0,00"/"0": o número seria falso.
+  const unavailable = "Indisponível agora";
+  const dash = (v: string) => (appointmentsError ? "—" : v);
 
   const periodLabel = isRange ? "No período" : "Hoje";
   const revenueSubtitle = isRange
@@ -225,13 +233,28 @@ export default function Dashboard() {
           <span className="text-sm font-medium">WhatsApp:</span>
           <span
             className={
-              whatsapp?.connected
-                ? "text-green-600 dark:text-green-400"
-                : "text-amber-600 dark:text-amber-400"
+              whatsappError
+                ? "text-muted-foreground"
+                : whatsapp?.connected
+                  ? "text-green-600 dark:text-green-400"
+                  : "text-amber-600 dark:text-amber-400"
             }
           >
-            {whatsapp?.connected ? "Conectado" : "Desconectado"}
+            {whatsappError
+              ? "não foi possível verificar"
+              : whatsapp?.connected
+                ? "Conectado"
+                : "Desconectado"}
           </span>
+          {whatsappError && (
+            <button
+              type="button"
+              className="text-sm font-medium text-primary hover:underline"
+              onClick={() => void refetchWhatsapp()}
+            >
+              Tentar de novo
+            </button>
+          )}
         </div>
         {automationsSummary &&
           (automationsSummary.queued > 0 ||
@@ -265,27 +288,31 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard
           title={isRange ? "Faturamento no período" : "Faturamento Hoje"}
-          value={`R$ ${revenuePeriod.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`}
-          subtitle={revenueSubtitle}
+          value={dash(`R$ ${revenuePeriod.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`)}
+          subtitle={appointmentsError ? unavailable : revenueSubtitle}
           icon={<DollarSign className="w-6 h-6" />}
           variant="success"
         />
         <StatCard
           title="Agendamentos"
-          value={String(countPeriod)}
-          subtitle={`${appointments.filter((a) => a.status === "pending").length} pendentes`}
+          value={dash(String(countPeriod))}
+          subtitle={
+            appointmentsError
+              ? unavailable
+              : `${appointments.filter((a) => a.status === "pending").length} pendentes`
+          }
           icon={<Calendar className="w-6 h-6" />}
         />
         <StatCard
           title="Clientes Atendidos"
-          value={String(completed.length)}
-          subtitle={periodLabel}
+          value={dash(String(completed.length))}
+          subtitle={appointmentsError ? unavailable : periodLabel}
           icon={<Users className="w-6 h-6" />}
         />
         <StatCard
           title="Taxa de Ocupação"
-          value={`${occupancyPct}%`}
-          subtitle={occupancySubtitle}
+          value={dash(`${occupancyPct}%`)}
+          subtitle={appointmentsError ? unavailable : occupancySubtitle}
           helpText={
             isRange
               ? "Minutos agendados no período ÷ capacidade no período."
