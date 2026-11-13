@@ -20,7 +20,7 @@ import { decrypt } from "../src/integrations/encryption.js";
 import { setWebhook } from "../src/integrations/uazapi/client.js";
 import { setInstanceWebhook, buildInstanceWebhookBody } from "../src/integrations/whatsapp/evolution-client.js";
 import { evolutionWebhookUrl } from "../src/integrations/whatsapp/evolution-session.js";
-import { getWebhookSecret, maskWebhookSecret, redactWebhookSecrets, webhookErrorText, withWebhookToken } from "../src/integrations/whatsapp/webhook-auth.js";
+import { getWebhookSecret, maskWebhookSecret, previewWebhookPayloadForLog, webhookErrorText, withWebhookToken } from "../src/integrations/whatsapp/webhook-auth.js";
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(n);
@@ -92,8 +92,8 @@ async function main(): Promise<void> {
         }
         const url = evolutionWebhookUrl();
         const body = buildInstanceWebhookBody(url).webhook;
-        const shown = { ...body, headers: body.headers ? { apikey: mask(secret) } : undefined };
-        console.log(`  - ${row.barbershop_id} evolution ${name}: POST /webhook/set/${name} ${JSON.stringify(shown)}`);
+        const shown = previewWebhookPayloadForLog(body as Record<string, unknown>, secret);
+        console.log(`  - ${row.barbershop_id} evolution ${name}: POST /webhook/set/${name} ${shown}`);
         if (apply) await setInstanceWebhook(name, url);
         done++;
       } else {

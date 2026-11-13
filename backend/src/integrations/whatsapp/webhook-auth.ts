@@ -91,6 +91,26 @@ export function webhookErrorText(err: unknown, env: Env = process.env): string {
   return redactWebhookSecrets(err instanceof Error ? err.message : String(err), env);
 }
 
+/**
+ * JSON do payload de webhook para log/script: mascara o apikey e remove token=/valores de segredo.
+ * O corpo real enviado à API (buildInstanceWebhookBody) continua com o segredo; só a saída é redigida.
+ */
+export function previewWebhookPayloadForLog(
+  body: Record<string, unknown>,
+  secret: string,
+  env: Env = process.env,
+): string {
+  const headers = body.headers;
+  const shown: Record<string, unknown> = {
+    ...body,
+    headers:
+      headers && typeof headers === "object"
+        ? { ...(headers as Record<string, unknown>), apikey: maskWebhookSecret(secret) }
+        : headers,
+  };
+  return redactWebhookSecrets(JSON.stringify(shown), env);
+}
+
 export type WebhookAuthResult = "ok" | "unconfigured" | "unauthorized";
 
 /**

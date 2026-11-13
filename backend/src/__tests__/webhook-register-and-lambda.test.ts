@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildInstanceWebhookBody, setInstanceWebhook } from "../integrations/whatsapp/evolution-client.js";
 import { setWebhook } from "../integrations/uazapi/client.js";
-import { webhookErrorText } from "../integrations/whatsapp/webhook-auth.js";
+import { previewWebhookPayloadForLog, webhookErrorText } from "../integrations/whatsapp/webhook-auth.js";
 
 const MASTER = "chave-mestra-evolution";
 const DEDICATED = "segredo-dedicado-webhook";
@@ -58,6 +58,19 @@ describe("registro do webhook: payload de setInstanceWebhook / setWebhook", () =
     expect(b.webhook.url).toBe(`https://api.test/w?token=${DEDICATED}`);
     expect(b.legacy.url).toBe(`https://api.test/w?token=${DEDICATED}`);
     expect(JSON.stringify(b)).not.toContain(MASTER);
+  });
+
+  it("script: com EVOLUTION_WEBHOOK_TOKEN_IN_URL=true a saída JSON não contém o segredo", () => {
+    process.env.EVOLUTION_WEBHOOK_TOKEN_IN_URL = "true";
+    const b = buildInstanceWebhookBody("https://api.test/w");
+    // o payload real ainda leva o token (é o que a API registra); só o preview do script é redigido
+    expect(String(b.webhook.url)).toContain(DEDICATED);
+    const shown = previewWebhookPayloadForLog(b.webhook as Record<string, unknown>, DEDICATED);
+    expect(shown).not.toContain(DEDICATED);
+    expect(shown).not.toContain(MASTER);
+    expect(shown).toContain("token=[redacted]");
+    expect(shown).toMatch(/sha256:[0-9a-f]{6}/);
+    expect(shown).not.toMatch(/"apikey":"segredo/);
   });
 
   it("Evolution: formato legado (fallback) mantém header e URL limpa", async () => {
