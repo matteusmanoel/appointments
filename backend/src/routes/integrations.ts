@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
 import { config } from "../config.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ADMIN_ONLY, ALL_ROLES, accessRules } from "../middleware/rbac.js";
 import { whatsappRouter } from "./whatsapp.js";
 import { buildFollowUp30d, resolveReminderSendBody } from "../outbound/templates.js";
 import { appendReminderTranscript, loadReminderAppointment } from "../outbound/scheduled-messages.js";
@@ -29,6 +30,21 @@ function isUndefinedColumn(e: unknown): boolean {
 
 export const integrationsRouter = Router();
 integrationsRouter.use(requireJwt);
+// RBAC (matriz em docs/RBAC_MATRIZ.md): atendente só usa o inbox do WhatsApp; chaves de API e webhook n8n só admin;
+// todo o resto (conexão, IA, base de conhecimento, automações, campanhas) admin/manager.
+integrationsRouter.use(
+  accessRules(
+    [
+      { path: /^\/(api-keys|n8n-webhook)(\/|$)/, roles: ADMIN_ONLY },
+      { methods: ["DELETE"], path: /^\/whatsapp\/conversations(\/|$)/, roles: ADMIN_MANAGER },
+      { methods: ["GET"], path: /^\/whatsapp\/?$/, roles: ALL_ROLES },
+      { methods: ["GET"], path: /^\/whatsapp\/(connectivity|status|usage)\/?$/, roles: ALL_ROLES },
+      { path: /^\/whatsapp\/conversations(\/|$)/, roles: ALL_ROLES },
+      { methods: ["POST"], path: /^\/whatsapp\/(assume|resume|contact-photo\/sync)\/?$/, roles: ALL_ROLES },
+    ],
+    ADMIN_MANAGER
+  )
+);
 
 const contactPhotoBody = z.object({ phone: z.string().min(8).max(20) });
 

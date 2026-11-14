@@ -9,6 +9,7 @@ import { config } from "../config.js";
 import { notifyOwnerPaymentFailed } from "../lib/billing-notify.js";
 import { sendOnboardingEmail } from "../lib/ses.js";
 import { requireJwt, getBarbershopId, type JwtPayload } from "../middleware/auth.js";
+import { ADMIN_ONLY, requireRole } from "../middleware/rbac.js";
 import { schedulePaymentReminder } from "../outbound/scheduled-messages.js";
 
 const stripe = config.stripeSecretKey ? new Stripe(config.stripeSecretKey, { apiVersion: "2025-02-24.acacia" }) : null;
@@ -590,7 +591,7 @@ billingRouter.post("/checkout_embedded", async (req: Request, res: Response): Pr
 });
 
 /** POST /api/billing/portal — create Stripe Customer Portal session (add-ons, update payment, cancel). Requires JWT. */
-billingRouter.post("/portal", requireJwt, async (req: Request, res: Response): Promise<void> => {
+billingRouter.post("/portal", requireJwt, requireRole(...ADMIN_ONLY), async (req: Request, res: Response): Promise<void> => {
   if (!stripe) {
     res.status(503).json({ error: "Billing não configurado (Stripe)" });
     return;
@@ -629,7 +630,7 @@ const creditsCheckoutBody = z.object({
 });
 
 /** POST /api/billing/credits_checkout — aposentado. */
-billingRouter.post("/credits_checkout", requireJwt, (_req: Request, res: Response): void => {
+billingRouter.post("/credits_checkout", requireJwt, requireRole(...ADMIN_ONLY), (_req: Request, res: Response): void => {
   res.status(410).json({ error: "Créditos de follow-up fora do produto. Use o painel de reativação." });
 });
 

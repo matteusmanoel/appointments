@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ALL_ROLES, READ_METHODS, accessRules } from "../middleware/rbac.js";
 import {
   AUTO_BILLING_OFF_REASON,
   SUBSCRIPTION_CANCELLED_REASON,
@@ -15,6 +16,8 @@ import { DAILY_CAP_REACHED_MESSAGE, dispatchWaitMessage } from "../outbound/disp
 
 export const plansRouter = Router();
 plansRouter.use(requireJwt);
+// RBAC: planos/assinaturas/cobranças — todos consultam; criar/alterar/cobrar só admin/manager.
+plansRouter.use(accessRules([{ methods: READ_METHODS, path: /^\//, roles: ALL_ROLES }], ADMIN_MANAGER));
 
 const billingCycleEnum = z.enum(["monthly", "quarterly", "yearly"]);
 

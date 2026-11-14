@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
+import { ADMIN_MANAGER, ALL_ROLES, accessRules } from "../middleware/rbac.js";
 import { brPhoneMatchKeys, phoneForStorage } from "../lib/phone-match.js";
 import { syncClientPhotoIfMissing } from "../clients/sync-contact-photo.js";
 
@@ -21,6 +22,8 @@ const updateBody = createBody.partial().extend({
 export const clientsRouter = Router();
 
 clientsRouter.use(requireJwt);
+// RBAC: atendente opera (ler/criar/editar); excluir cliente só admin/manager.
+clientsRouter.use(accessRules([{ methods: ["DELETE"], path: /^\//, roles: ADMIN_MANAGER }], ALL_ROLES));
 
 clientsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   let scope: { single: string } | { all: string[] };
