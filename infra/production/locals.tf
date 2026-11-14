@@ -85,6 +85,8 @@ locals {
     N8N_CHAT_TRIGGER_URL            = ""
     TOOLS_API_KEY                   = ""
     BILLING_NOTIFY_PAYMENT_FAILED   = tostring(var.billing_notify_payment_failed)
+    AI_USAGE_ALERT_ENABLED          = tostring(var.ai_usage_alert_enabled)
+    AI_USAGE_ALERT_THRESHOLD_PCT    = tostring(var.ai_usage_alert_threshold_pct)
   }
 
   # Segredos dos webhooks de WhatsApp (valores vêm de variáveis sem default útil; ver docs/RUNBOOK_WEBHOOK_SECRET.md).

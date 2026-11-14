@@ -4,9 +4,11 @@ import { sendAiUsageAlertEmail, type AiUsageAlertEmailParams } from "../lib/ses.
 
 type Env = Record<string, string | undefined>;
 
-/** Liga o aviso de uso da IA ao dono. PADRÃO DESLIGADO: sem AI_USAGE_ALERT_ENABLED=true nada é enviado. */
+/** Liga o aviso de uso da IA ao dono. PADRÃO LIGADO (B-06). Desliga com AI_USAGE_ALERT_ENABLED=false (opt-out global). */
 export function aiUsageAlertEnabled(env: Env = process.env): boolean {
-  return (env.AI_USAGE_ALERT_ENABLED ?? "").trim().toLowerCase() === "true";
+  const raw = (env.AI_USAGE_ALERT_ENABLED ?? "").trim().toLowerCase();
+  if (raw === "false" || raw === "0" || raw === "off" || raw === "no") return false;
+  return true;
 }
 
 /** Percentual do limite que dispara o aviso (padrão 80; aceita 1–99). */
@@ -41,7 +43,7 @@ export function resetUsageAlertCacheForTests(): void {
 
 /**
  * Avisa o dono (e-mail do admin) quando o uso mensal da IA chega a AI_USAGE_ALERT_THRESHOLD_PCT% (padrão 80%) do limite.
- * - Flag desligada: retorna "disabled" sem tocar o banco nem enviar nada.
+ * - Flag desligada (AI_USAGE_ALERT_ENABLED=false): retorna "disabled" sem tocar o banco nem enviar nada.
  * - DEDUPE SÓ DEPOIS DO ENVIO: `ai_usage_alerts (barbershop_id, period, threshold_pct)` só recebe a linha quando o e-mail
  *   saiu. Falha do SES, `FROM_EMAIL` ausente (o envio lança) e dono sem e-mail não consomem o aviso do mês: o próximo
  *   turno tenta de novo. Execuções concorrentes são serializadas por advisory lock transacional (segunda = "duplicate").

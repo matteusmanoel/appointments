@@ -375,5 +375,26 @@ export async function ensureCriticalSchema(): Promise<void> {
       )`
     )
     .catch(() => {});
+
+  await pool
+    .query(`ALTER TABLE public.barbershop_api_keys ADD COLUMN IF NOT EXISTS key_prefix text`)
+    .catch(() => {});
+  await pool
+    .query(`ALTER TABLE public.barbershop_api_keys ADD COLUMN IF NOT EXISTS key_lookup_hash text`)
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS barbershop_api_keys_lookup_hash_uidx
+       ON public.barbershop_api_keys (key_lookup_hash)
+       WHERE key_lookup_hash IS NOT NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS barbershop_api_keys_prefix_uidx
+       ON public.barbershop_api_keys (key_prefix)
+       WHERE key_prefix IS NOT NULL`,
+    )
+    .catch(() => {});
 }
 

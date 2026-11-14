@@ -553,7 +553,7 @@ async function processOneJob(): Promise<boolean> {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         }
-        // Aviso ao dono em 80% do limite (atrás de AI_USAGE_ALERT_ENABLED; desligado por padrão; nunca bloqueia o turno).
+        // Aviso ao dono em 80% do limite (AI_USAGE_ALERT_ENABLED ligado por padrão; nunca bloqueia o turno).
         // AGUARDADO com teto de 3 s (um `void` solto podia ser congelado pelo fim do ciclo da Lambda no meio do envio).
         await Promise.race([
           maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit }),

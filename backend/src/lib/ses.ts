@@ -109,7 +109,7 @@ export type AiUsageAlertEmailParams = {
   thresholdPct: number;
 };
 
-/** Aviso ao dono quando as respostas de IA do mês chegam a X% do limite. Só é chamado com AI_USAGE_ALERT_ENABLED=true (ver ai/usage-alert.ts). */
+/** Aviso ao dono quando as respostas de IA do mês chegam a X% do limite. Ligado por padrão; desliga com AI_USAGE_ALERT_ENABLED=false (ver ai/usage-alert.ts). */
 export async function sendAiUsageAlertEmail(params: AiUsageAlertEmailParams): Promise<void> {
   const from = process.env.FROM_EMAIL;
   // Lança (não retorna em silêncio): o aviso do mês só é consumido quando o envio de fato ocorreu.

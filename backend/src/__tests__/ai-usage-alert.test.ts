@@ -9,9 +9,13 @@ import {
 } from "../ai/usage-alert.js";
 
 describe("regra do aviso de uso da IA (pura)", () => {
-  it("flag padrão desligada; limiar padrão 80, com fallback para valores inválidos", () => {
-    expect(aiUsageAlertEnabled({})).toBe(false);
+  it("flag padrão ligada; desliga só com false/0/off/no; limiar padrão 80, com fallback para valores inválidos", () => {
+    expect(aiUsageAlertEnabled({})).toBe(true);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "" })).toBe(true);
     expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "false" })).toBe(false);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "0" })).toBe(false);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "off" })).toBe(false);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "no" })).toBe(false);
     expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: " True " })).toBe(true);
     expect(aiUsageAlertThresholdPct({})).toBe(80);
     expect(aiUsageAlertThresholdPct({ AI_USAGE_ALERT_THRESHOLD_PCT: "90" })).toBe(90);
@@ -32,8 +36,15 @@ describe("regra do aviso de uso da IA (pura)", () => {
   });
   it("flag desligada: não chama o remetente e nem toca o banco", async () => {
     const sender = vi.fn();
-    expect(await maybeAlertAiUsage({ barbershopId: "x", used: 450, limit: 500 }, { sender, env: {} })).toBe("disabled");
+    expect(await maybeAlertAiUsage({ barbershopId: "x", used: 450, limit: 500 }, { sender, env: { AI_USAGE_ALERT_ENABLED: "false" } })).toBe("disabled");
     expect(sender).not.toHaveBeenCalled();
+  });
+  it("flag padrão ligada: com uso no limiar não retorna disabled", async () => {
+    const sender = vi.fn();
+    // env vazio = ligado; shop inexistente → no_recipient ou error, nunca disabled
+    const result = await maybeAlertAiUsage({ barbershopId: "00000000-0000-0000-0000-000000000000", used: 450, limit: 500 }, { sender, env: {} });
+    expect(result).not.toBe("disabled");
+    expect(["no_recipient", "error", "sent"]).toContain(result);
   });
   it("abaixo do limiar: nada", async () => {
     const sender = vi.fn();
