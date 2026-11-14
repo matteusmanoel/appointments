@@ -44,6 +44,28 @@ function fold(text: string): string {
     .trim();
 }
 
+export function citedTemplateDates(text: string): string[] {
+  const found = new Set<string>();
+  const folded = fold(text);
+  if (/\bhoje\b/.test(folded)) found.add("hoje");
+  if (/\bamanha\b/.test(folded)) found.add("amanha");
+  for (const day of ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]) {
+    if (new RegExp(`\\b${day}\\b`).test(folded)) found.add(day);
+  }
+  for (const m of text.matchAll(/\b(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?\b/g)) {
+    found.add(`${String(m[1]).padStart(2, "0")}/${String(m[2]).padStart(2, "0")}`);
+  }
+  return [...found];
+}
+
+export function citedTemplatePrices(text: string): string[] {
+  const found: string[] = [];
+  for (const m of text.matchAll(/R\$\s*(\d{1,5})(?:[,.](\d{2}))?/gi)) {
+    found.push(`${m[1]},${m[2] ?? "00"}`);
+  }
+  return found;
+}
+
 export function catalogNamesMentioned(text: string, names: string[]): string[] {
   const foldedText = fold(text);
   const hits: string[] = [];
@@ -59,21 +81,41 @@ export function catalogNamesMentioned(text: string, names: string[]): string[] {
 }
 
 /**
- * Horários e serviços citados na reescrita precisam ser subconjunto dos do template.
- * Se o template não cita relógio, a reescrita também não pode inventar um.
+ * Horários, serviços, datas, preços e barbeiros citados na reescrita
+ * precisam ser subconjunto dos do template. Se o template não cita
+ * relógio, a reescrita também não pode inventar um.
  */
-export function templateFactsPreserved(template: string, reply: string, catalogServices: string[] = []): boolean {
+export function templateFactsPreserved(
+  template: string,
+  reply: string,
+  catalogServices: string[] = [],
+  catalogBarbers: string[] = [],
+): boolean {
   if (!reply || !reply.trim()) return false;
   const templateClocks = new Set(citedTemplateClocks(template));
   const replyClocks = citedTemplateClocks(reply);
   if (replyClocks.some((clock) => !templateClocks.has(clock))) return false;
   if (templateClocks.size === 0 && replyClocks.length > 0) return false;
+  const templateDates = new Set(citedTemplateDates(template));
+  if (citedTemplateDates(reply).some((d) => !templateDates.has(d))) return false;
+  const templatePrices = new Set(citedTemplatePrices(template));
+  if (citedTemplatePrices(reply).some((p) => !templatePrices.has(p))) return false;
   if (catalogServices.length) {
     const allowed = new Set(catalogNamesMentioned(template, catalogServices).map((n) => fold(n)));
     const cited = catalogNamesMentioned(reply, catalogServices);
     if (cited.some((name) => !allowed.has(fold(name)))) return false;
   }
+  if (catalogBarbers.length) {
+    const allowed = new Set(catalogNamesMentioned(template, catalogBarbers).map((n) => fold(n)));
+    const cited = catalogNamesMentioned(reply, catalogBarbers);
+    if (cited.some((name) => !allowed.has(fold(name)))) return false;
+  }
   return true;
+}
+
+export function rewriteLooksLikeSafeFallback(reply: string, forbidden: string[]): boolean {
+  const folded = fold(reply);
+  return forbidden.some((item) => fold(item) && fold(item) === folded);
 }
 
 export async function rewriteFromTemplate(

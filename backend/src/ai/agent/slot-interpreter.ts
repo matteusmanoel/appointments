@@ -213,33 +213,72 @@ const INTERPRET_SYSTEM =
   "intent é schedule, reschedule, cancel, presence ou unknown. " +
   "date é YYYY-MM-DD. time e after_time são HH:mm. Use null quando não houver o dado.";
 
+export const SLOT_INTERPRET_TIMEOUT_MS = 2500;
+
+export type SlotInterpretUsage = {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+};
+
+export type InterpretSlotsResult = {
+  slots: InterpretedSlots | null;
+  usage?: SlotInterpretUsage;
+  timedOut?: boolean;
+};
+
+function usageFromCompletion(completion: { usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null }): SlotInterpretUsage | undefined {
+  const u = completion.usage;
+  if (!u) return undefined;
+  return {
+    prompt_tokens: u.prompt_tokens ?? 0,
+    completion_tokens: u.completion_tokens ?? 0,
+    total_tokens: u.total_tokens ?? 0,
+  };
+}
+
 export async function interpretSlotsWithOpenAI(
   openai: OpenAI,
   input: SlotInterpreterInput,
-): Promise<InterpretedSlots | null> {
+  opts?: { timeoutMs?: number },
+): Promise<InterpretSlotsResult> {
   const catalog = {
     services: input.services.map((s) => s.name),
     barbers: input.barbers.map((b) => b.name),
     today: input.todayIso,
   };
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    temperature: 0,
-    max_tokens: 200,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: INTERPRET_SYSTEM },
-      {
-        role: "user",
-        content: `Catálogo: ${JSON.stringify(catalog)}\nFala: ${input.text}`,
-      },
-    ],
-  });
-  const content = completion.choices[0]?.message?.content ?? "";
+  const timeoutMs = opts?.timeoutMs ?? SLOT_INTERPRET_TIMEOUT_MS;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    return validateInterpretedSlots(JSON.parse(content));
+    const completion = await openai.chat.completions.create(
+      {
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 200,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: INTERPRET_SYSTEM },
+          {
+            role: "user",
+            content: `Catálogo: ${JSON.stringify(catalog)}
+Fala: ${input.text}`,
+          },
+        ],
+      },
+      { signal: ac.signal },
+    );
+    const usage = usageFromCompletion(completion);
+    const content = completion.choices[0]?.message?.content ?? "";
+    try {
+      return { slots: validateInterpretedSlots(JSON.parse(content)), usage };
+    } catch {
+      return { slots: null, usage };
+    }
   } catch {
-    return null;
+    return { slots: null, timedOut: ac.signal.aborted };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

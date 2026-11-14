@@ -1942,7 +1942,13 @@ export async function rescheduleAppointmentByAgent(
     };
   const { barber_id: currentBarberId, duration_minutes: duration, status: previousStatus } =
     appRow.rows[0];
-  const nextStatus = previousStatus === "cancelled" ? "pending" : previousStatus;
+  if (previousStatus === "cancelled") {
+    return {
+      error: "Agendamento já cancelado; não é possível remarcar.",
+      code: "CANCELLED" as const,
+    };
+  }
+  const nextStatus = previousStatus;
   const barberId = params.barber_id ?? currentBarberId;
 
   const bufferMins = await getBookingBufferMinutes(barbershopId);

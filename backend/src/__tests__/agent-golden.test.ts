@@ -454,7 +454,15 @@ const SCENARIOS: GoldenScenario[] = [
             date: fx.tomorrowIso,
             time: "15:00",
             total_price: 55,
+            confirmCard: { kind: "create", issuedAt: new Date().toISOString() },
           }),
+        ],
+      );
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [
+          fx.conversationId,
+          "Fica assim, então:\n\n✂️ *Corte e Barba*\n💈 *Lucas Lima*\n📅 amanhã às 15h\n💰 R$ 55,00[[MSG]]Posso confirmar?",
         ],
       );
     },
@@ -578,6 +586,17 @@ const SCENARIOS: GoldenScenario[] = [
         contracts: (fx) => [
           { kind: "routing_primary", equals: "cancel" },
           { kind: "openai_rounds", equals: 0 },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "reply_includes", value: "Posso cancelar seu horário" },
+          { kind: "reply_includes", value: "remarcar" },
+          { kind: "reply_excludes", value: "cancelado" },
+        ],
+      },
+      {
+        user: "Sim",
+        llm: () => [{ tool: "cancel_appointment", args: {} }],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "cancelled" },
           { kind: "state", equals: "appointment_cancelled" },
           { kind: "reply_includes", value: "cancelado" },
@@ -673,6 +692,17 @@ const SCENARIOS: GoldenScenario[] = [
         llm: () => [{ tool: "cancel_appointment", args: {} }],
         contracts: (fx) => [
           { kind: "openai_rounds", equals: 0 },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "reply_includes", value: "Posso cancelar seu horário" },
+          { kind: "reply_includes", value: "remarcar" },
+          { kind: "reply_excludes", value: "cancelado" },
+        ],
+      },
+      {
+        user: "Sim",
+        llm: () => [{ tool: "cancel_appointment", args: {} }],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
           { kind: "state", equals: "appointment_cancelled" },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "cancelled" },
           { kind: "reply_includes", value: "cancelado" },
@@ -704,12 +734,16 @@ const SCENARIOS: GoldenScenario[] = [
     client: { name: "Mateus" },
     prepare: async (fx) => {
       const { pool } = await import("../db.js");
+      const other = await pool.query<{ id: string }>(
+        `INSERT INTO public.clients (barbershop_id, name, phone) VALUES ($1, 'Outro', $2) RETURNING id`,
+        [fx.barbershopId, `55119${String(Math.floor(Math.random() * 1e8)).padStart(8, "0")}`],
+      );
       for (const barberId of [fx.barbers.lucas, fx.barbers.eduardo]) {
         const appt = await pool.query<{ id: string }>(
           `INSERT INTO public.appointments
              (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
            VALUES ($1, $2, $3, $4, $5::date, '15:00', 30, 35, 14, 'pending') RETURNING id`,
-          [fx.barbershopId, fx.clientId, barberId, fx.services.corte, fx.tomorrowIso],
+          [fx.barbershopId, other.rows[0]!.id, barberId, fx.services.corte, fx.tomorrowIso],
         );
         await pool.query(
           `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
@@ -824,7 +858,9 @@ for (const scenario of SCENARIOS) {
     });
 
     it("honors every turn contract", async () => {
-      if (!ok || !fx) return;
+      if (!ok || !fx) {
+        throw new Error("Postgres 127.0.0.1:55432 indisponível — estes testes não podem passar sem o banco");
+      }
       for (const [index, turn] of scenario.turns.entries()) {
         const outcome = await runGoldenTurn(fx, turn);
         const failures = checkContracts(outcome, turn.contracts(fx));

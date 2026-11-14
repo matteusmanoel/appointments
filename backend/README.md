@@ -69,3 +69,6 @@ Quando as regras não extraem os slots, o LLM só interpreta a fala em slots est
 A linguagem sai de uma fala-modelo. O LLM pode reescrever o template com tom simpático, mas a saída passa pelo filtro `ai_exposure` e por uma checagem de que os horários e serviços citados são os do template; se não passar, usa o template puro. Flag **`AI_AGENT_LANGUAGE_REWRITE`**, **default desligada** (template puro, sem custo extra).
 
 Sem relógio nomeado, o turno não cai no loop de LLM: oferece 2–3 horários ou usa uma fala segura. Os goldens desses fluxos também rodam pelo simulador CLI (`src/__tests__/slot-filling-simulator.test.ts`).
+
+Cancelar só acontece depois de um card explícito («Posso cancelar seu horário de …? Se preferir, posso remarcar.») e de um «sim» na fala seguinte — o mesmo vale para a tool do modelo. Com mais de um horário futuro, o agente pergunta qual. Um «sim» atrasado ou ambíguo não confirma, cria nem remarca: o card de confirmação e o de lembrete têm TTL, o alvo é o agendamento do card, e criar/remarcar exigem que o card seja a última fala do agente. O intérprete de slots tem timeout com fallback determinístico e registra o uso de tokens. A reescrita da fala-modelo rejeita o fallback seguro e exige que data, preço e barbeiro citados sejam os do template.
+

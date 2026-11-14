@@ -197,19 +197,25 @@ describe("fluxos básicos pelo simulador", () => {
     expect(result.turns[0]!.trace.totalTokens).toBe(0);
   });
 
-  it("cancelar: cancela o horário futuro e não oferece vaga", async () => {
+  it("cancelar: pede confirmação, oferece remarcar e só cancela no sim", async () => {
     const phone = "5500000000102";
     const { sandboxPhone } = await prepareSimulatorIdentity(cancelFx, phone);
     const appointmentId = await insertUpcoming(cancelFx, sandboxPhone);
     const result = await runSimulator({
       tenant: cancelFx.slug,
       phone,
-      turns: [{ role: "user", text: "Quero cancelar meu horário" }],
+      turns: [
+        { role: "user", text: "Quero cancelar meu horário" },
+        { role: "user", text: "Sim" },
+      ],
       llm: "none",
       trace: false,
       print: () => {},
     });
-    expect(result.turns[0]!.reply).toMatch(/cancelado/i);
+    expect(result.turns[0]!.reply).toMatch(/Posso cancelar seu horário/i);
+    expect(result.turns[0]!.reply).toMatch(/remarcar/i);
+    expect(result.turns[0]!.reply).not.toMatch(/cancelado/i);
+    expect(result.turns[1]!.reply).toMatch(/cancelado/i);
     const status = await pool.query<{ status: string }>(`SELECT status FROM public.appointments WHERE id = $1`, [
       appointmentId,
     ]);

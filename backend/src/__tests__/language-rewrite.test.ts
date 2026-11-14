@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isLanguageRewriteEnabled,
+  rewriteLooksLikeSafeFallback,
   templateFactsPreserved,
 } from "../ai/agent/language-rewrite.js";
 
@@ -38,5 +39,52 @@ describe("templateFactsPreserved", () => {
         catalog,
       ),
     ).toBe(false);
+  });
+
+  it("rejeita data, preço ou barbeiro inventados", () => {
+    const template =
+      "Fica assim: Corte masculino com o Lucas amanhã às 15h, R$ 35,00. Posso confirmar?";
+    const barbers = ["Lucas", "Eduardo Gustavo"];
+    const services = ["Corte masculino", "Barba"];
+    expect(
+      templateFactsPreserved(
+        template,
+        "Fica assim: Corte masculino com o Lucas amanhã às 15h, R$ 35,00. Posso confirmar?",
+        services,
+        barbers,
+      ),
+    ).toBe(true);
+    expect(
+      templateFactsPreserved(
+        template,
+        "Fica assim: Corte masculino com o Lucas segunda às 15h, R$ 35,00. Posso confirmar?",
+        services,
+        barbers,
+      ),
+    ).toBe(false);
+    expect(
+      templateFactsPreserved(
+        template,
+        "Fica assim: Corte masculino com o Lucas amanhã às 15h, R$ 90,00. Posso confirmar?",
+        services,
+        barbers,
+      ),
+    ).toBe(false);
+    expect(
+      templateFactsPreserved(
+        template,
+        "Fica assim: Corte masculino com o Eduardo Gustavo amanhã às 15h, R$ 35,00. Posso confirmar?",
+        services,
+        barbers,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("rewriteLooksLikeSafeFallback", () => {
+  it("não aceita SAFE_CLIENT_FALLBACK como saída reescrita", () => {
+    const fallback = "Me diz um horário que te atenda, ou a gente vê as próximas vagas.";
+    expect(rewriteLooksLikeSafeFallback(fallback, [fallback])).toBe(true);
+    expect(rewriteLooksLikeSafeFallback("Posso confirmar o corte amanhã às 15h?", [fallback])).toBe(false);
   });
 });

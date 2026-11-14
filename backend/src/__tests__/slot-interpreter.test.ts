@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   createFakeSlotInterpreter,
   draftPatchFromInterpretedSlots,
+  interpretSlotsWithOpenAI,
   shouldInterpretSlotsWithModel,
   validateInterpretedSlots,
 } from "../ai/agent/slot-interpreter.js";
+import type OpenAI from "openai";
 
 describe("validateInterpretedSlots", () => {
   it("aceita o schema e descarta campos inválidos", () => {
@@ -71,5 +73,52 @@ describe("createFakeSlotInterpreter", () => {
     expect(patch.date).toBe("2026-11-17");
     expect(patch.time).toBe("14:00");
     expect(patch.barber_id).toBeUndefined();
+  });
+});
+
+describe("interpretSlotsWithOpenAI", () => {
+  const input = {
+    text: "Fecha o visual do combinado na folha quatorze",
+    todayIso: "2026-11-14",
+    services: [{ id: "s1", name: "Corte" }],
+    barbers: [{ id: "b1", name: "Lucas" }],
+  };
+
+  it("estoura o timeout e cai no fallback determinístico (slots nulos)", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: (_body: unknown, init?: { signal?: AbortSignal }) =>
+            new Promise((_, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                const err = new Error("aborted");
+                err.name = "AbortError";
+                reject(err);
+              });
+            }),
+        },
+      },
+    } as unknown as OpenAI;
+    const result = await interpretSlotsWithOpenAI(openai, input, { timeoutMs: 40 });
+    expect(result.slots).toBeNull();
+    expect(result.timedOut).toBe(true);
+    expect(result.usage).toBeUndefined();
+  });
+
+  it("registra o uso de tokens quando a chamada completa", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: JSON.stringify({ intent: "schedule", service: "Corte", time: "14:00" }) } }],
+            usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+          }),
+        },
+      },
+    } as unknown as OpenAI;
+    const result = await interpretSlotsWithOpenAI(openai, input);
+    expect(result.slots?.service).toBe("Corte");
+    expect(result.usage).toEqual({ prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 });
+    expect(result.timedOut).toBeUndefined();
   });
 });
