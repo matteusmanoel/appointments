@@ -32,6 +32,8 @@ export type BookingDraft = {
   lastAgentQuestion?: "service" | "usual_service" | "datetime" | "confirm" | null;
   /** Previous turn offered the waitlist for the clock already on this draft. */
   waitlistOffer?: boolean;
+  /** "Vai ser o de sempre, X?" já foi dito neste agendamento: não sugerir de novo (aceito, recusado ou ignorado). */
+  usualSuggested?: boolean;
 };
 
 export type CatalogService = {
@@ -108,6 +110,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
     ...(lastAgentQuestion ? { lastAgentQuestion } : {}),
     ...(pendingProposal !== undefined ? { pendingProposal } : {}),
     ...(r.waitlistOffer === true ? { waitlistOffer: true } : {}),
+    ...(r.usualSuggested === true ? { usualSuggested: true } : {}),
   };
 }
 
@@ -134,6 +137,7 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     "pendingProposal",
     "lastAgentQuestion",
     "waitlistOffer",
+    "usualSuggested",
   ];
   let materialChanged = false;
   for (const key of keys) {
@@ -166,6 +170,10 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     }
     if (key === "waitlistOffer") {
       next.waitlistOffer = value === true;
+      continue;
+    }
+    if (key === "usualSuggested") {
+      if (value === true) next.usualSuggested = true;
       continue;
     }
     const asText = String(value).trim();
@@ -556,6 +564,11 @@ export function resolveUsualService(params: {
 /** Sugere o serviço de sempre e espera o aceite. Sem a palavra "confirma", para não virar fechamento de agendamento. */
 export function composeSuggestUsualService(params: { usualName: string }): string {
   return `Vai ser o de sempre, *${params.usualName.trim()}*?`;
+}
+
+/** A última fala do agente foi a sugestão do de sempre? O "sim" só vale para ela, nunca para outra pergunta. */
+export function assistantSuggestedUsualService(text: string): boolean {
+  return /\bvai ser o de sempre,/i.test(text ?? "");
 }
 
 export function composeAmbiguousCorte(params: { simpleName: string; comboName: string }): string {

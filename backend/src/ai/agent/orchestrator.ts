@@ -56,8 +56,8 @@ export type OrchestratorInput = {
   namedBarberThisTurn?: boolean;
   /** Returning client's usual service (from visit history/memory). Suggested, never filled in silently. */
   usualService?: { service_ids: string[]; service_name: string } | null;
-  /** The client just refused the usual service the agent suggested: ask which one, do not suggest again. */
-  usualServiceRefused?: boolean;
+  /** The usual service was already suggested in this booking (draft flag): ask which one, never suggest again. */
+  usualServiceAlreadySuggested?: boolean;
   /** The client said yes to the suggested usual service this turn: it is now on the draft, the booking goes on. */
   usualServiceAccepted?: boolean;
 };
@@ -559,7 +559,7 @@ export function buildTurnPlan(
   // Cliente que volta: pedir o serviço vira "Vai ser o de sempre, X?". A sugestão só vale na pergunta de serviço,
   // e só uma vez: depois da recusa a pessoa escolhe sozinha.
   const usualServiceSuggestion =
-    turnDirective === ASK_SERVICE && input.usualService?.service_ids.length && !input.usualServiceRefused
+    turnDirective === ASK_SERVICE && input.usualService?.service_ids.length && !input.usualServiceAlreadySuggested
       ? input.usualService
       : null;
   return { allowedTools: [...tools], turnDirective, usualServiceSuggestion };

@@ -70,6 +70,7 @@ export type Contract =
   | { kind: "draft_barber_id"; equals: string | null }
   | { kind: "draft_last_question"; equals: NonNullable<BookingDraft["lastAgentQuestion"]> | null }
   | { kind: "draft_proposal_service_ids"; equals: string[] }
+  | { kind: "draft_usual_suggested"; equals: boolean }
   | { kind: "reply_includes"; value: string }
   | { kind: "reply_excludes"; value: string }
   | { kind: "draft_time_not"; value: string }
@@ -389,6 +390,9 @@ export function checkContracts(outcome: TurnOutcome, contracts: Contract[]): str
         break;
       case "draft_proposal_service_ids":
         if (!same(outcome.draft.pendingProposal?.service_ids ?? [], c.equals)) fail(c, outcome.draft.pendingProposal);
+        break;
+      case "draft_usual_suggested":
+        if (Boolean(outcome.draft.usualSuggested) !== c.equals) fail(c, outcome.draft.usualSuggested);
         break;
       case "reply_includes":
         if (!outcome.result.reply.includes(c.value)) fail(c, outcome.result.reply);

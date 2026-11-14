@@ -78,6 +78,7 @@ import {
   composeUnavailableReply,
   composeAskService,
   composeSuggestUsualService,
+  assistantSuggestedUsualService,
   resolveUsualService,
   composeAmbiguousCorte,
   draftIsCloseable,
@@ -2441,28 +2442,31 @@ export async function runAgent(
     services: catalogServices,
     barbers: catalogBarbers,
   });
-  let usualServiceAccepted = false;
-  if (
+  // "Vai ser o de sempre, X?": a proposta vale só para a resposta ao turno imediatamente seguinte. O "sim" só a
+  // aceita se a última fala do agente FOI a sugestão (o rascunho sozinho não basta: um "sim" a outra pergunta,
+  // "pode contar comigo" ou "vou sim" não aplica o de sempre). Qualquer outra resposta descarta a proposta.
+  const usualProposal = bookingDraft.pendingProposal;
+  const usualSuggestionOpen =
+    bookingDraft.lastAgentQuestion === "usual_service" && Boolean(usualProposal?.service_ids?.length);
+  const usualSuggestionIsPreviousTurn =
+    usualSuggestionOpen && assistantSuggestedUsualService(lastAssistantTurnText(lastN));
+  // O serviço pode ter saído do catálogo entre a sugestão e o sim: nesse caso não aceita.
+  const catalogIds = new Set(catalogServices.map((s) => s.id));
+  const usualServiceAccepted =
+    usualSuggestionIsPreviousTurn &&
     isClientConfirmation(lastUserTextRaw) &&
-    bookingDraft.pendingProposal?.service_ids?.length &&
-    !turnFacts.patch.service_ids?.length
-  ) {
-    const proposal = bookingDraft.pendingProposal;
-    usualServiceAccepted = bookingDraft.lastAgentQuestion === "usual_service";
+    !turnFacts.patch.service_ids?.length &&
+    (usualProposal?.service_ids ?? []).every((id) => catalogIds.has(id));
+  const usualServiceRefused =
+    usualSuggestionIsPreviousTurn && isClientRefusal(lastUserTextRaw) && !turnFacts.patch.service_ids?.length;
+  if (usualServiceAccepted && usualProposal) {
     bookingDraft = mergeBookingDraft(bookingDraft, {
-      service_ids: proposal.service_ids,
-      service_name: proposal.service_name,
+      service_ids: usualProposal.service_ids,
+      service_name: usualProposal.service_name,
       pendingProposal: null,
       lastAgentQuestion: null,
     });
-  }
-  // "Vai ser o de sempre, X?" em aberto: a recusa (ou outro serviço dito) desfaz a sugestão. Recusa pura
-  // volta a perguntar o serviço, sem sugerir de novo; a sugestão nunca preenche o serviço sozinha.
-  const usualSuggestionOpen =
-    bookingDraft.lastAgentQuestion === "usual_service" && Boolean(bookingDraft.pendingProposal?.service_ids?.length);
-  const usualServiceRefused =
-    usualSuggestionOpen && isClientRefusal(lastUserTextRaw) && !turnFacts.patch.service_ids?.length;
-  if (usualSuggestionOpen && (usualServiceRefused || turnFacts.patch.service_ids?.length)) {
+  } else if (usualSuggestionOpen) {
     bookingDraft = mergeBookingDraft(bookingDraft, {
       pendingProposal: null,
       lastAgentQuestion: usualServiceRefused ? "service" : null,
@@ -2654,7 +2658,7 @@ export async function runAgent(
     replyingToPlanCharge,
     spokenHourOutside,
     usualService: resolveUsualService({ favorites: clientFavorites, memory: clientMemory, catalog: catalogServices }),
-    usualServiceRefused: usualServiceRefused,
+    usualServiceAlreadySuggested: Boolean(bookingDraft.usualSuggested),
     usualServiceAccepted,
   });
   if (routing.primaryIntent === "hours") {
@@ -3637,6 +3641,7 @@ export async function runAgent(
       bookingDraft = mergeBookingDraft(bookingDraft, {
         pendingProposal: { service_ids: suggestion.service_ids, service_name: suggestion.service_name },
         lastAgentQuestion: "usual_service",
+        usualSuggested: true,
       });
       await saveBookingDraft(conversationId, bookingDraft);
       return finishTurn(composeSuggestUsualService({ usualName: suggestion.service_name }), true);

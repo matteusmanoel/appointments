@@ -7,6 +7,7 @@ import {
   resolveUsualService,
   type CatalogService,
 } from "../ai/booking-draft.js";
+import { assistantSuggestedUsualService } from "../ai/booking-draft.js";
 import { isClientRefusal } from "../ai/conversation-intents.js";
 import { orchestrate, ASK_SERVICE } from "../ai/agent/orchestrator.js";
 import type { IntentSet } from "../ai/agent/types.js";
@@ -126,7 +127,7 @@ describe("orchestrate: sugestão do serviço de sempre", () => {
 
   it("sem histórico, ou depois da recusa, pergunta simples sem sugestão", () => {
     expect(orchestrate({ ...base, intentSet: schedule }).usualServiceSuggestion).toBeNull();
-    expect(orchestrate({ ...base, intentSet: schedule, usualService: usual, usualServiceRefused: true }).usualServiceSuggestion).toBeNull();
+    expect(orchestrate({ ...base, intentSet: schedule, usualService: usual, usualServiceAlreadySuggested: true }).usualServiceSuggestion).toBeNull();
   });
 
   it("depois do sim (serviço já no rascunho) segue para conferir a agenda", () => {
@@ -143,5 +144,26 @@ describe("orchestrate: sugestão do serviço de sempre", () => {
     expect(r.primaryIntent).toBe("schedule");
     expect(r.allowedTools).toContain("check_availability");
     expect(r.allowedTools).not.toContain("create_appointment");
+  });
+});
+
+describe("amarração do sim e flag no rascunho", () => {
+  it("reconhece a sugestão como última fala do agente, e só ela", () => {
+    expect(assistantSuggestedUsualService("Vai ser o de sempre, *Corte masculino*?")).toBe(true);
+    expect(assistantSuggestedUsualService("Qual hora você prefere?")).toBe(false);
+    expect(assistantSuggestedUsualService("")).toBe(false);
+  });
+
+  it("usualSuggested persiste no rascunho (merge e parse) e sobrevive a outros campos", () => {
+    const d = mergeBookingDraft(emptyBookingDraft(), { usualSuggested: true });
+    expect(d.usualSuggested).toBe(true);
+    const later = mergeBookingDraft(d, { time: "10:00", date: "2026-11-15" });
+    expect(later.usualSuggested).toBe(true);
+    expect(parseBookingDraft(JSON.parse(JSON.stringify(later))).usualSuggested).toBe(true);
+    expect(parseBookingDraft({ status: "collecting" }).usualSuggested).toBeUndefined();
+  });
+
+  it("parseBookingDraft ignora pendingProposal antigo gravado como texto", () => {
+    expect(parseBookingDraft({ status: "collecting", pendingProposal: "[object Object]" }).pendingProposal).toBeUndefined();
   });
 });
