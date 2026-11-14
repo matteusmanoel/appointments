@@ -5,18 +5,21 @@ import {
   Burst,
   Card,
   Echoes,
+  Quake,
   SafeArea,
   Slam,
   hardShadow,
   heavy,
   outline,
 } from "../components/kit";
-import { COLORS, local, sceneLength } from "../theme";
+import { COLORS, TIMELINE, local, sceneLength } from "../theme";
 
 const VOCE = local("hook", "voceE");
 const BARBEIRO = local("hook", "barbeiro");
 const OU = local("hook", "ou");
 const ATENDENTE = local("hook", "atendente");
+/** BARBEIRO holds for two music beats; the second heartbeat kick lands here. */
+const BARBEIRO_HEARTBEAT = TIMELINE.musicBeatFrames;
 
 const barbeiroStyle = heavy(146);
 const atendenteStyle = heavy(116);
@@ -39,6 +42,7 @@ export const Hook: React.FC = () => {
       <Sequence name="BARBEIRO" from={BARBEIRO} durationInFrames={OU - BARBEIRO} premountFor={fps}>
         <Card bg={COLORS.indigo}>
           <Burst color={COLORS.black} />
+          <Quake hits={[BARBEIRO_HEARTBEAT]} amplitude={9} duration={8} seed="barbeiro-beat">
           <SafeArea>
             <Slam from={1.08} shakeAmp={24} rotate={-3} drift={0.04} seed="barbeiro">
               <div style={{ position: "relative" }}>
@@ -58,6 +62,7 @@ export const Hook: React.FC = () => {
               </div>
             </Slam>
           </SafeArea>
+          </Quake>
         </Card>
       </Sequence>
 
