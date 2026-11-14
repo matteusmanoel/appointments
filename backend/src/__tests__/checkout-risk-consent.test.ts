@@ -52,7 +52,12 @@ describe("aceite do aviso de risco do WhatsApp no checkout (servidor)", () => {
   });
 
   it("com aceite → cria a sessão e grava quando/qual versão no metadata do Stripe", async () => {
-    const r1 = await post("/api/billing/checkout", { ...body, whatsapp_risk_accepted: true, whatsapp_risk_notice_version: "2026-11-13" });
+    // A UI manda a versão do texto que exibiu; o servidor grava essa versão na sessão do Stripe.
+    const r1 = await post("/api/billing/checkout", {
+      ...body,
+      whatsapp_risk_accepted: true,
+      whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
+    });
     expect(r1.status).toBe(200);
     const r2 = await post("/api/billing/checkout_embedded", { ...body, whatsapp_risk_accepted: true });
     expect(r2.status).toBe(200);
@@ -75,6 +80,13 @@ describe("aceite do aviso de risco do WhatsApp no checkout (servidor)", () => {
     const r = await post("/api/billing/checkout", body);
     expect(r.status).toBe(200);
     expect((created[0]!.metadata as Record<string, string>).whatsapp_risk_accepted_at).toBeUndefined();
+  });
+
+  it("riskAcceptanceMetadata grava a versão que a UI exibiu (mesmo antiga) e cai na atual quando ela não manda", () => {
+    expect(
+      riskAcceptanceMetadata({ whatsapp_risk_accepted: true, whatsapp_risk_notice_version: "2026-11-13" }).whatsapp_risk_notice_version,
+    ).toBe("2026-11-13");
+    expect(riskAcceptanceMetadata({ whatsapp_risk_accepted: true }).whatsapp_risk_notice_version).toBe(WHATSAPP_RISK_NOTICE_VERSION);
   });
 
   it("riskAcceptanceMetadata só existe com aceite explícito", () => {

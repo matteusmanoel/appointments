@@ -50,20 +50,24 @@ const SCENARIOS: GoldenScenario[] = [
     ],
   },
   {
-    id: "partial_fields_memory_fills",
+    // Contrato (CONTEXT.md, "Serviço" e "Rascunho"): o histórico pode sugerir "o de sempre?", mas o check de
+    // horário espera o serviço dito pela pessoa. A memória NÃO preenche o serviço sozinha.
+    id: "partial_fields_asks_service_not_memory",
     client: { name: "Mateus", pastVisit: true },
     turns: [
       {
         user: "Quero marcar amanhã às 10h",
-        llm: (fx) => [{ tool: "check_availability", args: { date: fx.tomorrowIso, time: "10:00" } }],
-        contracts: (fx) => [
+        llm: () => [],
+        contracts: () => [
           { kind: "intent_primary", equals: "schedule" },
           { kind: "intent_field", field: "service", equals: null },
           { kind: "name_known", equals: true },
           { kind: "name_source", equals: null },
-          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
-          { kind: "draft_service_ids", equals: [fx.services.corte] },
-          { kind: "draft_status", equals: "offered" },
+          { kind: "tools_executed", equals: [] },
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "state", equals: null },
           { kind: "not_silenced" },
         ],
       },
@@ -74,7 +78,9 @@ const SCENARIOS: GoldenScenario[] = [
     client: { name: "Mateus" },
     turns: [
       {
-        user: "Quero cortar amanhã às 15h com o Gabriel",
+        // "Corte masculino" explícito: "cortar" sozinho é ambíguo (corte simples x combo) e o turno só pergunta isso,
+        // sem liberar check_availability. Aqui o contrato é o barbeiro fora do catálogo.
+        user: "Quero um corte masculino amanhã às 15h com o Gabriel",
         llm: (fx) => [
           {
             tool: "check_availability",
@@ -92,7 +98,11 @@ const SCENARIOS: GoldenScenario[] = [
           { kind: "barber_disclosure", name: "Gabriel" },
           { kind: "routing_applied_includes", value: "barber_disclosure" },
           { kind: "catalog_rejections", equals: [{ tool: "check_availability", field: "barber_id" }] },
-          { kind: "draft_barber_id", equals: null },
+          // O barbeiro inventado é descartado e o turno só confere a agenda; o substituto (outro barbeiro do
+          // catálogo) é apenas OFERECIDO ("Posso confirmar?"), nada é gravado sem o aceite.
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "state", equals: null },
         ],
       },
     ],
@@ -111,8 +121,40 @@ const SCENARIOS: GoldenScenario[] = [
           { kind: "intent_primary", equals: "reschedule" },
           { kind: "intents_exclude", value: "cancel" },
           { kind: "routing_primary", equals: "reschedule" },
-          { kind: "routing_applied_includes", value: "block_cancel_on_reschedule" },
-          { kind: "tools_executed", equals: [{ name: "cancel_appointment", ok: false }] },
+          // Sem hora nova o turno só pergunta a hora: cancel_appointment nem entra na lista de tools do turno.
+          { kind: "tools_executed", equals: [] },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // Com hora nova o turno chega a conferir a agenda; se o modelo ainda pedir cancel_appointment,
+    // a tool está fora da lista do turno e o horário atual continua intacto.
+    id: "reschedule_with_clock_refuses_cancel",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Preciso remarcar, pode ser amanhã às 10h?",
+        llm: (fx) => [
+          { tool: "cancel_appointment", args: { appointment_id: fx.upcomingAppointmentId } },
+          { content: "Vou ver esse horário pra você." },
+        ],
+        contracts: (fx) => [
+          { kind: "intent_primary", equals: "reschedule" },
+          { kind: "intents_exclude", value: "cancel" },
+          { kind: "routing_primary", equals: "reschedule" },
+          { kind: "routing_applied_includes", value: "tool_not_in_plan" },
+          { kind: "routing_applied_includes", value: "check_before_draft" },
+          {
+            kind: "tools_executed",
+            equals: [
+              { name: "cancel_appointment", ok: false },
+              { name: "check_availability", ok: true },
+            ],
+          },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
           { kind: "state", equals: null },
         ],
@@ -182,7 +224,9 @@ const SCENARIOS: GoldenScenario[] = [
     ],
   },
   {
-    id: "booking_failure_hands_off",
+    // Horário ocupado ao gravar não é falha técnica: o turno confere a agenda e oferece uma hora livre do mesmo
+    // barbeiro, sem handoff (CONTEXT.md "Fato do turno"; golden g05 forbid "Encaminhar para atendente").
+    id: "booking_failure_offers_free_hour",
     client: { name: "Mateus" },
     prepare: async (fx) => {
       const other = await pool.query<{ id: string }>(
@@ -222,11 +266,27 @@ const SCENARIOS: GoldenScenario[] = [
           { content: "Esse horário não está disponível. Tenho às 14h30 ou às 15h30." },
         ],
         contracts: () => [
-          { kind: "state", equals: "handoff_requested" },
-          { kind: "tools_executed", equals: [{ name: "create_appointment", ok: false }] },
-          { kind: "openai_rounds", equals: 1 },
-          { kind: "routing_applied_includes", value: "action_failed_handoff" },
-          { kind: "activity_includes", value: "tool_error_escalated" },
+          { kind: "state", equals: null },
+          {
+            kind: "tools_executed",
+            equals: [
+              { name: "create_appointment", ok: false },
+              { name: "check_availability", ok: true },
+            ],
+          },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "draft_time_not", value: "15:00" },
+        ],
+      },
+      {
+        // O "sim" aceita a hora oferecida: grava a hora livre, não repete a ocupada.
+        user: "Sim",
+        llm: () => [],
+        contracts: () => [
+          { kind: "state", equals: "appointment_created" },
+          { kind: "tools_executed", equals: [{ name: "create_appointment", ok: true }] },
+          { kind: "openai_rounds", equals: 0 },
         ],
       },
     ],
@@ -240,10 +300,9 @@ const SCENARIOS: GoldenScenario[] = [
         llm: () => [{ content: "O horário das 15h não está disponível. Tenho às 14h30 ou às 15h30." }],
         contracts: (fx) => [
           { kind: "state", equals: null },
-          { kind: "routing_applied_includes", value: "check_before_draft" },
-          { kind: "routing_applied_excludes", value: "action_failed_handoff" },
+          // O check roda no próprio turno, antes de qualquer rascunho/fala (sem chamar o modelo).
           { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
-          { kind: "openai_rounds", equals: 1 },
+          { kind: "openai_rounds", equals: 0 },
           { kind: "draft_status", equals: "awaiting_name" },
           { kind: "draft_service_ids", equals: [fx.services.corteBarba] },
           { kind: "draft_barber_id", equals: fx.barbers.lucas },
@@ -285,8 +344,8 @@ const SCENARIOS: GoldenScenario[] = [
         contracts: () => [
           { kind: "state", equals: "appointment_created" },
           { kind: "tools_executed", equals: [{ name: "create_appointment", ok: true }] },
-          { kind: "openai_rounds", equals: 1 },
-          { kind: "routing_applied_excludes", value: "action_failed_handoff" },
+          // Ação decidida: texto fixo, sem chamada ao modelo (agente-contrato-nao-roteiro.mdc).
+          { kind: "openai_rounds", equals: 0 },
           { kind: "client_name", equals: "Mateus" },
         ],
       },

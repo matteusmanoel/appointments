@@ -44,7 +44,7 @@ describe("telas públicas com o QueryClient real do app (sem backend)", () => {
         </MemoryRouter>
       </QueryClientProvider>
     );
-    await waitFor(() => expect(screen.getByText(/Barbearia não encontrada/)).toBeInTheDocument(), { timeout: 9000 });
+    await waitFor(() => expect(screen.getByText(/NavalhIA não encontrada/)).toBeInTheDocument(), { timeout: 9000 });
     // 1 tentativa + no máximo 2 repetições para a query da barbearia
     const shopCalls = fetchMock.mock.calls.filter(([url]) => /\/api\/public\/minha-barbearia$/.test(String(url)));
     expect(shopCalls.length).toBe(1 + MAX_QUERY_RETRIES);

@@ -68,6 +68,7 @@ export type Contract =
   | { kind: "draft_status"; equals: BookingDraft["status"] }
   | { kind: "draft_service_ids"; equals: string[] }
   | { kind: "draft_barber_id"; equals: string | null }
+  | { kind: "draft_time_not"; value: string }
   | { kind: "pending_intents"; equals: PendingIntents }
   | { kind: "openai_rounds"; equals: number }
   | { kind: "activity_includes"; value: string }
@@ -378,6 +379,9 @@ export function checkContracts(outcome: TurnOutcome, contracts: Contract[]): str
         break;
       case "draft_barber_id":
         if ((outcome.draft.barber_id ?? null) !== c.equals) fail(c, outcome.draft.barber_id);
+        break;
+      case "draft_time_not":
+        if ((outcome.draft.time ?? "").slice(0, 5) === c.value) fail(c, outcome.draft.time);
         break;
       case "pending_intents":
         if (!same(outcome.pending, c.equals)) fail(c, outcome.pending);

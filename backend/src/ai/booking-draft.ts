@@ -692,8 +692,10 @@ export function concreteAlternativeToLock(params: {
       if (params.requestedBarberId && slot.barber_id && slot.barber_id !== params.requestedBarberId) return false;
       return true;
     });
-    if (alts.length !== 1) return null;
-    const alt = alts[0]!;
+    // Com o barbeiro fixo, composeOccupiedSlot oferece UMA hora ("16h com ele está livre. Quer esse?"):
+    // a primeira alternativa. O rascunho tem de guardar essa mesma hora, senão o "sim" repete a hora ocupada.
+    const alt = alts[0];
+    if (!alt) return null;
     return {
       date: params.date,
       time: clock(alt.time),
