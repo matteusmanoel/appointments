@@ -61,7 +61,7 @@ const STEPS = [
 
 const PLAN_FEATURES: Record<BillingPlan, string[]> = {
   essential: ["Painel e link de agendamento", "Serviços, barbeiros, horários", "Cliente agenda online 24h"],
-  pro: ["Tudo do Essencial", "Secretária no WhatsApp", "Lembrete antes do horário", "1 número incluso"],
+  pro: ["Tudo do Essencial", "Secretária no WhatsApp", "Lembretes 24h e 2h antes", "1 número incluso"],
   premium: ["Tudo do Profissional", "Tom da sua barbearia", "Várias unidades", "1 número incluso"],
 };
 

@@ -49,7 +49,7 @@ const LIVE_EVENTS: LiveEvent[] = [
   { icon: "✅", text: "Rafael · Corte agendado · hoje 14h", time: "agora" },
   { icon: "🔔", text: "Lembrete enviado · Carlos · amanhã 10h", time: "1min" },
   { icon: "🔄", text: "Bruno reagendou · sexta 16h", time: "3min" },
-  { icon: "💬", text: "Follow-up · Maria · 42 dias sem visita", time: "5min" },
+  { icon: "💬", text: "Reativação aprovada · Maria · 42 dias sem visita", time: "5min" },
   { icon: "✅", text: "Thiago confirmou presença · hoje 18h", time: "7min" },
   { icon: "🔔", text: "Lembrete enviado · João · amanhã 15h", time: "9min" },
 ];
