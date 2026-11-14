@@ -4,7 +4,7 @@ import {
   EmbeddedCheckoutProvider,
   EmbeddedCheckout,
 } from "@stripe/react-stripe-js";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, SendHorizontal } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -74,6 +74,35 @@ function phoneDigits(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+function AdvanceButton({
+  typed,
+  ready,
+  onAdvance,
+}: {
+  typed: boolean;
+  ready: boolean;
+  onAdvance: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label="Avançar"
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onAdvance}
+      className={cn(
+        "absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full text-white transition-colors",
+        ready
+          ? "checkout-send-pulse bg-primary shadow-[0_0_20px_hsl(239_84%_62%/0.7)]"
+          : typed
+            ? "bg-primary shadow-[0_0_16px_hsl(239_84%_62%/0.55)]"
+            : "bg-white/10 text-white/35",
+      )}
+    >
+      <SendHorizontal className="h-5 w-5" />
+    </button>
+  );
+}
+
 
 type Props = {
   open: boolean;
@@ -99,6 +128,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
   const [barbershopName, setBarbershopName] = useState("");
   const [fieldError, setFieldError] = useState("");
   const [riskAccepted, setRiskAccepted] = useState(false);
+  const [riskNudge, setRiskNudge] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const step = STEPS[stepIndex];
@@ -150,6 +180,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     }
     if (!riskAccepted) {
       setFieldError(WHATSAPP_RISK_REQUIRED_MESSAGE);
+      setRiskNudge((n) => n + 1);
       document.getElementById("whatsapp_risk")?.focus();
       return;
     }
@@ -222,6 +253,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       setError(null);
       setFieldError("");
       setRiskAccepted(false);
+      setRiskNudge(0);
       setStepIndex(0);
       setSlideDir("next");
     } else {
@@ -236,6 +268,15 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [open, view, step.id]);
+
+  useEffect(() => {
+    const row = document.getElementById("whatsapp_risk_row");
+    if (!row) return;
+    row.classList.remove("checkout-risk-shake");
+    if (fieldError !== WHATSAPP_RISK_REQUIRED_MESSAGE) return;
+    void row.offsetWidth;
+    row.classList.add("checkout-risk-shake");
+  }, [riskNudge, fieldError]);
 
   return (
     <Dialog
@@ -253,7 +294,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       >
         {view === "form" ? (
           <form onSubmit={handleFormSubmit} className="flex min-h-0 flex-1 flex-col">
-            <div className="flex items-center gap-3 px-6 pr-14 pt-6">
+            <div className={cn("flex items-center gap-3 px-6 pr-14 pt-6", step.id === "plan" && "max-md:hidden")}>
               <img
                 src="/logo-v5.png"
                 alt=""
@@ -267,15 +308,20 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
             <div
               className={cn(
-                "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-4",
-                step.id !== "plan" && "flex flex-col justify-center",
+                "min-h-0 flex-1 overflow-x-hidden px-6",
+                step.id === "plan"
+                  ? "flex flex-col overflow-y-auto pb-1 pt-14 md:py-4"
+                  : "flex flex-col justify-center overflow-y-auto py-4",
               )}
             >
               <div
                 key={step.id}
-                className={slideDir === "next" ? "checkout-step-next" : "checkout-step-prev"}
+                className={cn(
+                  slideDir === "next" ? "checkout-step-next" : "checkout-step-prev",
+                  step.id === "plan" && "flex min-h-0 flex-1 flex-col",
+                )}
               >
-                <DialogHeader className="mb-5 space-y-2 text-left">
+                <DialogHeader className={cn("mb-5 space-y-2 text-left", step.id === "plan" && "max-md:sr-only")}>
                   <DialogTitle className="font-display text-2xl font-bold leading-tight text-white sm:text-3xl">
                     {step.question}
                   </DialogTitle>
@@ -288,6 +334,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     <Label htmlFor="checkout-email" className="sr-only">
                       E-mail
                     </Label>
+                    <div className="relative">
                     <Input
                       ref={inputRef}
                       id="checkout-email"
@@ -300,14 +347,15 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                         setEmail(e.target.value);
                         setFieldError("");
                       }}
-                      onBlur={(e) => {
-                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
-                        if (next?.closest("button")) return;
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
                       aria-invalid={!!fieldError}
-                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
                     />
+                    <AdvanceButton
+                      typed={email.trim().length > 0}
+                      ready={validateStep(0) === ""}
+                      onAdvance={goNext}
+                    />
+                    </div>
                   </div>
                 )}
 
@@ -316,6 +364,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     <Label htmlFor="checkout-phone" className="sr-only">
                       Telefone
                     </Label>
+                    <div className="relative">
                     <Input
                       ref={inputRef}
                       id="checkout-phone"
@@ -328,14 +377,15 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                         setPhone(formatPhoneAsTyped(e.target.value));
                         setFieldError("");
                       }}
-                      onBlur={(e) => {
-                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
-                        if (next?.closest("button")) return;
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
                       aria-invalid={!!fieldError}
-                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
                     />
+                    <AdvanceButton
+                      typed={phoneDigits(phone).length > 0}
+                      ready={validateStep(1) === ""}
+                      onAdvance={goNext}
+                    />
+                    </div>
                   </div>
                 )}
 
@@ -344,6 +394,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     <Label htmlFor="checkout-name" className="sr-only">
                       Nome da barbearia
                     </Label>
+                    <div className="relative">
                     <Input
                       ref={inputRef}
                       id="checkout-name"
@@ -354,20 +405,20 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                         setBarbershopName(e.target.value);
                         setFieldError("");
                       }}
-                      onBlur={(e) => {
-                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
-                        if (next?.closest("button")) return;
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
                       aria-invalid={!!fieldError}
-                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
                     />
+                    <AdvanceButton
+                      typed={barbershopName.trim().length > 0}
+                      ready={validateStep(2) === ""}
+                      onAdvance={goNext}
+                    />
+                    </div>
                   </div>
                 )}
 
                 {step.id === "plan" && (
-                  <>
-                  <div role="radiogroup" aria-label="Plano" className="grid grid-cols-1 gap-3 pt-4 md:grid-cols-3 md:items-stretch">
+                  <div role="radiogroup" aria-label="Plano" className="grid min-h-0 flex-1 grid-cols-1 grid-rows-3 gap-2.5 pt-1 md:grid-cols-3 md:grid-rows-1 md:gap-4 md:pt-4">
                     {BILLING_PLANS.map((p) => {
                       const selected = plan === p.id;
                       const featured = p.id === "pro";
@@ -379,21 +430,22 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                           aria-checked={selected}
                           onClick={() => setPlan(p.id)}
                           className={cn(
-                            "relative flex h-full w-full rounded-2xl text-left transition-all duration-200",
+                            "relative flex h-full min-h-0 w-full rounded-2xl p-1 text-left transition-all duration-200",
                             selected
-                              ? "bg-gradient-to-b from-primary via-violet-500 to-violet-300 p-1 shadow-[0_0_40px_hsl(262_83%_58%/0.6)]"
-                              : "bg-white/10 p-px hover:bg-white/20",
+                              ? "bg-gradient-to-b from-primary via-violet-500 to-violet-300 shadow-[0_0_40px_hsl(262_83%_58%/0.6)]"
+                              : "bg-white/10 hover:bg-white/20",
                             featured && !selected && "shadow-[0_0_32px_hsl(239_84%_62%/0.4)]",
                           )}
                         >
                           {featured && (
-                            <span className="absolute -top-2.5 left-4 rounded-full bg-primary px-3 py-0.5 text-[10px] font-semibold text-white shadow-[0_0_16px_hsl(239_84%_62%/0.5)]">
+                            <span className="absolute left-4 top-3 z-10 rounded-full bg-primary px-3 py-0.5 text-[10px] font-semibold text-white shadow-[0_0_16px_hsl(239_84%_62%/0.5)] md:-top-2.5">
                               Mais escolhido
                             </span>
                           )}
                           <span
                             className={cn(
-                              "flex h-full flex-col gap-2 rounded-2xl px-4 py-3.5",
+                              "flex h-full min-h-0 w-full min-w-0 flex-col gap-1.5 overflow-hidden rounded-2xl px-4 md:gap-3 md:px-5 md:py-5",
+                              featured ? "pt-8 pb-3 md:pt-5" : "py-3",
                               selected
                                 ? "bg-gradient-to-b from-[#2a2158] via-[#1a1630] to-[#12101c]"
                                 : featured
@@ -402,20 +454,20 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                             )}
                           >
                             <span className="flex flex-col items-start gap-1">
-                              <span className="font-display text-lg font-bold text-white">{p.label}</span>
-                              <span className="font-display text-lg font-bold text-white">{p.price}</span>
+                              <span className="font-display text-xl font-bold leading-tight text-white md:text-2xl">{p.label}</span>
+                              <span className="font-display text-xl font-bold leading-tight text-white md:text-2xl">{p.price}</span>
                             </span>
-                            <span className="text-xs text-white/45">{p.desc}</span>
-                            <span className="mt-1 space-y-1">
+                            <span className="hidden text-sm text-white/40 md:block">{p.desc}</span>
+                            <span className="mt-1 flex min-h-0 flex-1 flex-col justify-evenly gap-2">
                               {PLAN_FEATURES[p.id].map((feature) => (
-                                <span key={feature} className="flex items-center gap-2 text-xs text-white/70">
-                                  <CheckCircle2 className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-primary" : "text-primary/70")} />
+                                <span key={feature} className="flex items-start gap-2 text-xs leading-snug text-white/80 md:text-sm">
+                                  <CheckCircle2 className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 md:h-4 md:w-4", selected ? "text-primary" : "text-primary/70")} />
                                   {feature}
                                 </span>
                               ))}
                             </span>
                             {selected && (
-                              <span className="text-[11px] font-medium uppercase tracking-wider text-primary">
+                              <span className="mt-auto hidden text-xs font-medium uppercase tracking-wider text-primary md:block">
                                 Selecionado
                               </span>
                             )}
@@ -424,13 +476,52 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                       );
                     })}
                   </div>
-                  <div
-                    className={cn(
-                      "mt-4 flex items-start gap-3 rounded-xl px-1 py-1",
-                      fieldError === WHATSAPP_RISK_REQUIRED_MESSAGE && "ring-1 ring-red-400/70",
-                    )}
-                    data-testid="whatsapp-risk-notice"
+                )}
+
+                {fieldError && fieldError !== WHATSAPP_RISK_REQUIRED_MESSAGE && (
+                  <p className="mt-2 text-center text-sm text-red-400" role="alert">
+                    {fieldError}
+                  </p>
+                )}
+                {error && step.id !== "plan" && (
+                  <p className="mt-2 text-sm text-red-400" role="alert">
+                    {error}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {step.id !== "plan" && (
+              <div className="hidden items-center gap-3 px-6 pb-4 md:flex">
+                {stepIndex > 0 && (
+                  <button
+                    type="button"
+                    onClick={goBack}
+                    disabled={loading}
+                    className="rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 transition-all hover:border-white/30 hover:bg-white/5 hover:text-white disabled:opacity-50"
                   >
+                    Voltar
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={loading}
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="lp-shimmer relative flex-1 overflow-hidden rounded-xl bg-primary py-3 text-sm font-semibold text-white shadow-[0_0_20px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:shadow-[0_0_48px_hsl(239_84%_62%/0.7)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="relative z-10">{loading ? "Preparando..." : "Continuar"}</span>
+                </button>
+              </div>
+            )}
+
+            {step.id === "plan" ? (
+              <footer className="shrink-0 space-y-3 border-t border-white/10 px-6 py-4">
+                <div
+                  id="whatsapp_risk_row"
+                  className="flex items-start gap-2.5"
+                  data-testid="whatsapp-risk-notice"
+                >
+                  <label className="-ml-1 inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center">
                     <Checkbox
                       id="whatsapp_risk"
                       checked={riskAccepted}
@@ -439,91 +530,62 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                         setFieldError("");
                       }}
                       aria-describedby="whatsapp_risk_text"
-                      className="mt-0.5 h-5 w-5 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
+                      className="h-4 w-4 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
                     />
-                    <p id="whatsapp_risk_text" className="text-sm font-normal leading-snug text-white/80">
-                      <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_BEFORE}</label>
-                      <a
-                        href={WHATSAPP_RISK_TERMS_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-semibold text-primary hover:underline"
-                      >
-                        {WHATSAPP_RISK_CHECKBOX_LINK}
-                      </a>
-                      <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_AFTER}</label>
-                    </p>
-                  </div>
-                  </>
-                )}
-
-                {fieldError && (
-                  <p className="mt-2 text-center text-sm text-red-400" role="alert">
-                    {fieldError}
+                  </label>
+                  <p id="whatsapp_risk_text" className="text-xs font-normal leading-snug text-white/70">
+                    <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_BEFORE}</label>
+                    <a
+                      href={WHATSAPP_RISK_TERMS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      {WHATSAPP_RISK_CHECKBOX_LINK}
+                    </a>
+                    <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_AFTER}</label>
+                  </p>
+                </div>
+                {fieldError === WHATSAPP_RISK_REQUIRED_MESSAGE && (
+                  <p className="text-xs text-red-400" role="alert">
+                    {WHATSAPP_RISK_REQUIRED_MESSAGE}
                   </p>
                 )}
                 {error && (
-                  <p className="mt-2 text-sm text-red-400" role="alert">
-                    {error}
-                  </p>
+                  <p className="text-sm text-red-400" role="alert">{error}</p>
                 )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 px-6 pb-4">
-              {stepIndex > 0 && (
                 <button
-                  type="button"
-                  onClick={goBack}
+                  type="submit"
                   disabled={loading}
-                  className="rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 transition-all hover:border-white/30 hover:bg-white/5 hover:text-white disabled:opacity-50"
+                  className="lp-shimmer relative w-full overflow-hidden rounded-xl bg-primary py-3 text-sm font-semibold text-white shadow-[0_0_28px_hsl(239_84%_62%/0.55),0_0_0_1px_hsl(270_80%_72%/0.95)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Voltar
-                </button>
-              )}
-              <button
-                type="submit"
-                disabled={loading}
-                onMouseDown={(e) => {
-                  if (step.id !== "plan") e.preventDefault();
-                }}
-                className={cn(
-                  "relative flex-1 overflow-hidden rounded-xl py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60",
-                  step.id === "plan"
-                    ? "lp-shimmer bg-primary shadow-[0_0_28px_hsl(239_84%_62%/0.55),0_0_0_1px_hsl(270_80%_72%/0.95)]"
-                    : "lp-shimmer bg-primary shadow-[0_0_20px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:shadow-[0_0_48px_hsl(239_84%_62%/0.7)]",
-                )}
-              >
-                {step.id === "plan" && (
                   <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500" />
-                )}
-                <span className="relative z-10">
-                  {loading ? "Preparando..." : step.id === "plan" ? "Ir para pagamento" : "Continuar"}
-                </span>
-              </button>
-            </div>
-
-            <footer className="shrink-0 border-t border-white/10 px-6 py-4">
-              <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/55">
-                <span>
-                  Etapa {stepIndex + 1} de {STEPS.length} · {step.label}
-                </span>
-                <span className="tabular-nums">{Math.round(progress)}%</span>
-              </div>
-              <div
-                className="h-2 overflow-hidden rounded-full bg-white/10"
-                role="progressbar"
-                aria-valuemin={1}
-                aria-valuemax={STEPS.length}
-                aria-valuenow={stepIndex + 1}
-                aria-valuetext={`Etapa ${stepIndex + 1} de ${STEPS.length}: ${step.label}`}
-              >
+                  <span className="relative z-10">{loading ? "Preparando..." : "Ir para pagamento"}</span>
+                </button>
+              </footer>
+            ) : (
+              <footer className="shrink-0 border-t border-white/10 px-6 py-4">
+                <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/55">
+                  <span>
+                    Etapa {stepIndex + 1} de {STEPS.length} · {step.label}
+                  </span>
+                  <span className="tabular-nums">{Math.round(progress)}%</span>
+                </div>
                 <div
-                  className="checkout-progress-fill h-full rounded-full bg-gradient-to-r from-primary to-violet-400 shadow-[0_0_12px_hsl(239_84%_62%/0.65)]"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </footer>
+                  className="h-2 overflow-hidden rounded-full bg-white/10"
+                  role="progressbar"
+                  aria-valuemin={1}
+                  aria-valuemax={STEPS.length}
+                  aria-valuenow={stepIndex + 1}
+                  aria-valuetext={`Etapa ${stepIndex + 1} de ${STEPS.length}: ${step.label}`}
+                >
+                  <div
+                    className="checkout-progress-fill h-full rounded-full bg-gradient-to-r from-primary to-violet-400 shadow-[0_0_12px_hsl(239_84%_62%/0.65)]"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </footer>
+            )}
           </form>
         ) : clientSecret && stripePromise ? (
           <div className="flex flex-col md:flex-row -m-6 sm:-m-6 md:max-h-[85vh]">

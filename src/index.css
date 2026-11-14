@@ -493,6 +493,43 @@
     animation: checkout-step-prev 280ms ease-out;
   }
 
+  @keyframes checkout-risk-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-6px);
+    }
+    40% {
+      transform: translateX(6px);
+    }
+    60% {
+      transform: translateX(-4px);
+    }
+    80% {
+      transform: translateX(3px);
+    }
+  }
+
+  .checkout-risk-shake {
+    animation: checkout-risk-shake 420ms ease-in-out;
+  }
+
+  @keyframes checkout-send-pulse {
+    0%,
+    100% {
+      transform: translateY(-50%) scale(1);
+    }
+    50% {
+      transform: translateY(-50%) scale(1.08);
+    }
+  }
+
+  .checkout-send-pulse {
+    animation: checkout-send-pulse 1.1s ease-in-out infinite;
+  }
+
   .checkout-progress-fill {
     position: relative;
     overflow: hidden;
@@ -527,7 +564,9 @@
     }
 
     .checkout-step-next,
-    .checkout-step-prev {
+    .checkout-step-prev,
+    .checkout-risk-shake,
+    .checkout-send-pulse {
       animation: none;
     }
 

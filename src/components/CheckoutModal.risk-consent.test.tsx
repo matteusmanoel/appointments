@@ -37,6 +37,7 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
     fillAndReachPlan();
     expect(screen.getByTestId("whatsapp-risk-notice").textContent).toContain(WHATSAPP_RISK_NOTICE_TEXT);
+    expect(screen.queryByRole("button", { name: "Voltar" })).toBeNull();
     const box = screen.getByRole("checkbox");
     expect(box.getAttribute("aria-checked")).toBe("false");
     expect((screen.getByRole("button", { name: /Ir para pagamento/ }) as HTMLButtonElement).disabled).toBe(false);
@@ -94,5 +95,46 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
     fireEvent.click(screen.getByRole("button", { name: /Ir para pagamento/ }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/aceite do aviso/i));
     expect(createCheckout).not.toHaveBeenCalled();
+  });
+
+  it("Tab sai do campo de e-mail sem ser recapturado", async () => {
+    render(<CheckoutModal open onOpenChange={() => {}} />);
+    const email = document.getElementById("checkout-email") as HTMLInputElement;
+    await waitFor(() => expect(document.activeElement).toBe(email));
+    // espera o rAF de autofocus do passo (não é a armadilha de onBlur)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    const advance = screen.getByRole("button", { name: "Avançar" });
+    fireEvent.keyDown(email, { key: "Tab" });
+    fireEvent.blur(email, { relatedTarget: advance });
+    advance.focus();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(document.activeElement).toBe(advance);
+
+    email.focus();
+    const heading = screen.getByRole("heading", { name: /Qual é o seu e-mail/i });
+    heading.setAttribute("tabindex", "-1");
+    fireEvent.blur(email, { relatedTarget: heading });
+    heading.focus();
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    expect(document.activeElement).toBe(heading);
+  });
+
+  it("erro de aceite é visível (não sr-only)", async () => {
+    render(<CheckoutModal open onOpenChange={() => {}} />);
+    fillAndReachPlan();
+    fireEvent.click(screen.getByRole("button", { name: /Ir para pagamento/ }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(WHATSAPP_RISK_REQUIRED_MESSAGE);
+    expect(alert.className).not.toMatch(/\bsr-only\b/);
+    expect(alert.className).toMatch(/text-red-400/);
+  });
+
+  it("clicar em Avançar passa da etapa de e-mail para telefone", () => {
+    render(<CheckoutModal open onOpenChange={() => {}} />);
+    fireEvent.change(document.getElementById("checkout-email")!, { target: { value: "dono@example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
+    expect(document.getElementById("checkout-phone")).toBeTruthy();
+    expect(document.getElementById("checkout-email")).toBeNull();
   });
 });

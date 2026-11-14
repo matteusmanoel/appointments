@@ -61,6 +61,9 @@ describe("AiUsageAlertBadge", () => {
     });
     renderBadge();
     await waitFor(() => expect(screen.getByText(AI_HARD_CAP_BADGE_TEXT)).toBeInTheDocument());
+    expect(AI_HARD_CAP_BADGE_TEXT).toBe(
+      "Limite de IA atingido: o atendimento automático parou de responder seus clientes até o próximo ciclo. Responda manualmente ou faça upgrade.",
+    );
     expect(screen.getByText("Limite de IA")).toBeInTheDocument();
   });
 
