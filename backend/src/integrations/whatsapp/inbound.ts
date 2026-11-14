@@ -6,6 +6,7 @@ import { matchBotEcho, markEchoDelivered } from "./bot-pending.js";
 import type { CanonicalInbound } from "./parse-evolution.js";
 import type { WhatsAppProviderName } from "./types.js";
 import { looksLikeTestWipeCommand } from "../../ai/conversation-intents.js";
+import { isTestWipeAllowed } from "../../ai/test-wipe-policy.js";
 import { wipeWhatsAppTestContext } from "../../ai/wipe-test-context.js";
 import { AUDIO_FAIL_REPLY, transcribeInboundAudio } from "../../ai/transcribe-inbound-audio.js";
 import { readReceiptFromMedia } from "../../ai/read-receipt-media.js";
@@ -243,7 +244,7 @@ export async function enqueueInboundMessage(params: {
   const conversationId = conv.rows[0]?.id;
   if (!conversationId) return;
 
-  if (looksLikeTestWipeCommand(text)) {
+  if (looksLikeTestWipeCommand(text) && isTestWipeAllowed(canonicalPhone)) {
     const wiped = await wipeWhatsAppTestContext({ barbershopId, phone: canonicalPhone });
     const ack =
       "Pronto — limpei o contexto deste teste (conversa, agendamentos e cadastro deste WhatsApp). Pode começar do zero.";
