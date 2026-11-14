@@ -570,6 +570,135 @@ const SCENARIOS: GoldenScenario[] = [
       },
     ],
   },
+  {
+    id: "schedule_missing_hour_offers_slots",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero agendar só o corte amanhã",
+        llm: () => [{ content: "não deveria chamar o modelo" }],
+        contracts: (fx) => [
+          { kind: "routing_primary", equals: "schedule" },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "reply_excludes", value: "Qual hora você prefere" },
+          { kind: "not_silenced" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "cancel_upcoming",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Quero cancelar meu horário",
+        llm: () => [{ tool: "cancel_appointment", args: {} }],
+        contracts: (fx) => [
+          { kind: "routing_primary", equals: "cancel" },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "cancelled" },
+          { kind: "state", equals: "appointment_cancelled" },
+          { kind: "reply_includes", value: "cancelado" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "remind_confirm_presence",
+    client: { name: "Mateus", upcoming: true },
+    prepare: async (fx) => {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [
+          fx.conversationId,
+          "Fala, Mateus! Passando para confirmar seu agendamento:\n\n✂️ *Corte masculino*\n💈 *Eduardo Gustavo*\n\nSeu horário está reservado. *Você confirma sua presença ou prefere reagendar?*",
+        ],
+      );
+      await pool.query(
+        `INSERT INTO public.agenda_activity
+           (barbershop_id, appointment_id, conversation_id, type, actor, client_name, scheduled_date, scheduled_time, summary)
+         VALUES ($1, $2, $3, 'reminder_sent', 'system', 'Mateus', $4::date, '18:00', 'reminder 24h')`,
+        [fx.barbershopId, fx.upcomingAppointmentId, fx.conversationId, fx.tomorrowIso],
+      );
+    },
+    turns: [
+      {
+        user: "Confirmo",
+        llm: () => [{ tool: "confirm_appointment", args: {} }],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "state", equals: "appointment_confirmed" },
+          { kind: "tools_executed_includes", value: { name: "confirm_appointment", ok: true } },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "confirmed" },
+          { kind: "reply_includes", value: "Presença confirmada" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "remind_reschedule",
+    client: { name: "Mateus", upcoming: true },
+    prepare: async (fx) => {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [
+          fx.conversationId,
+          "Fala, Mateus! Seu horário está reservado. *Você confirma sua presença ou prefere reagendar?*",
+        ],
+      );
+      await pool.query(
+        `INSERT INTO public.agenda_activity
+           (barbershop_id, appointment_id, conversation_id, type, actor, client_name, scheduled_date, scheduled_time, summary)
+         VALUES ($1, $2, $3, 'reminder_sent', 'system', 'Mateus', $4::date, '18:00', 'reminder 24h')`,
+        [fx.barbershopId, fx.upcomingAppointmentId, fx.conversationId, fx.tomorrowIso],
+      );
+    },
+    turns: [
+      {
+        user: "Preciso remarcar, pode ser o próximo",
+        llm: () => [{ content: "não deveria chamar o modelo" }],
+        contracts: (fx) => [
+          { kind: "routing_primary", equals: "reschedule" },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "remind_cancel",
+    client: { name: "Mateus", upcoming: true },
+    prepare: async (fx) => {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [
+          fx.conversationId,
+          "Fala, Mateus! Seu horário está reservado. *Você confirma sua presença ou prefere reagendar?*",
+        ],
+      );
+      await pool.query(
+        `INSERT INTO public.agenda_activity
+           (barbershop_id, appointment_id, conversation_id, type, actor, client_name, scheduled_date, scheduled_time, summary)
+         VALUES ($1, $2, $3, 'reminder_sent', 'system', 'Mateus', $4::date, '18:00', 'reminder 24h')`,
+        [fx.barbershopId, fx.upcomingAppointmentId, fx.conversationId, fx.tomorrowIso],
+      );
+    },
+    turns: [
+      {
+        user: "Quero cancelar, não vou conseguir ir",
+        llm: () => [{ tool: "cancel_appointment", args: {} }],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "state", equals: "appointment_cancelled" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "cancelled" },
+          { kind: "reply_includes", value: "cancelado" },
+        ],
+      },
+    ],
+  },
 ];
 
 for (const scenario of SCENARIOS) {
