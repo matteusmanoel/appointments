@@ -1558,7 +1558,7 @@ export async function createAppointment(
 }
 
 /**
- * Returns "o de sempre" for a client: last appointment's services and top 1–2 most frequent combos in last 6 months.
+ * Returns "o de sempre" for a client: last COMPLETED appointment (no_show, cancelled and never-closed ones do not count) and top 1–2 most frequent combos in last 6 months.
  * Used by agent to suggest proactively on greeting.
  */
 export async function getClientFavoriteServices(
@@ -1586,7 +1586,7 @@ export async function getClientFavoriteServices(
        SELECT a.id
        FROM public.appointments a
        JOIN public.clients c ON c.id = a.client_id
-       WHERE a.barbershop_id = $1 AND a.status NOT IN ('cancelled')
+       WHERE a.barbershop_id = $1 AND a.status = 'completed'
          AND a.scheduled_date < CURRENT_DATE
          AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
        ORDER BY a.scheduled_date DESC, a.scheduled_time DESC
@@ -1624,7 +1624,7 @@ export async function getClientFavoriteServices(
        SELECT a.id
        FROM public.appointments a
        JOIN public.clients c ON c.id = a.client_id
-       WHERE a.barbershop_id = $1 AND a.status NOT IN ('cancelled')
+       WHERE a.barbershop_id = $1 AND a.status = 'completed'
          AND a.scheduled_date >= $2::date
          AND a.scheduled_date < CURRENT_DATE
          AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])
@@ -1640,7 +1640,7 @@ export async function getClientFavoriteServices(
      SELECT service_ids, service_names, COUNT(*)::text AS cnt
      FROM combo
      GROUP BY service_ids, service_names
-     ORDER BY COUNT(*) DESC
+     ORDER BY COUNT(*) DESC, service_names ASC
      LIMIT 2`,
     [barbershopId, sixMonthsAgo.toISOString().slice(0, 10), matchKeys],
   );

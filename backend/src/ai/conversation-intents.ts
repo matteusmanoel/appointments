@@ -63,6 +63,17 @@ export function isClientConfirmation(text: string): boolean {
   return isShortConfirmation(t);
 }
 
+/**
+ * Recusa curta ("não", "dessa vez não", "quero outro"): a pessoa não aceitou o que foi sugerido.
+ * "Não" seguido de um horário ou de um serviço nomeado não é só recusa: o fato novo vale mais.
+ */
+export function isClientRefusal(text: string): boolean {
+  const t = fold(text).replace(/[,!.?]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t || t.length > 40) return false;
+  if (parseClientTime(text)) return false;
+  return /^(nao|n|nope|negativo|dessa vez nao|desta vez nao|hoje nao|nao obrigado|nao quero|nao e esse|nao e o de sempre|quero outro|quero outra coisa|outro|outra|outro servico|diferente)$/.test(t);
+}
+
 export function looksLikeConsultIntent(text: string): boolean {
   const t = fold(text);
   if (!t) return false;

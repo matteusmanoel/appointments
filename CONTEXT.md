@@ -135,7 +135,7 @@ _Avoid_: repetir o nome em todo slot, omitir a troca de barbeiro
 ## Atendimento
 
 **Rascunho**:
-Acordo em construção na conversa (serviço, barbeiro, data, hora). Cobre um único slot. Omissão do turno não apaga campos já preenchidos. Close só com aceite de slot ou nome pedido. Check de horário só com serviço já no acordo (dito agora ou já no rascunho).
+Acordo em construção na conversa (serviço, barbeiro, data, hora). Cobre um único slot. Omissão do turno não apaga campos já preenchidos. Close só com aceite de slot ou nome pedido. Check de horário só com serviço já no acordo (dito agora ou já no rascunho). Cliente que volta e dá dia/hora sem serviço recebe a sugestão do de sempre ("Vai ser o de sempre, X?"): o serviço só entra no rascunho no sim. O não pergunta qual serviço, sem sugerir de novo; outro serviço dito vale no lugar da sugestão.
 _Avoid_: estado da IA, memória, contexto, serviço inferido no check, confundir com Plano
 
 **Remarcar**:

@@ -50,25 +50,243 @@ const SCENARIOS: GoldenScenario[] = [
     ],
   },
   {
-    // Contrato (CONTEXT.md, "Serviço" e "Rascunho"): o histórico pode sugerir "o de sempre?", mas o check de
-    // horário espera o serviço dito pela pessoa. A memória NÃO preenche o serviço sozinha.
-    id: "partial_fields_asks_service_not_memory",
+    // Contrato (CONTEXT.md, "Serviço" e "Rascunho"): cliente que volta recebe "Vai ser o de sempre, X?" e o serviço
+    // só entra no rascunho no "sim". A memória NÃO preenche o serviço sozinha e a pergunta não fica aberta.
+    id: "recurring_client_suggests_usual_service_then_yes",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "intent_primary", equals: "schedule" },
+          { kind: "intent_field", field: "service", equals: null },
+          { kind: "name_known", equals: true },
+          { kind: "name_source", equals: null },
+          { kind: "tools_executed", equals: [] },
+          // sugere, não preenche
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "reply_includes", value: "Vai ser o de sempre, *Corte masculino*?" },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "state", equals: null },
+          { kind: "not_silenced" },
+        ],
+      },
+      {
+        // O "sim" aceita a sugestão: o serviço entra no rascunho e a agenda é conferida; nada é gravado sem o aceite do horário.
+        user: "Sim",
+        llm: (fx) => [
+          {
+            tool: "check_availability",
+            args: { date: fx.tomorrowIso, time: "10:00", barber_id: fx.barbers.eduardo, service_ids: [fx.services.corte] },
+          },
+        ],
+        contracts: (fx) => [
+          { kind: "draft_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: null },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // "Não" ao de sempre: pergunta qual serviço (sem sugerir de novo, sem preencher nada); o serviço dito depois segue o fluxo.
+    id: "recurring_client_refuses_usual_service_picks_another",
     client: { name: "Mateus", pastVisit: true },
     turns: [
       {
         user: "Quero marcar amanhã às 10h",
         llm: () => [],
         contracts: () => [
-          { kind: "intent_primary", equals: "schedule" },
-          { kind: "intent_field", field: "service", equals: null },
-          { kind: "name_known", equals: true },
-          { kind: "name_source", equals: null },
-          { kind: "tools_executed", equals: [] },
           { kind: "draft_service_ids", equals: [] },
-          { kind: "draft_status", equals: "collecting" },
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "openai_rounds", equals: 0 },
+        ],
+      },
+      {
+        user: "Não",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: "service" },
+          { kind: "reply_includes", value: "Qual serviço deseja?" },
+          { kind: "reply_excludes", value: "de sempre" },
+          { kind: "tools_executed", equals: [] },
           { kind: "openai_rounds", equals: 0 },
           { kind: "state", equals: null },
-          { kind: "not_silenced" },
+        ],
+      },
+      {
+        user: "Quero corte e barba",
+        llm: (fx) => [
+          {
+            tool: "check_availability",
+            args: { date: fx.tomorrowIso, time: "10:00", service_ids: [fx.services.corteBarba] },
+          },
+        ],
+        contracts: (fx) => [
+          { kind: "draft_service_ids", equals: [fx.services.corteBarba] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // O "sim" é da sugestão, só do turno imediatamente seguinte: sugestão -> outra pergunta -> "sim" não aplica o de sempre.
+    id: "usual_service_yes_after_other_question_does_not_apply",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "draft_usual_suggested", equals: true },
+        ],
+      },
+      {
+        user: "Vocês abrem no sábado?",
+        llm: () => [{ content: "Abrimos sim, das 9h às 20h." }],
+        contracts: () => [
+          // a proposta não sobrevive a um turno que não respondeu a ela
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: null },
+          { kind: "draft_service_ids", equals: [] },
+        ],
+      },
+      {
+        user: "Pode contar comigo",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "tools_executed", equals: [] },
+          { kind: "reply_excludes", value: "Posso confirmar" },
+        ],
+      },
+    ],
+  },
+  {
+    // Rascunho velho com a proposta, mas a última fala do agente não foi a sugestão: o "sim" não a aceita.
+    id: "usual_service_stale_proposal_is_not_accepted",
+    client: { name: "Mateus", pastVisit: true },
+    prepare: async (fx) => {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [fx.conversationId, "Qual hora você prefere?"],
+      );
+      await pool.query(
+        `INSERT INTO public.ai_conversation_runtime (conversation_id, booking_draft, updated_at)
+         VALUES ($1, $2::jsonb, now())
+         ON CONFLICT (conversation_id) DO UPDATE SET booking_draft = $2::jsonb, updated_at = now()`,
+        [
+          fx.conversationId,
+          JSON.stringify({
+            status: "collecting",
+            date: fx.tomorrowIso,
+            time: "10:00",
+            lastAgentQuestion: "usual_service",
+            usualSuggested: true,
+            pendingProposal: { service_ids: [fx.services.corte], service_name: "Corte masculino" },
+          }),
+        ],
+      );
+    },
+    turns: [
+      {
+        user: "Sim",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "tools_executed", equals: [] },
+        ],
+      },
+    ],
+  },
+  {
+    // "Não sugerir de novo" dura o agendamento todo: depois da recusa, dizer só dia/hora outra vez não repete a sugestão.
+    id: "usual_service_refusal_persists_for_the_booking",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [{ kind: "draft_last_question", equals: "usual_service" }],
+      },
+      {
+        user: "Não",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_usual_suggested", equals: true },
+          { kind: "reply_excludes", value: "de sempre" },
+        ],
+      },
+      {
+        user: "então amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "reply_includes", value: "Qual serviço deseja?" },
+          { kind: "reply_excludes", value: "de sempre" },
+          { kind: "openai_rounds", equals: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    // Resposta que não é sim nem recusa da lista ("não sei"): também não aceita e não repete a sugestão.
+    id: "usual_service_vague_answer_does_not_repeat_suggestion",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [{ kind: "draft_last_question", equals: "usual_service" }],
+      },
+      {
+        user: "não sei ainda",
+        llm: () => [{ content: "Sem pressa." }],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_usual_suggested", equals: true },
+        ],
+      },
+      {
+        user: "pode ser amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "reply_excludes", value: "de sempre" },
+        ],
+      },
+    ],
+  },
+  {
+    // Cliente sem histórico: continua a pergunta simples, sem "o de sempre".
+    id: "first_contact_asks_service_without_usual",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: "service" },
+          { kind: "reply_includes", value: "Qual serviço deseja?" },
+          { kind: "reply_excludes", value: "de sempre" },
+          { kind: "openai_rounds", equals: 0 },
         ],
       },
     ],
