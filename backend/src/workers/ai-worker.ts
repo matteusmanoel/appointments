@@ -20,6 +20,7 @@ import { classifySendError } from "../integrations/whatsapp/send-error-policy.js
 import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
 import { maybeReapStuckAiJobs } from "./ai-jobs-reaper.js";
 import OpenAI from "openai";
+import { maybeAlertAiUsage } from "../ai/usage-alert.js";
 
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
 const POLL_MS = 1500;
@@ -552,6 +553,12 @@ async function processOneJob(): Promise<boolean> {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         }
+        // Aviso ao dono em 80% do limite (atrás de AI_USAGE_ALERT_ENABLED; desligado por padrão; nunca bloqueia o turno).
+        // AGUARDADO com teto de 3 s (um `void` solto podia ser congelado pelo fim do ciclo da Lambda no meio do envio).
+        await Promise.race([
+          maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit }),
+          new Promise<void>((resolve) => setTimeout(resolve, 3000).unref?.()),
+        ]);
         const openai = new OpenAI({ apiKey: config.openaiApiKey });
         const result = await runAgent(barbershopId, conversationId, fromPhone, openai, {
           persistAssistantMessages: false,

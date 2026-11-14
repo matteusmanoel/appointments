@@ -363,5 +363,17 @@ export async function ensureCriticalSchema(): Promise<void> {
        ON public.ai_turn_sheets (conversation_id, at)`,
     )
     .catch(() => {});
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.ai_usage_alerts (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        barbershop_id uuid NOT NULL REFERENCES public.barbershops(id) ON DELETE CASCADE,
+        period text NOT NULL,
+        threshold_pct integer NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (barbershop_id, period, threshold_pct)
+      )`
+    )
+    .catch(() => {});
 }
 

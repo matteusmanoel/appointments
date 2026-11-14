@@ -26,7 +26,7 @@ export async function getUsageAndLimit(barbershopId: string): Promise<UsageLimit
        FROM public.ai_messages m
        JOIN public.ai_conversations c ON c.id = m.conversation_id
        WHERE c.barbershop_id = $1 AND c.is_sandbox = false
-         AND m.created_at >= date_trunc('month', now()) AND m.role = 'assistant'`,
+         AND m.created_at >= (date_trunc('month', now() AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'America/Sao_Paulo') AND m.role = 'assistant'`,
       [barbershopId]
     ),
     pool.query<{ billing_plan: string }>(
