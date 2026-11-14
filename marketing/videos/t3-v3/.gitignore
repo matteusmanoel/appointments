@@ -2,9 +2,13 @@ node_modules
 dist
 .DS_Store
 .env
+__pycache__/
 
 # Renders are ignored, except the approved deliverables.
 out/*
 !out/t3-v3.mp4
 !out/t3-v3-sem-audio.mp4
 !out/t3-v3-contact-sheet.png
+!out/t3-v3-1.mp4
+!out/t3-v3-1-sem-audio.mp4
+!out/t3-v3-1-contact-sheet.png

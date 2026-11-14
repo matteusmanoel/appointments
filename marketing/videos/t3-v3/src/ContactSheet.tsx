@@ -6,17 +6,21 @@ import { COLORS, TIMELINE, fontFamily } from "./theme";
 /** One representative (settled) frame per card of the edit. */
 export const CONTACT_SHEET_FRAMES: readonly { frame: number; label: string }[] = [
   { frame: 10, label: "Você é" },
-  { frame: 34, label: "BARBEIRO" },
-  { frame: 47, label: "ou" },
-  { frame: 68, label: "ATENDENTE?" },
-  { frame: 104, label: "PARE DE PERDER CLIENTE." },
-  { frame: 144, label: "Marca. Remarca. Avisa." },
-  { frame: 216, label: "Prova (chat)" },
-  { frame: 255, label: "CADEIRA VAZIA..." },
-  { frame: 298, label: "LEMBRETES / OCUPAÇÃO" },
-  { frame: 335, label: "$MAIS FATURAMENTO$" },
-  { frame: 384, label: "Delegue / Domine" },
-  { frame: 449, label: "Fecho (último frame)" },
+  { frame: 44, label: "BARBEIRO" },
+  { frame: 61, label: "ou" },
+  { frame: 88, label: "ATENDENTE?" },
+  { frame: 124, label: "PARE DE PERDER CLIENTE." },
+  { frame: 162, label: "Marca. Remarca. Avisa." },
+  { frame: 236, label: "Prova (escolha)" },
+  { frame: 290, label: "Prova (confirmado)" },
+  { frame: 330, label: "CADEIRA VAZIA..." },
+  { frame: 378, label: "LEMBRETES / OCUPAÇÃO" },
+  { frame: 410, label: "$MAIS FATURAMENTO$" },
+  { frame: 458, label: "Delegue / Domine" },
+  { frame: 470, label: "Katana (lâmina)" },
+  { frame: 478, label: "Katana (corte)" },
+  { frame: 508, label: "Menos conversa." },
+  { frame: 575, label: "Fecho (último frame)" },
 ];
 
 const COLUMNS = 4;
