@@ -1,0 +1,10 @@
+node_modules
+dist
+.DS_Store
+.env
+
+# Renders are ignored, except the approved deliverables.
+out/*
+!out/t3-v3.mp4
+!out/t3-v3-sem-audio.mp4
+!out/t3-v3-contact-sheet.png
