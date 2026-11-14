@@ -65,7 +65,38 @@ const checkoutBody = z.object({
   contact_name: z.string().optional(),
   plan: planSchema.optional(),
   extra_numbers: extraNumbersSchema,
+  /** Aceite do aviso de risco do WhatsApp (QR/API não oficial), marcado antes de pagar (lp-correcoes §16.2/§16.5, B-05). */
+  whatsapp_risk_accepted: z.boolean().optional(),
+  whatsapp_risk_notice_version: z.string().max(40).optional(),
 });
+
+/** Versão do texto do aviso mostrada no checkout (a UI envia a que exibiu; fica gravada na sessão do Stripe). */
+export const WHATSAPP_RISK_NOTICE_VERSION = "2026-11-13";
+
+/**
+ * O aceite é obrigatório no servidor (não só na UI). CHECKOUT_REQUIRE_RISK_ACCEPTANCE=false desliga a exigência
+ * temporariamente (ex.: durante a troca de versão entre front e API). Ordem segura de deploy: front primeiro, API depois.
+ */
+export function riskAcceptanceRequired(env: Record<string, string | undefined> = process.env): boolean {
+  return (env.CHECKOUT_REQUIRE_RISK_ACCEPTANCE ?? "true").trim().toLowerCase() !== "false";
+}
+
+/** Metadados do aceite gravados na sessão do Stripe (prova do consentimento: quando e qual texto). */
+export function riskAcceptanceMetadata(
+  body: { whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string },
+  now: Date = new Date(),
+): Record<string, string> {
+  if (body.whatsapp_risk_accepted !== true) return {};
+  return {
+    whatsapp_risk_accepted_at: now.toISOString(),
+    whatsapp_risk_notice_version: body.whatsapp_risk_notice_version?.trim() || WHATSAPP_RISK_NOTICE_VERSION,
+  };
+}
+
+const RISK_NOT_ACCEPTED_BODY = {
+  error: "Para continuar, aceite o aviso sobre o uso do WhatsApp.",
+  code: "whatsapp_risk_not_accepted",
+};
 
 const checkoutEmbeddedBody = checkoutBody.extend({
   plan: planSchema.default("pro"),
@@ -465,6 +496,10 @@ billingRouter.post("/checkout", async (req: Request, res: Response): Promise<voi
     res.status(400).json({ error: "Dados inválidos", details: parsed.error.flatten() });
     return;
   }
+  if (riskAcceptanceRequired() && parsed.data.whatsapp_risk_accepted !== true) {
+    res.status(400).json(RISK_NOT_ACCEPTED_BODY);
+    return;
+  }
   const { barbershop_name, cnpj, phone, email, contact_name, plan, extra_numbers: rawExtras } = parsed.data;
   const priceId = plan ? getPriceIdForPlan(plan) : config.stripePriceId || null;
   if (!priceId) {
@@ -493,6 +528,7 @@ billingRouter.post("/checkout", async (req: Request, res: Response): Promise<voi
         ...(effectivePlan ? { plan: effectivePlan } : {}),
         extra_numbers: String(extraNumbers),
         whatsapp_numbers_total: String(1 + extraNumbers),
+        ...riskAcceptanceMetadata(parsed.data),
       },
     });
     res.json({ url: session.url });
@@ -510,6 +546,10 @@ billingRouter.post("/checkout_embedded", async (req: Request, res: Response): Pr
   const parsed = checkoutEmbeddedBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Dados inválidos", details: parsed.error.flatten() });
+    return;
+  }
+  if (riskAcceptanceRequired() && parsed.data.whatsapp_risk_accepted !== true) {
+    res.status(400).json(RISK_NOT_ACCEPTED_BODY);
     return;
   }
   const { barbershop_name, cnpj, phone, email, contact_name, plan, extra_numbers: rawExtras } = parsed.data;
@@ -539,6 +579,7 @@ billingRouter.post("/checkout_embedded", async (req: Request, res: Response): Pr
         plan,
         extra_numbers: String(extraNumbers),
         whatsapp_numbers_total: String(1 + extraNumbers),
+        ...riskAcceptanceMetadata(parsed.data),
       },
     });
     res.json({ client_secret: session.client_secret });
