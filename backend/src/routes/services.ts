@@ -3,6 +3,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/auth.js";
 import { ADMIN_MANAGER, ALL_ROLES, READ_METHODS, accessRules } from "../middleware/rbac.js";
+import { requireTenantRefs, uuidParam } from "../lib/tenant-refs.js";
 
 const categoryEnum = z.enum(["corte", "barba", "combo", "tratamento", "adicional"]);
 const createBody = z.object({
@@ -24,6 +25,7 @@ export const servicesRouter = Router();
 servicesRouter.use(requireJwt);
 // RBAC: catálogo de serviços — todos leem; criar/editar/excluir só admin/manager.
 servicesRouter.use(accessRules([{ methods: READ_METHODS, path: /^\//, roles: ALL_ROLES }], ADMIN_MANAGER));
+servicesRouter.param("id", uuidParam);
 
 const serviceColumns =
   "id, barbershop_id, name, description, price, duration_minutes, commission_percentage, category, is_active, points_to_earn, points_to_redeem, created_at, updated_at";

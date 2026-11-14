@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
+import { requireTenantRefs, uuidParam } from "../lib/tenant-refs.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
 import { brPhonesMatch } from "../lib/phone-match.js";
 import { recordAgendaChange } from "../agenda/record-agenda-change.js";
@@ -15,6 +16,7 @@ import { DAILY_CAP_REACHED_MESSAGE, dispatchWaitMessage } from "../outbound/disp
 
 export const waitlistRouter = Router();
 waitlistRouter.use(requireJwt);
+waitlistRouter.param("id", uuidParam);
 
 waitlistRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   const barbershopId = getBarbershopId(req);

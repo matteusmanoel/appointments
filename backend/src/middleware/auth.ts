@@ -88,7 +88,8 @@ export function getBarbershopId(req: Request): string {
 }
 
 export function getBarbershopIdOptional(req: Request): string | undefined {
-  return req.barbershopId ?? req.auth?.barbershopId ?? config.barbershopId ?? (req.query.barbershop_id as string) ?? req.body?.barbershop_id;
+  // Nunca confiar em barbershop_id vindo de query/body para decidir o tenant.
+  return req.barbershopId ?? req.auth?.barbershopId ?? config.barbershopId ?? undefined;
 }
 
 /** Query param barbershop_id=__all__ means "all barbershops in the same account". Returns list of barbershop ids the user can access. */

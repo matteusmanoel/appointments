@@ -5,14 +5,17 @@ import { pool } from "../db.js";
 import { requireToolsKey, getBarbershopId } from "../middleware/auth.js";
 import { validateUuidIds } from "../lib/uuid.js";
 import { isLockTimeout, LOCK_BUSY_MESSAGE, lockBarberDay } from "../lib/booking-lock.js";
+import { requireTenantRefs } from "../lib/tenant-refs.js";
 
 async function resolveBarbershopId(req: Request): Promise<string | null> {
   try {
     const id = getBarbershopId(req).trim();
     if (id) return id;
   } catch {
-    // fall back to first barbershop only in ambientes single-tenant/seed
+    // sem tenant resolvido
   }
+  // Fallback «primeira barbearia» só em dev/seed. Em produção, sem tenant a requisição falha (antes: operava na 1ª barbearia).
+  if (process.env.NODE_ENV === "production") return null;
   const r = await pool.query("SELECT id FROM public.barbershops ORDER BY created_at ASC LIMIT 1");
   return r.rows[0]?.id ?? null;
 }
@@ -78,6 +81,7 @@ toolsRouter.get("/list_appointments", async (req: Request, res: Response): Promi
     });
     return;
   }
+  if (barber_id && !(await requireTenantRefs(res, barbershopId, { barbers: [barber_id] }))) return;
   let query = `
     SELECT barber_id, scheduled_time, duration_minutes
     FROM public.appointments
@@ -154,6 +158,7 @@ toolsRouter.post("/create_appointment", async (req: Request, res: Response): Pro
     return;
   }
   const { client_id, barber_id, date, time, notes } = parsed.data;
+  if (!(await requireTenantRefs(res, barbershopId, { clients: [client_id], barbers: [barber_id] }))) return;
   const serviceIds: string[] = parsed.data.service_ids?.length ? parsed.data.service_ids : parsed.data.service_id ? [parsed.data.service_id] : [];
   if (serviceIds.length === 0) {
     res.status(400).json({ error: "service_id or service_ids (min 1) required" });

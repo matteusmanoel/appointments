@@ -10,6 +10,7 @@ import {
   scheduleReminderForAppointment,
 } from "../outbound/scheduled-messages.js";
 import { updateClientMemoryFromAppointmentEvent } from "../ai/memory/client-memory.js";
+import { requireTenantRefs, uuidParam } from "../lib/tenant-refs.js";
 import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
 
 const statusEnum = z.enum(["pending", "confirmed", "completed", "cancelled", "no_show"]);
@@ -71,6 +72,7 @@ async function checkSlotConflict(
 export const appointmentsRouter = Router();
 
 appointmentsRouter.use(requireJwt);
+appointmentsRouter.param("id", uuidParam);
 
 appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> => {
   let scope: { single: string } | { all: string[] };
@@ -91,6 +93,7 @@ appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> =
 
   const isAll = "all" in scope && Array.isArray((scope as { all?: string[] }).all);
   const barbershopIds: string[] = isAll ? (scope as { all: string[] }).all : [(scope as { single: string }).single];
+  if (barber_id && !(await requireTenantRefs(res, barbershopIds, { barbers: [barber_id] }))) return;
 
   let query = `
     SELECT a.id, a.barbershop_id, a.client_id, a.barber_id, a.service_id, a.scheduled_date, a.scheduled_time,
@@ -177,6 +180,8 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
     barbershopId = scope.single;
   }
   const { client_id, barber_id, scheduled_date, scheduled_time, notes } = parsed.data;
+  // client_id e barber_id precisam ser DESTA barbearia (antes: cliente/barbeiro de outro tenant era aceito e vazava nome/telefone na listagem)
+  if (!(await requireTenantRefs(res, barbershopId, { clients: [client_id], barbers: [barber_id] }))) return;
   const serviceIds: string[] = parsed.data.service_ids?.length
     ? parsed.data.service_ids
     : parsed.data.service_id
