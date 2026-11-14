@@ -7,8 +7,17 @@ import { billingApi, authApi } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
+import { ONBOARDING_SESSION_KEY, canTrack, trackPurchase } from "@/lib/tracking";
 
 type SessionState = "loading" | "pending" | "ready" | "consumed" | "error";
+
+function readStashedSessionId(): string | null {
+  try {
+    return sessionStorage.getItem(ONBOARDING_SESSION_KEY);
+  } catch {
+    return null;
+  }
+}
 
 function fetchSession(sessionId: string) {
   return billingApi.getSession(sessionId);
@@ -18,7 +27,8 @@ export default function Onboarding() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { loginWithToken } = useAuth();
-  const sessionId = searchParams.get("session_id");
+  // O session_id pode ter sido tirado da barra de endereço antes do Purchase (pixels leem a URL): guardado na aba.
+  const sessionId = searchParams.get("session_id") ?? readStashedSessionId();
   const [state, setState] = useState<SessionState>("loading");
   const [entering, setEntering] = useState(false);
   const [data, setData] = useState<{
@@ -54,6 +64,20 @@ export default function Onboarding() {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  // Retorno de sucesso do Stripe: Purchase uma vez por session_id (guarda no localStorage).
+  useEffect(() => {
+    if (!sessionId) return;
+    if (canTrack()) {
+      // trackPurchase limpa a query (session_id) da URL antes do evento; o id fica só nesta aba para recarregar a página.
+      try {
+        sessionStorage.setItem(ONBOARDING_SESSION_KEY, sessionId);
+      } catch {
+        /* ignore */
+      }
+    }
+    trackPurchase({ sessionId });
+  }, [sessionId]);
 
   // If provisioning is still happening, poll for a short period.
   useEffect(() => {

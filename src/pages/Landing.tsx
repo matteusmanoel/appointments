@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { BillingPlan } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
 import { CheckoutModal } from "@/components/CheckoutModal";
+import { SiteFooter } from "@/components/SiteFooter";
 import { WhatsAppFloatingButton } from "@/components/WhatsAppFloatingButton";
 import { RoiCalculator } from "@/components/landing/RoiCalculator";
 import { StickyCtaBar } from "@/components/landing/StickyCtaBar";
@@ -824,6 +825,7 @@ export default function Landing() {
         </FadeSection>
       </main>
 
+      <SiteFooter />
       <CheckoutModal open={showCheckout} onOpenChange={setShowCheckout} initialPlan={checkoutInitialPlan} />
       <WhatsAppFloatingButton />
       <StickyCtaBar className="md:hidden" onCtaClick={() => openCheckout()} />

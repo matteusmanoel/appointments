@@ -11,6 +11,7 @@ import { sendOnboardingEmail } from "../lib/ses.js";
 import { requireJwt, getBarbershopId, type JwtPayload } from "../middleware/auth.js";
 import { ADMIN_ONLY, requireRole } from "../middleware/rbac.js";
 import { schedulePaymentReminder } from "../outbound/scheduled-messages.js";
+import { checkoutAttribution, marketingConsentMetadata } from "../lib/checkout-attribution.js";
 
 const stripe = config.stripeSecretKey ? new Stripe(config.stripeSecretKey, { apiVersion: "2025-02-24.acacia" }) : null;
 
@@ -69,6 +70,12 @@ const checkoutBody = z.object({
   /** Aceite do aviso de risco do WhatsApp (QR/API não oficial), marcado antes de pagar (lp-correcoes §16.2/§16.5, B-05). */
   whatsapp_risk_accepted: z.boolean().optional(),
   whatsapp_risk_notice_version: z.string().max(40).optional(),
+  /** First/last-touch UTMs e click ids (whitelist no attributionMetadata). Só vale com marketing_consent: true. */
+  attribution: z.unknown().optional(),
+  /** Escolha de consentimento de marketing do visitante (banner), a versão do texto e a data (ISO) do registro. */
+  marketing_consent: z.boolean().optional(),
+  marketing_consent_notice_version: z.string().max(40).optional(),
+  marketing_consent_at: z.string().max(40).optional(),
 });
 
 /** Versão do texto do aviso mostrada no checkout (a UI envia a que exibiu; fica gravada na sessão do Stripe). */
@@ -92,6 +99,10 @@ export function riskAcceptanceMetadata(
     whatsapp_risk_accepted_at: now.toISOString(),
     whatsapp_risk_notice_version: body.whatsapp_risk_notice_version?.trim() || WHATSAPP_RISK_NOTICE_VERSION,
   };
+}
+
+function checkoutSessionAttribution(body: Parameters<typeof checkoutAttribution>[0]): Record<string, string> {
+  return checkoutAttribution(body);
 }
 
 const RISK_NOT_ACCEPTED_BODY = {
@@ -715,6 +726,7 @@ billingRouter.post("/checkout", async (req: Request, res: Response): Promise<voi
     lineItems.push({ price: config.stripePriceIdExtraNumber, quantity: extraNumbers });
   }
   const appUrl = config.appUrl.replace(/\/$/, "");
+  const attr = checkoutSessionAttribution(parsed.data);
   try {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -731,7 +743,10 @@ billingRouter.post("/checkout", async (req: Request, res: Response): Promise<voi
         extra_numbers: String(extraNumbers),
         whatsapp_numbers_total: String(1 + extraNumbers),
         ...riskAcceptanceMetadata(parsed.data),
+        ...marketingConsentMetadata(parsed.data),
+        ...attr,
       },
+      ...(Object.keys(attr).length ? { subscription_data: { metadata: attr } } : {}),
     });
     res.json({ url: session.url });
   } catch (e) {
@@ -766,6 +781,7 @@ billingRouter.post("/checkout_embedded", async (req: Request, res: Response): Pr
     lineItems.push({ price: config.stripePriceIdExtraNumber, quantity: extraNumbers });
   }
   const appUrl = config.appUrl.replace(/\/$/, "");
+  const attr = checkoutSessionAttribution(parsed.data);
   try {
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
@@ -782,7 +798,10 @@ billingRouter.post("/checkout_embedded", async (req: Request, res: Response): Pr
         extra_numbers: String(extraNumbers),
         whatsapp_numbers_total: String(1 + extraNumbers),
         ...riskAcceptanceMetadata(parsed.data),
+        ...marketingConsentMetadata(parsed.data),
+        ...attr,
       },
+      ...(Object.keys(attr).length ? { subscription_data: { metadata: attr } } : {}),
     });
     res.json({ client_secret: session.client_secret });
   } catch (e) {

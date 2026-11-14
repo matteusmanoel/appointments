@@ -29,6 +29,7 @@ import {
   WHATSAPP_RISK_TERMS_URL,
 } from "@/lib/whatsapp-risk-notice";
 import { cn } from "@/lib/utils";
+import { getCheckoutTrackingFields, trackInitiateCheckout } from "@/lib/tracking";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -161,7 +162,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       plan,
       whatsapp_risk_accepted: true as const,
       whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
+      ...getCheckoutTrackingFields(),
     };
+    trackInitiateCheckout(plan);
     try {
       if (STRIPE_PK && stripePromise) {
         const { client_secret } = await billingApi.createEmbeddedCheckout(body);
@@ -195,6 +198,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     }
     setLoading(true);
     try {
+      trackInitiateCheckout(plan);
       const { url } = await billingApi.createCheckout({
         barbershop_name: barbershopName.trim(),
         phone: phone.trim(),
@@ -202,6 +206,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         plan,
         whatsapp_risk_accepted: true,
         whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
+        ...getCheckoutTrackingFields(),
       });
       window.location.href = url;
     } catch (err) {
