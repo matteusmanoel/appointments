@@ -1,13 +1,15 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   Fragment,
 } from "react";
 import { cn } from "@/lib/utils";
-import { RotateCcw, X } from "lucide-react";
+import { RotateCcw, SendHorizontal, X } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -299,7 +301,54 @@ function PainelEventCard({ event, visible, delay = 0 }: PainelEventCardProps) {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void }) {
+const DEMO_CTA_COPY =
+  "Cada cliente que espera é cadeira vazia. O Profissional atende no seu WhatsApp.";
+
+export type LpDemoHandle = {
+  openSimulation: () => void;
+  startNow: () => void;
+};
+
+function ConversationFooter({
+  done,
+  onAssinar,
+  compact = false,
+}: {
+  done: boolean;
+  onAssinar?: () => void;
+  compact?: boolean;
+}) {
+  if (done && onAssinar) {
+    return (
+      <div className="shrink-0 border-t border-white/5 bg-[#1f2c34] px-3 py-3">
+        <p className={cn("mb-2 text-center leading-snug text-white/80", compact ? "text-[12px]" : "text-sm")}>
+          {DEMO_CTA_COPY}
+        </p>
+        <button
+          type="button"
+          onClick={onAssinar}
+          className="lp-shimmer w-full rounded-xl bg-primary py-4 text-lg font-bold text-white shadow-[0_0_24px_hsl(239_84%_62%/0.45)] transition-shadow duration-300 hover:shadow-[0_0_36px_hsl(239_84%_62%/0.55)]"
+        >
+          <span className="relative z-10">Assinar o Profissional</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-t border-white/5 bg-[#1f2c34] px-4 py-3">
+      <div className={cn("flex flex-1 items-center rounded-full bg-white/8 px-3", compact ? "h-8" : "h-9")}>
+        <span className={cn("text-white/25", compact ? "text-[12px]" : "text-xs")}>Mensagem</span>
+      </div>
+      <div className={cn("flex items-center justify-center rounded-full bg-primary", compact ? "h-8 w-8" : "h-9 w-9")}>
+        <SendHorizontal className={cn("text-white", compact ? "h-3.5 w-3.5" : "h-4 w-4")} />
+      </div>
+    </div>
+  );
+}
+
+export const LpDemoSection = forwardRef<LpDemoHandle, { onAssinarClick?: () => void }>(
+  function LpDemoSection({ onAssinarClick }, ref) {
   const [activeScenario, setActiveScenario] = useState<string>("horario");
   const [visibleCount, setVisibleCount] = useState(0);
   const [showTyping, setShowTyping] = useState(false);
@@ -311,6 +360,7 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
   const chatRef = useRef<HTMLDivElement>(null);
   const genRef = useRef(0);
   const runningRef = useRef(false);
+  const startedRef = useRef(false);
 
   const cenario = CENARIOS[activeScenario];
   const msgs = cenario.messages;
@@ -376,25 +426,38 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
     [activeScenario],
   );
 
-  // Auto-play when in viewport
+  const kickoff = useCallback(() => {
+    if (startedRef.current && runningRef.current) return;
+    startedRef.current = true;
+    resetDemo();
+    window.setTimeout(() => {
+      runPlayback(genRef.current);
+    }, 40);
+  }, [resetDemo, runPlayback]);
+
+  useImperativeHandle(ref, () => ({
+    openSimulation: () => {
+      setDialogOpen(true);
+      kickoff();
+    },
+    startNow: () => {
+      kickoff();
+    },
+  }), [kickoff]);
+
+  // Auto-play when in viewport, without restarting a click that already began.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          resetDemo();
-          setTimeout(() => {
-            const gen = genRef.current;
-            runPlayback(gen);
-          }, 400);
-        }
+        if (entry.isIntersecting) kickoff();
       },
       { threshold: 0.35 },
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [activeScenario, resetDemo, runPlayback]);
+  }, [kickoff]);
 
   // Pause when tab hidden
   useEffect(() => {
@@ -484,16 +547,7 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
           ))}
           {showTyping && <TypingIndicator />}
         </div>
-        <div className="flex shrink-0 items-center gap-2 border-t border-white/5 bg-[#1f2c34] px-4 py-3">
-          <div className="flex h-9 flex-1 items-center rounded-full bg-white/8 px-3">
-            <span className="text-xs text-white/25">Mensagem</span>
-          </div>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-              <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
-            </svg>
-          </div>
-        </div>
+        <ConversationFooter done={isDone} onAssinar={onAssinarClick} />
       </div>
     </div>
   );
@@ -563,29 +617,11 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
             <div className="flex min-h-0 w-full flex-1 justify-center">
               {renderPhone(chatRef)}
             </div>
-            <div className="relative mt-3 h-[76px] w-full overflow-hidden">
-              <div
-                className={cn(
-                  "absolute inset-x-0 bottom-0 flex flex-col items-center gap-2.5 pb-1 transition-all duration-700 ease-out motion-reduce:transition-none",
-                  isDone
-                    ? "translate-y-0 opacity-100"
-                    : "pointer-events-none translate-y-full opacity-0",
-                )}
-                aria-hidden={!isDone}
-              >
-                <p className="text-[12px] text-white/40">
-                  Conversa concluída · {painelEvents.length} evento{painelEvents.length !== 1 ? "s" : ""} no painel
-                </p>
-                <button
-                  onClick={onAssinarClick}
-                  tabIndex={isDone ? 0 : -1}
-                  className="lp-shimmer group relative rounded-xl bg-primary px-8 py-3 text-sm font-semibold text-white shadow-[0_0_24px_hsl(239_84%_62%/0.4)] transition-shadow duration-300 hover:shadow-[0_0_36px_hsl(239_84%_62%/0.55)]"
-                >
-                  <span className="relative z-10">Assinar o Profissional →</span>
-                  <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-primary to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                </button>
-              </div>
-            </div>
+            {isDone && (
+              <p className="mt-3 text-center text-[12px] text-white/40">
+                Conversa concluída · {painelEvents.length} evento{painelEvents.length !== 1 ? "s" : ""} no painel
+              </p>
+            )}
           </div>
 
           {/* Intelligence panel */}
@@ -629,22 +665,24 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
           >
             {/* WA-style header */}
             <div className="flex items-center gap-3 px-4 py-3 bg-[#1f2c34] border-b border-white/8 shrink-0">
-              <button
-                onClick={() => setDialogOpen(false)}
-                className="text-white/60 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
               <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
                 <span className="text-xs font-bold text-white">N</span>
               </div>
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-white">NavalhIA</p>
                 <p className="text-[11px] text-green-400 flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
                   online
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setDialogOpen(false)}
+                className="text-white/60 hover:text-white"
+                aria-label="Fechar simulação"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
             {/* Chat scroll */}
@@ -659,29 +697,20 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
                 <WaMessage key={`${activeScenario}-m-${i}`} msg={msg} visible={true} />
               ))}
               {showTyping && <TypingIndicator />}
-              {isDone && onAssinarClick && (
-                <div className="text-center pt-4 animate-fade-in">
-                  <button
-                    onClick={() => { setDialogOpen(false); onAssinarClick(); }}
-                    className="lp-shimmer cursor-pointer px-6 py-3 rounded-xl bg-primary text-white font-semibold text-sm shadow-[0_0_24px_hsl(239_84%_62%/0.4)]"
-                  >
-                    Assinar o Profissional →
-                  </button>
-                </div>
-              )}
             </div>
 
-            {/* Input bar decorative */}
-            <div className="flex items-center gap-2 px-4 py-3 bg-[#1f2c34] border-t border-white/5 shrink-0">
-              <div className="flex-1 h-8 rounded-full bg-white/8 px-3 flex items-center">
-                <span className="text-[12px] text-white/25">Mensagem</span>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                  <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" />
-                </svg>
-              </div>
-            </div>
+            <ConversationFooter
+              done={isDone}
+              compact
+              onAssinar={
+                onAssinarClick
+                  ? () => {
+                      setDialogOpen(false);
+                      onAssinarClick();
+                    }
+                  : undefined
+              }
+            />
 
             {/* Bottom bar: restart + scenario */}
             <div className="flex items-center justify-between px-4 py-2.5 bg-[#111] border-t border-white/5 shrink-0">
@@ -709,4 +738,4 @@ export function LpDemoSection({ onAssinarClick }: { onAssinarClick?: () => void 
       </div>
     </section>
   );
-}
+});

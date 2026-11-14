@@ -265,7 +265,7 @@ export function AiSchedulingDemoChat({
                     <div className="flex items-center justify-between gap-2 px-3 py-2 md:px-4 md:py-3">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <img
-                          src="/logo-app.svg"
+                          src="/logo-v5.png"
                           alt=""
                           className="w-8 h-8 md:w-9 md:h-9 rounded-full object-contain shrink-0 bg-primary/5 p-1"
                           aria-hidden

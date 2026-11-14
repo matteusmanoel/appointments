@@ -68,7 +68,7 @@ export function MainLayout({ children }: MainLayoutProps) {
             />
           </SheetContent>
         </Sheet>
-        <img src="/logo-app.svg" alt="NavalhIA" className="h-7 w-7 object-contain" />
+        <img src="/logo-v5.png" alt="NavalhIA" className="h-7 w-7 object-contain" />
         <span className="font-bold text-foreground">NavalhIA</span>
       </header>
       <main

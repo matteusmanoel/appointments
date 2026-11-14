@@ -15,8 +15,21 @@ export function formatPhoneDisplay(phone: string): string {
 export function formatPhoneBR(digits: string): string {
   const d = digits.replace(/\D/g, "").slice(0, 11);
   if (d.length <= 2) return d.length ? `(${d}` : "";
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
+const BR_PHONE_TYPING = /^[\d\s()\-]*$/;
+
+/**
+ * Máscara de digitação. Até 11 dígitos, formato brasileiro.
+ * Acima disso, ou se o usuário sair do padrão ( + , letras), não formata e não corta.
+ */
+export function formatPhoneAsTyped(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (!BR_PHONE_TYPING.test(raw)) return raw;
+  if (digits.length > 11) return digits;
+  return formatPhoneBR(digits);
 }
 
 /**

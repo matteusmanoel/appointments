@@ -20,7 +20,7 @@ import { CheckoutModal } from "@/components/CheckoutModal";
 import { WhatsAppFloatingButton } from "@/components/WhatsAppFloatingButton";
 import { RoiCalculator } from "@/components/landing/RoiCalculator";
 import { StickyCtaBar } from "@/components/landing/StickyCtaBar";
-import { LpDemoSection } from "@/components/landing/LpDemoSection";
+import { LpDemoSection, type LpDemoHandle } from "@/components/landing/LpDemoSection";
 import { LpMarquee } from "@/components/landing/LpMarquee";
 import { LpCounters } from "@/components/landing/LpCounters";
 import { LpPlatformCarousel } from "@/components/landing/LpPlatformCarousel";
@@ -90,6 +90,7 @@ export default function Landing() {
   const [checkoutInitialPlan, setCheckoutInitialPlan] = useState<BillingPlan>("pro");
 
   const headerRef = useRef<HTMLElement | null>(null);
+  const demoRef = useRef<LpDemoHandle>(null);
   const heroRef = useRef<HTMLElement | null>(null);
   const heroBgRef = useRef<HTMLDivElement | null>(null);
   const glowRef = useRef<HTMLDivElement | null>(null);
@@ -109,11 +110,14 @@ export default function Landing() {
     window.scrollTo({ top, behavior: "smooth" });
   }, []);
 
-  useEffect(() => {
-    const prev = document.documentElement.style.scrollBehavior;
-    document.documentElement.style.scrollBehavior = "smooth";
-    return () => { document.documentElement.style.scrollBehavior = prev; };
-  }, []);
+  const openDemo = useCallback(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      demoRef.current?.openSimulation();
+      return;
+    }
+    demoRef.current?.startNow();
+    scrollToSection("demo");
+  }, [scrollToSection]);
 
   useEffect(() => {
     const raw = window.location.hash?.replace("#", "").trim();
@@ -166,7 +170,7 @@ export default function Landing() {
   if (profile) return <Navigate to="/app" replace />;
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col overflow-x-hidden">
+    <div className="min-h-screen bg-background text-foreground flex flex-col overflow-x-clip">
 
       {/* ================================================================ NAV */}
       <header
@@ -275,19 +279,21 @@ export default function Landing() {
 
               <div className="flex flex-col sm:flex-row gap-3 mb-8">
                 <button
-                  onClick={() => scrollToSection("demo")}
-                  className="lp-shimmer group relative px-8 py-4 rounded-xl bg-primary text-white font-semibold text-base overflow-hidden shadow-[0_0_28px_hsl(239_84%_62%/0.45)] hover:shadow-[0_0_44px_hsl(239_84%_62%/0.6)] transition-all duration-300 hover:scale-[1.03]"
+                  onClick={openDemo}
+                  className="lp-shimmer group relative w-full max-w-lg py-5 px-14 rounded-2xl bg-primary text-white font-bold text-xl overflow-hidden shadow-[0_0_60px_hsl(239_84%_62%/0.55)] hover:shadow-[0_0_80px_hsl(239_84%_62%/0.7)] transition-all duration-300 hover:scale-[1.03]"
                 >
-                  <span className="absolute inset-0 rounded-xl ring-2 ring-primary/50 animate-ping opacity-0 group-hover:opacity-60" />
-                  <span className="relative z-10 flex items-center gap-2">
-                    Ver funcionando →
+                  <span className="absolute inset-0 rounded-2xl bg-gradient-to-r from-primary to-violet-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  <span className="relative z-10 flex items-center justify-center gap-3">
+                    Ver funcionando
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="group-hover:translate-x-1.5 transition-transform duration-300">
+                      <path d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
                   </span>
-                  <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl" />
                 </button>
 
                 <button
                   onClick={() => openCheckout()}
-                  className="lp-shimmer cursor-pointer px-8 py-4 rounded-xl border border-white/15 text-white/80 hover:text-white hover:border-white/30 hover:bg-white/5 font-medium text-base transition-all duration-200"
+                  className="lp-shimmer cursor-pointer px-8 py-4 rounded-xl border border-primary text-white hover:border-primary hover:bg-primary/10 hover:text-primary font-medium text-base transition-all duration-200"
                 >
                   Quero minha secretária
                 </button>
@@ -478,7 +484,7 @@ export default function Landing() {
         <LpCounters />
 
         {/* ============================================================= DEMO */}
-        <LpDemoSection onAssinarClick={() => openCheckout()} />
+        <LpDemoSection ref={demoRef} onAssinarClick={() => openCheckout()} />
 
         {/* =========================================================== PAINEL (carousel) */}
         <FadeSection>
@@ -802,7 +808,7 @@ export default function Landing() {
                 </p>
 
                 <button
-                  onClick={() => scrollToSection("demo")}
+                  onClick={openDemo}
                   className="cursor-pointer text-white/35 hover:text-white/60 text-sm underline underline-offset-4 transition-colors"
                 >
                   Ver funcionando primeiro

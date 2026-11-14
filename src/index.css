@@ -454,6 +454,69 @@
     background: hsl(0 0% 100% / 0.12);
   }
 
+  @keyframes checkout-progress-shimmer {
+    0% {
+      transform: translateX(-180%) skewX(-18deg);
+    }
+    100% {
+      transform: translateX(420%) skewX(-18deg);
+    }
+  }
+
+  @keyframes checkout-step-next {
+    from {
+      opacity: 0;
+      transform: translateX(36px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes checkout-step-prev {
+    from {
+      opacity: 0;
+      transform: translateX(-36px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .checkout-step-next {
+    animation: checkout-step-next 280ms ease-out;
+  }
+
+  .checkout-step-prev {
+    animation: checkout-step-prev 280ms ease-out;
+  }
+
+  .checkout-progress-fill {
+    position: relative;
+    overflow: hidden;
+    transition: width 280ms ease-out;
+  }
+
+  .checkout-progress-fill::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 42%;
+    background: linear-gradient(
+      100deg,
+      transparent 0%,
+      hsl(0 0% 100% / 0.08) 35%,
+      hsl(0 0% 100% / 0.42) 50%,
+      hsl(0 0% 100% / 0.08) 65%,
+      transparent 100%
+    );
+    transform: translateX(-180%) skewX(-18deg);
+    animation: checkout-progress-shimmer 1.1s ease-in-out infinite;
+    pointer-events: none;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .lp-shimmer::after {
       animation: none;
@@ -461,6 +524,19 @@
 
     .lp-range::-webkit-slider-thumb {
       transition: none;
+    }
+
+    .checkout-step-next,
+    .checkout-step-prev {
+      animation: none;
+    }
+
+    .checkout-progress-fill {
+      transition: none;
+    }
+
+    .checkout-progress-fill::after {
+      animation: none;
     }
   }
 

@@ -154,7 +154,7 @@ export function SidebarContent({
         >
           <div className="w-12 h-12 rounded-lg bg-sidebar-primary flex items-center justify-center flex-shrink-0 overflow-hidden">
             <img
-              src="/logo-app.svg"
+              src="/logo-v5.png"
               alt="NavalhIA"
               className="w-full h-full object-contain"
             />

@@ -1,9 +1,10 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   EmbeddedCheckoutProvider,
   EmbeddedCheckout,
 } from "@stripe/react-stripe-js";
+import { CheckCircle2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -15,34 +16,61 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  formatPhoneBR,
-  parsePhoneBR,
-  formatCNPJ,
-  parseCNPJ,
-} from "@/lib/input-masks";
+import { formatPhoneAsTyped } from "@/lib/input-masks";
 import { billingApi, type BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
-import {
-  CHECKOUT_FIELD_DOM_ID,
-  checkoutErrorMessage,
-  firstInvalidField,
-  validateCheckoutField,
-  validateCheckoutForm,
-  type CheckoutField,
-} from "@/lib/checkout-validation";
+import { checkoutErrorMessage } from "@/lib/checkout-validation";
 import {
   WHATSAPP_RISK_CHECKBOX_LABEL,
   WHATSAPP_RISK_NOTICE_TEXT,
   WHATSAPP_RISK_NOTICE_VERSION,
   WHATSAPP_RISK_REQUIRED_MESSAGE,
 } from "@/lib/whatsapp-risk-notice";
+import { cn } from "@/lib/utils";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
-const EXTRA_NUMBER_PRICE = 39;
-const MAX_EXTRA_NUMBERS = 10;
+const STEPS = [
+  {
+    id: "email",
+    label: "E-mail",
+    question: "Qual é o seu e-mail?",
+    incentive: "Quase lá. É neste e-mail que chega o acesso.",
+  },
+  {
+    id: "phone",
+    label: "Telefone",
+    question: "Qual é o seu telefone?",
+    incentive: "Usamos só para o onboarding da sua barbearia.",
+  },
+  {
+    id: "name",
+    label: "Barbearia",
+    question: "Qual é o nome da barbearia?",
+    incentive: "Esse nome aparece no link e no painel.",
+  },
+  {
+    id: "plan",
+    label: "Plano",
+    question: "Selecione o plano.",
+    incentive: "O Profissional é o caminho mais curto para o WhatsApp atender por você.",
+  },
+] as const;
+
+const PLAN_FEATURES: Record<BillingPlan, string[]> = {
+  essential: ["Painel e link de agendamento", "Serviços, barbeiros, horários", "Cliente agenda online 24h"],
+  pro: ["Tudo do Essencial", "Secretária no WhatsApp", "Lembrete antes do horário", "1 número incluso"],
+  premium: ["Tudo do Profissional", "Tom da sua barbearia", "Várias unidades", "1 número incluso"],
+};
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function phoneDigits(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
 
 type Props = {
   open: boolean;
@@ -56,91 +84,88 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     () => (open && STRIPE_PK ? loadStripe(STRIPE_PK) : null),
     [open],
   );
-  const [step, setStep] = useState<"form" | "embedded">("form");
+  const [view, setView] = useState<"form" | "embedded">("form");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [slideDir, setSlideDir] = useState<"next" | "prev">("next");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [plan, setPlan] = useState<BillingPlan>(initialPlan);
-  const [extraNumbers, setExtraNumbers] = useState(0);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [barbershopName, setBarbershopName] = useState("");
+  const [fieldError, setFieldError] = useState("");
   const [riskAccepted, setRiskAccepted] = useState(false);
-  const [form, setForm] = useState({
-    barbershop_name: "",
-    cnpj: "",
-    phone: "",
-    email: "",
-    contact_name: "",
-  });
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = parsePhoneBR(e.target.value);
-    setForm((f) => ({ ...f, phone: raw }));
-    setFieldErrors((e) => ({ ...e, phone: "" }));
-  };
+  const step = STEPS[stepIndex];
+  const progress = ((stepIndex + 1) / STEPS.length) * 100;
 
-  const handleCnpjChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = parseCNPJ(e.target.value);
-    setForm((f) => ({ ...f, cnpj: raw }));
-    setFieldErrors((e) => ({ ...e, cnpj: "" }));
-  };
-
-  const showExtraNumbers = plan === "pro" || plan === "premium";
-  const effectiveExtraNumbers = showExtraNumbers ? extraNumbers : 0;
-  const planInfo = BILLING_PLANS.find((p) => p.id === plan);
-  const monthlyTotal = planInfo
-    ? planInfo.priceValue + effectiveExtraNumbers * EXTRA_NUMBER_PRICE
-    : 0;
-
-  const validateAndSetErrors = (): boolean => {
-    const errors = validateCheckoutForm({ ...form, whatsapp_risk_accepted: riskAccepted });
-    setFieldErrors(errors as Record<string, string>);
-    const first = firstInvalidField(errors);
-    if (first) {
-      // Leva o dono até o primeiro campo com problema (o botão nunca fica "morto").
-      const el = document.getElementById(CHECKOUT_FIELD_DOM_ID[first]);
-      el?.scrollIntoView?.({ block: "center", behavior: "smooth" });
-      el?.focus?.({ preventScroll: true });
+  const validateStep = (index: number): string => {
+    if (index === 0) {
+      if (!email.trim()) return "E-mail é obrigatório";
+      if (!isValidEmail(email)) return "E-mail inválido";
     }
-    return !first;
+    if (index === 1) {
+      const ph = phoneDigits(phone);
+      if (!ph) return "Telefone é obrigatório";
+      if (ph.length < 10) return "Telefone deve ter pelo menos 10 dígitos";
+    }
+    if (index === 2 && !barbershopName.trim()) return "Nome é obrigatório";
+    return "";
   };
 
-  const validateOnBlur = (field: CheckoutField) => {
-    setFieldErrors((prev) => ({ ...prev, [field]: validateCheckoutField(field, form) }));
+  const goNext = () => {
+    const message = validateStep(stepIndex);
+    setFieldError(message);
+    if (message) {
+      inputRef.current?.focus();
+      return;
+    }
+    if (stepIndex >= STEPS.length - 1) return;
+    setSlideDir("next");
+    setStepIndex((i) => i + 1);
   };
 
-  const handleSubmitForm = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const goBack = () => {
+    if (stepIndex === 0 || loading) return;
+    setFieldError("");
     setError(null);
-    if (!validateAndSetErrors()) return;
+    setSlideDir("prev");
+    setStepIndex((i) => i - 1);
+  };
+
+  const startCheckout = async () => {
+    for (let i = 0; i < STEPS.length - 1; i += 1) {
+      const message = validateStep(i);
+      if (message) {
+        setFieldError(message);
+        setSlideDir(i < stepIndex ? "prev" : "next");
+        setStepIndex(i);
+        return;
+      }
+    }
+    if (!riskAccepted) {
+      setFieldError(WHATSAPP_RISK_REQUIRED_MESSAGE);
+      return;
+    }
+    setError(null);
     setLoading(true);
+    const body = {
+      barbershop_name: barbershopName.trim(),
+      phone: phone.trim(),
+      email: email.trim(),
+      plan,
+      whatsapp_risk_accepted: true as const,
+      whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
+    };
     try {
-      const extra = plan === "essential" ? 0 : extraNumbers;
       if (STRIPE_PK && stripePromise) {
-        const { client_secret } = await billingApi.createEmbeddedCheckout({
-          barbershop_name: form.barbershop_name.trim(),
-          cnpj: form.cnpj.trim() || undefined,
-          phone: form.phone.trim(),
-          email: form.email.trim(),
-          contact_name: form.contact_name.trim() || undefined,
-          plan,
-          extra_numbers: extra > 0 ? extra : undefined,
-          whatsapp_risk_accepted: true,
-          whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
-        });
+        const { client_secret } = await billingApi.createEmbeddedCheckout(body);
         setClientSecret(client_secret);
-        setStep("embedded");
+        setView("embedded");
       } else {
-        const { url } = await billingApi.createCheckout({
-          barbershop_name: form.barbershop_name.trim(),
-          cnpj: form.cnpj.trim() || undefined,
-          phone: form.phone.trim(),
-          email: form.email.trim(),
-          contact_name: form.contact_name.trim() || undefined,
-          plan,
-          extra_numbers: extra > 0 ? extra : undefined,
-          whatsapp_risk_accepted: true,
-          whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
-        });
+        const { url } = await billingApi.createCheckout(body);
         window.location.href = url;
       }
     } catch (err) {
@@ -148,6 +173,15 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (stepIndex < STEPS.length - 1) {
+      goNext();
+      return;
+    }
+    void startCheckout();
   };
 
   const handleFallbackRedirect = async () => {
@@ -158,15 +192,11 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     }
     setLoading(true);
     try {
-      const extra = plan === "essential" ? 0 : extraNumbers;
       const { url } = await billingApi.createCheckout({
-        barbershop_name: form.barbershop_name.trim(),
-        cnpj: form.cnpj.trim() || undefined,
-        phone: form.phone.trim(),
-        email: form.email.trim(),
-        contact_name: form.contact_name.trim() || undefined,
+        barbershop_name: barbershopName.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
         plan,
-        extra_numbers: extra > 0 ? extra : undefined,
         whatsapp_risk_accepted: true,
         whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
       });
@@ -179,15 +209,25 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
   useEffect(() => {
     if (!open) {
-      setStep("form");
+      setView("form");
       setClientSecret(null);
       setError(null);
-      setFieldErrors({});
+      setFieldError("");
       setRiskAccepted(false);
+      setStepIndex(0);
+      setSlideDir("next");
     } else {
       setPlan(initialPlan);
+      setStepIndex(0);
+      setSlideDir("next");
     }
   }, [open, initialPlan]);
+
+  useEffect(() => {
+    if (!open || view !== "form" || step.id === "plan") return;
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open, view, step.id]);
 
   return (
     <Dialog
@@ -196,261 +236,290 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     >
       <DialogContent
         className={
-          step === "embedded"
-            ? "max-w-md sm:max-w-2xl md:max-w-4xl max-h-[90dvh] overflow-hidden w-[calc(100vw-2rem)] sm:w-full pb-0 flex flex-col p-0"
-            : "max-w-md sm:max-w-lg max-h-[90dvh] overflow-y-auto w-[calc(100vw-2rem)] sm:w-full pb-[max(1rem,env(safe-area-inset-bottom))]"
+          view === "embedded"
+            ? "max-w-md sm:max-w-2xl md:max-w-4xl max-h-[90dvh] overflow-hidden w-[calc(100vw-2rem)] sm:w-full pb-0 flex flex-col"
+            : "left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-white/10 bg-[#0e0e0e] p-0 text-white shadow-[0_0_80px_hsl(239_84%_62%/0.22)] sm:left-1/2 sm:top-1/2 sm:h-[min(760px,92dvh)] sm:max-h-[92dvh] sm:w-full sm:max-w-xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-2xl [&>button]:top-6 [&>button]:flex [&>button]:h-8 [&>button]:w-8 [&>button]:items-center [&>button]:justify-center [&>button]:text-white [&>button]:opacity-80 [&>button]:hover:bg-white/10 [&>button]:hover:opacity-100"
         }
         onPointerDownOutside={(e) => loading && e.preventDefault()}
         onEscapeKeyDown={() => !loading && onOpenChange(false)}
       >
-        {step === "form" ? (
-          <>
-            <DialogHeader className="space-y-2">
-              <div className="flex items-center gap-3">
-                <img
-                  src="/logo-app.svg"
-                  alt=""
-                  className="h-8 w-8 sm:h-9 sm:w-9 shrink-0 object-contain"
-                  aria-hidden
-                />
-                <div className="min-w-0">
-                  <DialogTitle className="text-lg sm:text-xl">Assinar NavalhIA</DialogTitle>
-                  <DialogDescription className="flex items-center gap-1.5 mt-0.5 text-xs sm:text-sm">
-                    Pagamento seguro via Stripe
-                  </DialogDescription>
-                </div>
-              </div>
-            </DialogHeader>
-            <form onSubmit={handleSubmitForm} className="space-y-4">
-              <div>
-                <Label className="text-sm font-medium">Plano</Label>
-                <RadioGroup
-                  value={plan}
-                  onValueChange={(v) => setPlan(v as BillingPlan)}
-                  className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1.5"
-                >
-                  {BILLING_PLANS.map((p) => (
-                    <label
-                      key={p.id}
-                      className={`flex flex-col items-center justify-center rounded-lg border p-3 min-h-[72px] sm:min-h-0 cursor-pointer transition-colors touch-manipulation ${
-                        plan === p.id
-                          ? "border-primary bg-primary/5"
-                          : "hover:bg-muted/50"
-                      }`}
-                    >
-                      <RadioGroupItem
-                        value={p.id}
-                        id={p.id}
-                        className="sr-only"
-                      />
-                      <span className="font-medium text-sm">{p.label}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {p.price}
-                      </span>
-                      <span className="text-xs text-muted-foreground text-center">
-                        {p.desc}
-                      </span>
-                    </label>
-                  ))}
-                </RadioGroup>
-              </div>
-
-              {showExtraNumbers && (
-                <div className="rounded-lg border border-border bg-muted/30 p-3 sm:p-4 space-y-3">
-                  <Label className="text-sm font-medium">Números de WhatsApp</Label>
-                  <p className="text-xs text-muted-foreground">
-                    1 número incluso no plano. Adicione quantos precisar (R$ {EXTRA_NUMBER_PRICE}/número/mês).
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-10 w-10 min-h-[44px] min-w-[44px] sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0 shrink-0"
-                        onClick={() => setExtraNumbers((n) => Math.max(0, n - 1))}
-                        disabled={extraNumbers === 0}
-                        aria-label="Menos números extras"
-                      >
-                        −
-                      </Button>
-                      <span className="w-8 text-center font-medium tabular-nums text-sm">
-                        {extraNumbers}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-10 w-10 min-h-[44px] min-w-[44px] sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0 shrink-0"
-                        onClick={() => setExtraNumbers((n) => Math.min(MAX_EXTRA_NUMBERS, n + 1))}
-                        disabled={extraNumbers >= MAX_EXTRA_NUMBERS}
-                        aria-label="Mais números extras"
-                      >
-                        +
-                      </Button>
-                    </div>
-                    <span className="text-sm text-muted-foreground">
-                      {extraNumbers === 0
-                        ? "Nenhum extra"
-                        : `+ R$ ${(extraNumbers * EXTRA_NUMBER_PRICE).toLocaleString("pt-BR")}/mês`}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Você pode adicionar mais números depois no painel.
-                  </p>
-                </div>
-              )}
-
-              {plan === "essential" && (
-                <p className="text-xs text-muted-foreground rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
-                  WhatsApp com IA está nos planos Profissional e Premium.
-                </p>
-              )}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="barbershop_name">Nome da Barbearia *</Label>
-                <Input
-                  id="barbershop_name"
-                  placeholder="Ex.: NavalhIA do João"
-                  value={form.barbershop_name}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, barbershop_name: e.target.value }));
-                    setFieldErrors((err) => ({ ...err, barbershop_name: "" }));
-                  }}
-                  className="mt-1 min-h-[44px] text-base sm:text-sm"
-                  aria-invalid={!!fieldErrors.barbershop_name}
-                  onBlur={() => validateOnBlur("barbershop_name")}
-                />
-                {fieldErrors.barbershop_name && (
-                  <p className="text-xs text-destructive mt-1">{fieldErrors.barbershop_name}</p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="cnpj">CNPJ (opcional)</Label>
-                <Input
-                  id="cnpj"
-                  placeholder="00.000.000/0001-00"
-                  value={formatCNPJ(form.cnpj)}
-                  onChange={handleCnpjChange}
-                  className="mt-1 min-h-[44px] text-base sm:text-sm"
-                  aria-invalid={!!fieldErrors.cnpj}
-                  onBlur={() => validateOnBlur("cnpj")}
-                />
-                {fieldErrors.cnpj && (
-                  <p className="text-xs text-destructive mt-1">{fieldErrors.cnpj}</p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="phone">Telefone *</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  placeholder="(11) 98765-4321"
-                  value={formatPhoneBR(form.phone)}
-                  onChange={handlePhoneChange}
-                  className="mt-1 min-h-[44px] text-base sm:text-sm"
-                  aria-invalid={!!fieldErrors.phone}
-                  onBlur={() => validateOnBlur("phone")}
-                />
-                {fieldErrors.phone && (
-                  <p className="text-xs text-destructive mt-1">{fieldErrors.phone}</p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="email">E-mail *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  inputMode="email"
-                  placeholder="seu@email.com"
-                  value={form.email}
-                  onChange={(e) => {
-                    setForm((f) => ({ ...f, email: e.target.value }));
-                    setFieldErrors((err) => ({ ...err, email: "" }));
-                  }}
-                  className="mt-1 min-h-[44px] text-base sm:text-sm"
-                  aria-invalid={!!fieldErrors.email}
-                  onBlur={() => validateOnBlur("email")}
-                />
-                {fieldErrors.email && (
-                  <p className="text-xs text-destructive mt-1">{fieldErrors.email}</p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="contact_name">
-                  Nome do responsável (opcional)
-                </Label>
-                <Input
-                  id="contact_name"
-                  placeholder="Seu nome"
-                  value={form.contact_name}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, contact_name: e.target.value }))
-                  }
-                  className="mt-1 min-h-[44px] text-base sm:text-sm"
-                />
-              </div>
-
-              <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 text-sm">
-                <p className="font-medium text-foreground">
-                  Resumo: {planInfo?.label} {effectiveExtraNumbers > 0 && `+ ${effectiveExtraNumbers} número(s) extra(s)`}
-                </p>
-                <p className="text-muted-foreground">
-                  Total estimado: R$ {monthlyTotal.toLocaleString("pt-BR")}/mês
-                </p>
-              </div>
-
-              <div
-                className={`rounded-lg border bg-muted/20 px-3 py-2.5 text-sm space-y-2 ${fieldErrors.risk ? "border-destructive" : "border-border"}`}
-                data-testid="whatsapp-risk-notice"
-              >
-                <p className="font-medium text-foreground">Aviso sobre o WhatsApp</p>
-                <p id="whatsapp_risk_text" className="text-muted-foreground text-sm">{WHATSAPP_RISK_NOTICE_TEXT}</p>
-                <div className="flex items-start gap-2">
-                  <Checkbox
-                    id="whatsapp_risk"
-                    checked={riskAccepted}
-                    onCheckedChange={(v) => {
-                      setRiskAccepted(v === true);
-                      setFieldErrors((fe) => ({ ...fe, risk: "" }));
-                    }}
-                    aria-describedby="whatsapp_risk_text whatsapp_risk_error"
-                    aria-invalid={!!fieldErrors.risk}
-                    className="mt-0.5 h-5 w-5"
-                  />
-                  <Label htmlFor="whatsapp_risk" className="text-sm font-normal leading-snug cursor-pointer">
-                    {WHATSAPP_RISK_CHECKBOX_LABEL}
-                  </Label>
-                </div>
-                {fieldErrors.risk && (
-                  <p id="whatsapp_risk_error" className="text-sm text-destructive" role="alert">
-                    {fieldErrors.risk}
-                  </p>
-                )}
-              </div>
-
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button
-                type="submit"
-                className="w-full min-h-[44px] text-base sm:text-sm"
-                disabled={loading}
-              >
-                {loading ? "Preparando..." : "Ir para pagamento"}
-              </Button>
-              <p className="text-[10px] sm:text-xs text-muted-foreground text-center pt-1">
-                Checkout Stripe • Sem fidelidade
+        {view === "form" ? (
+          <form onSubmit={handleFormSubmit} className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center gap-3 px-6 pr-14 pt-6">
+              <img
+                src="/logo-v5.png"
+                alt=""
+                className="h-8 w-8 shrink-0 object-contain"
+                aria-hidden
+              />
+              <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/70">
+                Assinar NavalhIA
               </p>
-            </form>
-          </>
+            </div>
+
+            <div
+              className={cn(
+                "min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-6 py-4",
+                step.id !== "plan" && "flex flex-col justify-center",
+              )}
+            >
+              <div
+                key={step.id}
+                className={slideDir === "next" ? "checkout-step-next" : "checkout-step-prev"}
+              >
+                <DialogHeader className="mb-5 space-y-2 text-left">
+                  <DialogTitle className="font-display text-2xl font-bold leading-tight text-white sm:text-3xl">
+                    {step.question}
+                  </DialogTitle>
+                  <DialogDescription className="text-sm text-white/55">
+                    {step.incentive}
+                  </DialogDescription>
+                </DialogHeader>
+                {step.id === "email" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="checkout-email" className="sr-only">
+                      E-mail
+                    </Label>
+                    <Input
+                      ref={inputRef}
+                      id="checkout-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      placeholder="seu@email.com"
+                      value={email}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        setFieldError("");
+                      }}
+                      onBlur={(e) => {
+                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+                        if (next?.closest("button")) return;
+                        requestAnimationFrame(() => inputRef.current?.focus());
+                      }}
+                      aria-invalid={!!fieldError}
+                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                    />
+                  </div>
+                )}
+
+                {step.id === "phone" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="checkout-phone" className="sr-only">
+                      Telefone
+                    </Label>
+                    <Input
+                      ref={inputRef}
+                      id="checkout-phone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      placeholder="(11) 98765-4321"
+                      value={phone}
+                      onChange={(e) => {
+                        setPhone(formatPhoneAsTyped(e.target.value));
+                        setFieldError("");
+                      }}
+                      onBlur={(e) => {
+                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+                        if (next?.closest("button")) return;
+                        requestAnimationFrame(() => inputRef.current?.focus());
+                      }}
+                      aria-invalid={!!fieldError}
+                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                    />
+                  </div>
+                )}
+
+                {step.id === "name" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="checkout-name" className="sr-only">
+                      Nome da barbearia
+                    </Label>
+                    <Input
+                      ref={inputRef}
+                      id="checkout-name"
+                      autoComplete="organization"
+                      placeholder="Ex.: Navalha do João"
+                      value={barbershopName}
+                      onChange={(e) => {
+                        setBarbershopName(e.target.value);
+                        setFieldError("");
+                      }}
+                      onBlur={(e) => {
+                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+                        if (next?.closest("button")) return;
+                        requestAnimationFrame(() => inputRef.current?.focus());
+                      }}
+                      aria-invalid={!!fieldError}
+                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                    />
+                  </div>
+                )}
+
+                {step.id === "plan" && (
+                  <>
+                  <div role="radiogroup" aria-label="Plano" className="space-y-3 pt-3">
+                    {BILLING_PLANS.map((p) => {
+                      const selected = plan === p.id;
+                      const featured = p.id === "pro";
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          onClick={() => setPlan(p.id)}
+                          className={cn(
+                            "relative w-full rounded-2xl text-left transition-all duration-200",
+                            selected
+                              ? "bg-gradient-to-b from-primary via-violet-500 to-violet-300 p-1 shadow-[0_0_40px_hsl(262_83%_58%/0.6)]"
+                              : "bg-white/10 p-px hover:bg-white/20",
+                            featured && !selected && "shadow-[0_0_32px_hsl(239_84%_62%/0.4)]",
+                          )}
+                        >
+                          {featured && (
+                            <span className="absolute -top-2.5 left-4 rounded-full bg-primary px-3 py-0.5 text-[10px] font-semibold text-white shadow-[0_0_16px_hsl(239_84%_62%/0.5)]">
+                              Mais escolhido
+                            </span>
+                          )}
+                          <span
+                            className={cn(
+                              "flex flex-col gap-2 rounded-2xl px-4 py-3.5",
+                              selected
+                                ? "bg-gradient-to-b from-[#2a2158] via-[#1a1630] to-[#12101c]"
+                                : featured
+                                  ? "bg-gradient-to-b from-[#16162e] to-[#101014]"
+                                  : "bg-[#101014]",
+                            )}
+                          >
+                            <span className="flex items-baseline justify-between gap-3">
+                              <span className="font-display text-lg font-bold text-white">{p.label}</span>
+                              <span className="font-display text-lg font-bold text-white">{p.price}</span>
+                            </span>
+                            <span className="text-xs text-white/45">{p.desc}</span>
+                            <span className="mt-1 space-y-1">
+                              {PLAN_FEATURES[p.id].map((feature) => (
+                                <span key={feature} className="flex items-center gap-2 text-xs text-white/70">
+                                  <CheckCircle2 className={cn("h-3.5 w-3.5 shrink-0", selected ? "text-primary" : "text-primary/70")} />
+                                  {feature}
+                                </span>
+                              ))}
+                            </span>
+                            {selected && (
+                              <span className="text-[11px] font-medium uppercase tracking-wider text-primary">
+                                Selecionado
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div
+                      className={cn(
+                        "mt-4 rounded-2xl border bg-white/5 px-4 py-3 text-sm",
+                        fieldError === WHATSAPP_RISK_REQUIRED_MESSAGE ? "border-red-400/70" : "border-white/10",
+                      )}
+                      data-testid="whatsapp-risk-notice"
+                    >
+                      <p className="font-medium text-white">Aviso sobre o WhatsApp</p>
+                      <p id="whatsapp_risk_text" className="mt-1 text-sm text-white/55">{WHATSAPP_RISK_NOTICE_TEXT}</p>
+                      <div className="mt-3 flex items-start gap-2">
+                        <Checkbox
+                          id="whatsapp_risk"
+                          checked={riskAccepted}
+                          onCheckedChange={(v) => {
+                            setRiskAccepted(v === true);
+                            setFieldError("");
+                          }}
+                          aria-describedby="whatsapp_risk_text"
+                          className="mt-0.5 h-5 w-5 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
+                        />
+                        <Label htmlFor="whatsapp_risk" className="cursor-pointer text-sm font-normal leading-snug text-white/80">
+                          {WHATSAPP_RISK_CHECKBOX_LABEL}
+                        </Label>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {fieldError && (
+                  <p className="mt-2 text-center text-sm text-red-400" role="alert">
+                    {fieldError}
+                  </p>
+                )}
+                {error && (
+                  <p className="mt-2 text-sm text-red-400" role="alert">
+                    {error}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 px-6 pb-4">
+              {stepIndex > 0 && (
+                <button
+                  type="button"
+                  onClick={goBack}
+                  disabled={loading}
+                  className="rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 transition-all hover:border-white/30 hover:bg-white/5 hover:text-white disabled:opacity-50"
+                >
+                  Voltar
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={loading}
+                onMouseDown={(e) => {
+                  if (step.id !== "plan") e.preventDefault();
+                }}
+                className={cn(
+                  "relative flex-1 overflow-hidden rounded-xl py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60",
+                  step.id === "plan"
+                    ? "lp-shimmer bg-primary shadow-[0_0_28px_hsl(239_84%_62%/0.55),0_0_0_1px_hsl(270_80%_72%/0.95)]"
+                    : "lp-shimmer bg-primary shadow-[0_0_20px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:shadow-[0_0_48px_hsl(239_84%_62%/0.7)]",
+                )}
+              >
+                {step.id === "plan" && (
+                  <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500" />
+                )}
+                <span className="relative z-10">
+                  {loading ? "Preparando..." : step.id === "plan" ? "Ir para pagamento" : "Continuar"}
+                </span>
+              </button>
+            </div>
+
+            <footer className="shrink-0 border-t border-white/10 px-6 py-4">
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/55">
+                <span>
+                  Etapa {stepIndex + 1} de {STEPS.length} · {step.label}
+                </span>
+                <span className="tabular-nums">{Math.round(progress)}%</span>
+              </div>
+              <div
+                className="h-2 overflow-hidden rounded-full bg-white/10"
+                role="progressbar"
+                aria-valuemin={1}
+                aria-valuemax={STEPS.length}
+                aria-valuenow={stepIndex + 1}
+                aria-valuetext={`Etapa ${stepIndex + 1} de ${STEPS.length}: ${step.label}`}
+              >
+                <div
+                  className="checkout-progress-fill h-full rounded-full bg-gradient-to-r from-primary to-violet-400 shadow-[0_0_12px_hsl(239_84%_62%/0.65)]"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            </footer>
+          </form>
         ) : clientSecret && stripePromise ? (
           <div className="flex flex-col md:flex-row -m-6 sm:-m-6 md:max-h-[85vh]">
-            {/* Coluna esquerda: identidade visual (fundo cinza + logo) */}
             <div
               className="hidden md:flex md:w-56 lg:w-64 shrink-0 flex-col items-center justify-center gap-4 px-6 py-8 rounded-l-lg text-center"
               style={{ backgroundColor: "#1a1a1a" }}
             >
               <img
-                src="/logo-named-transparent-white.svg"
+                src="/navalhia-logo-header.png"
                 alt="NavalhIA"
                 className="w-full max-w-[180px] h-auto object-contain"
               />
@@ -458,11 +527,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                 Agende. Automatize. Cresça.
               </p>
             </div>
-            {/* Coluna direita: Stripe Embedded Checkout */}
             <div className="flex-1 min-w-0 overflow-y-auto p-4 md:p-6 space-y-4">
-              {/* Mobile: logo e slogan acima do formulário */}
               <div className="md:hidden flex flex-col items-center gap-2 pb-2 border-b border-border">
-                <img src="/logo-app.svg" alt="NavalhIA" className="h-9 w-auto object-contain" />
+                <img src="/logo-v5.png" alt="NavalhIA" className="h-9 w-auto object-contain" />
                 <p className="text-xs text-muted-foreground">Agende. Automatize. Cresça.</p>
               </div>
               <DialogHeader className="md:text-left">
