@@ -10,12 +10,13 @@ from_email              = "no-reply@navalhia.com"
 # Obrigatória com attach_custom_domains=false — o plan recusa vazio. Substitua pelo e-mail
 # que você vai verificar no SES (link no inbox). Em sandbox, só destinatários verificados recebem.
 ses_sender_email        = ""
-# Front de produção na Vercel enquanto não houver domínio próprio.
-app_public_url          = "https://appointments-psi-five.vercel.app"
+# Front de produção: navalhia.com (domínio comprado na Vercel, ligado ao projeto `appointments`; www redireciona 308 para o apex).
+# Vira APP_URL da API (success/return URLs do Stripe, links dos e-mails).
+app_public_url          = "https://navalhia.com"
 # Override opcional. Vazio = usa o api_endpoint do API Gateway no mesmo apply (sem ciclo).
 api_public_url          = ""
-# Depois do 1º apply, acrescente a origem CloudFront: ,https://<output cloudfront_domain>
-cors_origin             = "https://appointments-psi-five.vercel.app"
+# Apex novo + URL *.vercel.app mantida (preview/rollback). Depois do 1º apply, se usar CloudFront: ,https://<output cloudfront_domain>
+cors_origin             = "https://navalhia.com,https://appointments-psi-five.vercel.app"
 log_retention_days      = 14
 
 # Copie para terraform.tfvars (gitignored) e preencha. Nunca commite valores reais.
@@ -33,12 +34,14 @@ openai_api_key          = ""
 stripe_secret_key       = ""
 stripe_webhook_secret   = ""
 stripe_price_id         = ""
-stripe_price_id_essential = ""
-stripe_price_id_pro     = ""
+# IDs de preço do Stripe em MODO TESTE (conta NavalhIA Payments, acct_1T2AFaF50nj390Lu), oferta R$ 147 / 297 / 449 por mês.
+# No go-live, troque pelos IDs do modo LIVE (os de teste não existem na conta live). IDs de preço não são segredo.
+stripe_price_id_essential = "price_1UbXEyF50nj390LuqJSq1P09"   # Essencial  R$ 147/mês (teste)
+stripe_price_id_pro     = "price_1UbXEzF50nj390LuCvOBDhfd"     # Profissional R$ 297/mês (teste)
 
 # Segredos dos webhooks de WhatsApp: NÃO coloque valores aqui. Use TF_VAR_whatsapp_webhook_secret,
 # TF_VAR_whatsapp_app_secret e TF_VAR_whatsapp_verify_token (e, só durante rotação, TF_VAR_whatsapp_webhook_secret_previous).
-stripe_price_id_premium = ""
+stripe_price_id_premium = "price_1UbXEzF50nj390LuIq8keJSX"    # Premium R$ 449/mês (teste)
 stripe_price_id_extra_number = ""
 stripe_price_id_followup_credit = ""
 lambda_zip_path         = ""
