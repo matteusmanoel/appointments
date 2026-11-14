@@ -6,7 +6,7 @@ const CHIPS: { text: string; accent?: boolean }[] = [
   { text: "✓ Cadeiras sempre cheias" },
   { text: "✓ Cliente lembrado 24h e 2h antes", accent: true },
   { text: "✓ Quem sumiu: você aprova a mensagem" },
-  { text: "✓ Pronto em 30 minutos", accent: true },
+  { text: "✓ Simples de configurar", accent: true },
   { text: "✓ Painel da sua barbearia" },
   { text: "✓ Sem fidelidade", accent: true },
   { text: "✓ Cancele quando quiser" },
