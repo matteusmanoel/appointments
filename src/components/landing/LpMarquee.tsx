@@ -4,8 +4,8 @@
 const CHIPS: { text: string; accent?: boolean }[] = [
   { text: "✓ Secretária no WhatsApp 24h", accent: true },
   { text: "✓ Cadeiras sempre cheias" },
-  { text: "✓ Cliente lembrado antes do horário", accent: true },
-  { text: "✓ Quem sumiu recebe uma mensagem" },
+  { text: "✓ Cliente lembrado 24h e 2h antes", accent: true },
+  { text: "✓ Quem sumiu: você aprova a mensagem" },
   { text: "✓ Pronto em 30 minutos", accent: true },
   { text: "✓ Painel da sua barbearia" },
   { text: "✓ Sem fidelidade", accent: true },
