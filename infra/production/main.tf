@@ -100,6 +100,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "all" {
 # ---------------------------------------------------------------------------
 
 resource "aws_acm_certificate" "cdn" {
+  count             = local.acm_cdn_count
   provider          = aws.us_east_1
   domain_name       = local.apex
   validation_method = "DNS"
@@ -113,6 +114,7 @@ resource "aws_acm_certificate" "cdn" {
 }
 
 resource "aws_acm_certificate" "api" {
+  count             = local.acm_api_count
   domain_name       = local.api_fqdn
   validation_method = "DNS"
 
@@ -183,7 +185,7 @@ resource "aws_cloudfront_distribution" "app" {
 
   viewer_certificate {
     cloudfront_default_certificate = var.attach_custom_domains ? false : true
-    acm_certificate_arn            = var.attach_custom_domains ? aws_acm_certificate.cdn.arn : null
+    acm_certificate_arn            = var.attach_custom_domains ? aws_acm_certificate.cdn[0].arn : null
     ssl_support_method             = var.attach_custom_domains ? "sni-only" : null
     minimum_protocol_version       = var.attach_custom_domains ? "TLSv1.2_2021" : "TLSv1"
   }
@@ -278,12 +280,9 @@ resource "aws_iam_role_policy" "api" {
         Resource = aws_cloudwatch_log_group.api.arn
       },
       {
-        Effect = "Allow"
-        Action = ["ses:SendEmail", "ses:SendRawEmail"]
-        Resource = [
-          aws_sesv2_email_identity.domain.arn,
-          "arn:aws:ses:${var.aws_region}:${local.account_id}:identity/${var.from_email}"
-        ]
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail", "ses:SendRawEmail"]
+        Resource = local.ses_identity_arns
       },
       {
         Effect = "Allow"
@@ -508,18 +507,18 @@ resource "aws_lambda_permission" "apigw" {
 }
 
 resource "aws_apigatewayv2_domain_name" "api" {
-  count = var.attach_custom_domains ? 1 : 0
+  count = local.apigw_custom_domain_count
 
   domain_name = local.api_fqdn
   domain_name_configuration {
-    certificate_arn = aws_acm_certificate.api.arn
+    certificate_arn = aws_acm_certificate.api[0].arn
     endpoint_type   = "REGIONAL"
     security_policy = "TLS_1_2"
   }
 }
 
 resource "aws_apigatewayv2_api_mapping" "api" {
-  count = var.attach_custom_domains ? 1 : 0
+  count = local.apigw_custom_domain_count
 
   api_id      = aws_apigatewayv2_api.http.id
   domain_name = aws_apigatewayv2_domain_name.api[0].id
@@ -592,7 +591,35 @@ resource "aws_lambda_permission" "worker_knowledge_events" {
 # ---------------------------------------------------------------------------
 
 resource "aws_sesv2_email_identity" "domain" {
+  count          = local.ses_domain_identity_count
   email_identity = var.domain_name
+}
+
+# Sem domínio próprio: identidade de e-mail obrigatória (ses_sender_email), verificação individual (link no inbox).
+# Em sandbox, e-mail para destinatários não verificados permanece pendente.
+resource "aws_sesv2_email_identity" "sender" {
+  count          = local.ses_sender_identity_count
+  email_identity = var.ses_sender_email
+}
+
+# Endereços sem índice → [0] depois de introduzir count. Sem estes blocos, um state
+# já aplicado (certificados / identidade de domínio) destruiria e recriaria os recursos.
+# Se o "from" não existir no state, o bloco é no-op. Com count=0 e o recurso ainda no
+# state antigo, o move vai para [0] e em seguida o count 0 remove o recurso (esperado
+# neste deploy sem domínio; não é destroy+recreate).
+moved {
+  from = aws_acm_certificate.cdn
+  to   = aws_acm_certificate.cdn[0]
+}
+
+moved {
+  from = aws_acm_certificate.api
+  to   = aws_acm_certificate.api[0]
+}
+
+moved {
+  from = aws_sesv2_email_identity.domain
+  to   = aws_sesv2_email_identity.domain[0]
 }
 
 # ---------------------------------------------------------------------------

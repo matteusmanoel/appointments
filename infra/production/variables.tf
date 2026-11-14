@@ -29,7 +29,7 @@ variable "api_subdomain" {
 
 variable "attach_custom_domains" {
   type        = bool
-  description = "true somente depois dos CNAMEs de validação ACM existirem na Cloudflare e os certificados estarem ISSUED."
+  description = "true somente depois dos CNAMEs de validação ACM existirem na Cloudflare e os certificados estarem ISSUED. false (padrão): não cria ACM (cdn/api), identidade SES de domínio, nem domínio customizado no API Gateway."
   default     = false
 }
 
@@ -47,14 +47,41 @@ variable "budget_limit_usd" {
 
 variable "from_email" {
   type        = string
-  description = "Remetente SES. Deve ser um endereço @domain_name após a verificação DKIM."
+  description = "Remetente SES quando attach_custom_domains=true (endereço @domain_name após DKIM). Sem domínio próprio, FROM_EMAIL usa ses_sender_email se este não for vazio."
   default     = "no-reply@navalhia.com"
+}
+
+variable "ses_sender_email" {
+  type        = string
+  description = "Identidade SES de e-mail (verificação individual, não de domínio). Sem default. Obrigatória quando attach_custom_domains=false — o plan recusa vazio para não deixar o remetente sem verificação. Com o flag true (identidade de domínio), pode ser vazio. Em sandbox, só destinatários também verificados recebem; os demais ficam pendentes."
+
+  validation {
+    condition     = var.attach_custom_domains || can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.ses_sender_email))
+    error_message = "Com attach_custom_domains=false, ses_sender_email é obrigatório (endereço a verificar individualmente no SES). Não deixe o remetente sem identidade."
+  }
+}
+
+variable "app_public_url" {
+  type        = string
+  description = "URL pública do front quando attach_custom_domains=false (ex.: https://appointments-psi-five.vercel.app). Vazio com o flag false deixa APP_URL vazio (não cai em app.navalhia.com). Com o flag true, é ignorada."
+  default     = ""
+}
+
+variable "api_public_url" {
+  type        = string
+  description = "Override opcional da URL pública da API quando attach_custom_domains=false. Vazio (padrão) usa aws_apigatewayv2_api.http.api_endpoint no mesmo apply (a API HTTP não depende da Lambda; não há ciclo). Com o flag true, é ignorada."
+  default     = ""
 }
 
 variable "cors_origin" {
   type        = string
-  description = "Origens CORS da API, separadas por vírgula."
-  default     = "https://app.navalhia.com,https://navalhia.com"
+  description = "Origens CORS da API, separadas por vírgula. Não pode ser vazio (fail closed). Sem domínio próprio: URL de produção da Vercel; depois do 1º apply, acrescente https://<cloudfront_domain>."
+  default     = "https://appointments-psi-five.vercel.app"
+
+  validation {
+    condition     = length([for o in split(",", var.cors_origin) : o if trimspace(o) != ""]) > 0
+    error_message = "cors_origin não pode ser vazio (fail closed). Informe ao menos uma origem, ex.: https://appointments-psi-five.vercel.app."
+  }
 }
 
 variable "log_retention_days" {
