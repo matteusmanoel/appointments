@@ -24,11 +24,13 @@ import {
   clockForNamedBarber,
   looksLikeAfterTimeIntent,
   looksLikeNewBookingIntent,
+  looksLikeNextAvailableIntent,
+  looksLikeRobotQuestion,
   looksLikeZeroIntentUnknown,
   looksLikeWaitlistIntent,
   draftPatchFromTurn,
 } from "../ai/conversation-intents.js";
-import { applyTurnToDraft, composeHoursOverflow, composeOccupiedSlot, emptyBookingDraft } from "../ai/booking-draft.js";
+import { applyTurnToDraft, composeHoursOverflow, composeNextAvailableOffer, composeOccupiedSlot, emptyBookingDraft, CLOSING_TODAY_THEN_TOMORROW } from "../ai/booking-draft.js";
 import { composeAvailableSlotConfirm, containsAiExposure } from "../ai/agent.js";
 
 describe("isClientConfirmation", () => {
@@ -453,5 +455,65 @@ describe("a new hour beats the previous offer", () => {
         lastUser: "Por favor",
       }),
     ).toBe("17:00");
+  });
+});
+
+
+describe("looksLikeNextAvailableIntent", () => {
+  it("recognizes 'o próximo' and close variants, not a named clock or a consult", () => {
+    expect(looksLikeNextAvailableIntent("Pode ser o próximo")).toBe(true);
+    expect(looksLikeNextAvailableIntent("o próximo horário")).toBe(true);
+    expect(looksLikeNextAvailableIntent("o mais cedo")).toBe(true);
+    expect(looksLikeNextAvailableIntent("qualquer horário")).toBe(true);
+    expect(looksLikeNextAvailableIntent("o primeiro que tiver")).toBe(true);
+    expect(looksLikeNextAvailableIntent("o primeiro horário")).toBe(true);
+    expect(looksLikeNextAvailableIntent("pode ser agora")).toBe(true);
+    expect(looksLikeNextAvailableIntent("pode ser às 18h")).toBe(false);
+    expect(looksLikeNextAvailableIntent("quais são meus próximos horários")).toBe(false);
+    expect(looksLikeNextAvailableIntent("quero cancelar")).toBe(false);
+    expect(looksLikeNextAvailableIntent("quero cancelar o próximo")).toBe(false);
+    expect(looksLikeNextAvailableIntent("quero reagendar, pode ser o próximo")).toBe(true);
+    expect(isClientConfirmation("Pode ser o próximo")).toBe(false);
+    expect(looksLikeZeroIntentUnknown("Pode ser o próximo")).toBe(false);
+    expect(looksLikeZeroIntentUnknown("pode ser")).toBe(true);
+  });
+});
+
+describe("composeNextAvailableOffer", () => {
+  it("lists 2–3 concrete hours and uses the agreed closing copy when today has no slot", () => {
+    expect(
+      composeNextAvailableOffer({
+        timesHHmm: ["18:30", "19:00"],
+        dateIso: "2026-11-14",
+        todayIso: "2026-11-14",
+      }),
+    ).toBe("Consigo te atender hoje às 18h30 ou às 19h. Qual prefere?");
+    const rolled = composeNextAvailableOffer({
+      timesHHmm: ["09:00", "09:30", "10:00"],
+      dateIso: "2026-11-15",
+      todayIso: "2026-11-14",
+      rolledFromToday: true,
+    });
+    expect(rolled.startsWith(CLOSING_TODAY_THEN_TOMORROW)).toBe(true);
+    expect(rolled).toContain("às 9h, às 9h30 ou às 10h");
+    expect(rolled).not.toMatch(/Qual hora você prefere/);
+    expect(rolled).not.toMatch(/segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo/i);
+    const monday = composeNextAvailableOffer({
+      timesHHmm: ["09:00", "09:30"],
+      dateIso: "2026-11-16",
+      todayIso: "2026-11-14",
+      rolledFromToday: true,
+    });
+    expect(monday.startsWith(CLOSING_TODAY_THEN_TOMORROW)).toBe(true);
+    expect(monday).toContain("amanhã");
+    expect(monday).not.toMatch(/segunda/i);
+  });
+});
+
+describe("looksLikeRobotQuestion", () => {
+  it("reconhece «você é um robô?» e não trata como pedido de atendente", () => {
+    expect(looksLikeRobotQuestion("você é um robô?")).toBe(true);
+    expect(looksLikeRobotQuestion("vc é um bot?")).toBe(true);
+    expect(looksLikeRobotQuestion("quero agendar um corte")).toBe(false);
   });
 });

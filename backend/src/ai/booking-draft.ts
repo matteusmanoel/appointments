@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 import { isValidUuid } from "../lib/uuid.js";
-import { formatTimePt } from "./date-calendar.js";
+import { addDaysIso, formatDateBr, formatTimePt, weekdayShortPtFromIso } from "./date-calendar.js";
 import type { UnavailableReason } from "./slot-fit.js";
 
 export type BookingDraftStatus = "collecting" | "offered" | "awaiting_name" | "closed";
@@ -34,7 +34,13 @@ export type BookingDraft = {
   waitlistOffer?: boolean;
   /** "Vai ser o de sempre, X?" já foi dito neste agendamento: não sugerir de novo (aceito, recusado ou ignorado). */
   usualSuggested?: boolean;
+  /** 2–3 horários concretos oferecidos neste pedido; «o mais cedo» escolhe o primeiro, não refaz a busca. */
+  offeredTimes?: string[];
 };
+
+/** Falha da tool de horários: fala segura, sem expor automação nem se passar por humano. */
+export const NEXT_SLOTS_UNAVAILABLE_SAFE =
+  "Não consegui ver os horários agora. Me diz um horário que te atenda, ou a gente tenta de novo.";
 
 export type CatalogService = {
   id: string;
@@ -111,6 +117,13 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
     ...(pendingProposal !== undefined ? { pendingProposal } : {}),
     ...(r.waitlistOffer === true ? { waitlistOffer: true } : {}),
     ...(r.usualSuggested === true ? { usualSuggested: true } : {}),
+    ...(Array.isArray(r.offeredTimes)
+      ? {
+          offeredTimes: (r.offeredTimes as unknown[])
+            .map((t) => String(t).slice(0, 5))
+            .filter((t) => /^\d{2}:\d{2}$/.test(t)),
+        }
+      : {}),
   };
 }
 
@@ -121,7 +134,15 @@ function sameIds(a?: string[], b?: string[]): boolean {
 }
 
 /** Merge patch onto previous draft. Omission does not clear. Material change resets offered → collecting. */
-export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraft>): BookingDraft {
+export type BookingDraftPatch = Omit<Partial<BookingDraft>, "time" | "offeredTimes"> & {
+  time?: string | null;
+  offeredTimes?: string[] | null;
+};
+
+export function mergeBookingDraft(
+  prev: BookingDraft,
+  patch: BookingDraftPatch,
+): BookingDraft {
   const next: BookingDraft = { ...prev, status: prev.status ?? "collecting" };
   const keys: Array<keyof BookingDraft> = [
     "service_ids",
@@ -138,10 +159,29 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     "lastAgentQuestion",
     "waitlistOffer",
     "usualSuggested",
+    "offeredTimes",
   ];
   let materialChanged = false;
   for (const key of keys) {
     const value = patch[key];
+    // time: undefined/null no patch (chave presente) limpa a hora velha, para um «sim» não fechar com ela.
+    // after_time não é apagado aqui — o piso do rascunho segue valendo na próxima busca.
+    if (key === "time" && "time" in patch && (value === undefined || value === null || value === "")) {
+      if (next.time) materialChanged = true;
+      delete next.time;
+      continue;
+    }
+    if (key === "offeredTimes") {
+      if (value === null) {
+        delete next.offeredTimes;
+      } else if (Array.isArray(value)) {
+        const times = (value as unknown[])
+          .map((t) => String(t).slice(0, 5))
+          .filter((t) => /^\d{2}:\d{2}$/.test(t));
+        next.offeredTimes = times;
+      }
+      continue;
+    }
     // Estes dois campos têm "null" explícito = limpar (a proposta já foi aceita, recusada ou trocada).
     if (key === "pendingProposal") {
       if (value === null) delete next.pendingProposal;
@@ -239,8 +279,10 @@ export function lockOfferedSlot(
     ...(slot.barber_name ? { barber_name: slot.barber_name } : {}),
     ...(slot.appointment_id ? { appointment_id: slot.appointment_id } : {}),
     status: slot.status ?? "offered",
+    offeredTimes: null,
   });
   delete next.after_time;
+  delete next.offeredTimes;
   return next;
 }
 
@@ -340,7 +382,7 @@ export function resolveServiceFromText(
   ) {
     return { match: combo };
   }
-  if (/\b(so|apenas|somente)\s+corte\b|\bcorte\s+masculino\b/.test(t)) {
+  if (/\b(so|apenas|somente)\s+(o\s+)?corte\b|\bcorte\s+masculino\b/.test(t)) {
     return simple ? { match: simple } : {};
   }
   if (/\bcorte\b/.test(t) && combo && simple) {
@@ -848,3 +890,43 @@ export async function saveBookingDraft(conversationId: string, draft: BookingDra
     console.warn("[booking-draft] save failed:", e instanceof Error ? e.message : e);
   }
 }
+
+/** Texto combinado com o Mateus para o fim do expediente sem vaga hoje. */
+export const CLOSING_TODAY_THEN_TOMORROW =
+  "Já estamos encerrando por hoje, mas podemos encontrar um horário pra você amanhã";
+
+function formatHourListPt(timesHHmm: string[]): string {
+  const parts = timesHHmm.map((t) => `às ${formatTimePt(t)}`);
+  if (parts.length <= 1) return parts[0] ?? "";
+  if (parts.length === 2) return `${parts[0]} ou ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")} ou ${parts[parts.length - 1]}`;
+}
+
+export function dayWordForOffer(dateIso: string, todayIso: string): string {
+  if (dateIso === todayIso) return "hoje";
+  if (dateIso === addDaysIso(todayIso, 1)) return "amanhã";
+  const short = weekdayShortPtFromIso(dateIso);
+  const br = formatDateBr(dateIso);
+  const ddmm = br.length >= 5 ? br.slice(0, 5) : br;
+  const prep = /s[aá]bado|domingo/i.test(short) ? "no" : "na";
+  return `${prep} ${short} ${ddmm}`;
+}
+
+/**
+ * 2–3 horários concretos. Quando hoje já encerrou, usa a fala combinada e oferece o próximo dia com vaga.
+ */
+export function composeNextAvailableOffer(params: {
+  timesHHmm: string[];
+  dateIso: string;
+  todayIso: string;
+  rolledFromToday?: boolean;
+}): string {
+  const hours = formatHourListPt(params.timesHHmm.slice(0, 3));
+  if (!hours) return "";
+  if (params.rolledFromToday) {
+    // Sempre a fala combinada, sem nomear o dia (nem «segunda», nem o calendário).
+    return `${CLOSING_TODAY_THEN_TOMORROW}[[MSG]]Tenho ${hours}. Qual fica melhor?`;
+  }
+  return `Consigo te atender ${dayWordForOffer(params.dateIso, params.todayIso)} ${hours}. Qual prefere?`;
+}
+

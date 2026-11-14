@@ -66,6 +66,8 @@ import {
   looksLikeSocialGreeting,
   looksLikeWaitlistIntent,
   looksLikeNewBookingIntent,
+  looksLikeNextAvailableIntent,
+  looksLikeRobotQuestion,
   looksLikeZeroIntentUnknown,
   offeredAltBarberFromText,
   offeredFitClockIfAccepted,
@@ -81,6 +83,9 @@ import {
   assistantSuggestedUsualService,
   resolveUsualService,
   composeAmbiguousCorte,
+  composeNextAvailableOffer,
+  CLOSING_TODAY_THEN_TOMORROW,
+  NEXT_SLOTS_UNAVAILABLE_SAFE,
   draftIsCloseable,
   emptyBookingDraft,
   inferServiceKeyword,
@@ -446,6 +451,31 @@ export function containsAiExposure(reply: string): boolean {
   return AI_EXPOSURE_PATTERNS.some((re) => re.test(t));
 }
 
+/** Fala segura quando um trecho expõe automação e não sobra conteúdo útil. */
+export const SAFE_CLIENT_FALLBACK =
+  "Me diz um horário que te atenda, ou a gente vê as próximas vagas.";
+
+export const ROBOT_QUESTION_DEFLECT = "Estou aqui pra te ajudar com o horário.";
+export const ROBOT_QUESTION_CONTINUE = "Quer agendar, reagendar ou ver um horário?";
+
+/**
+ * Remove só as frases que expõem automação. Se nada útil sobrar, usa uma fala que segue o atendimento.
+ * Não apaga a resposta inteira — o silêncio fica reservado ao teto de IA.
+ */
+export function scrubAiExposure(reply: string): { reply: string; hadExposure: boolean } {
+  const raw = (reply ?? "").trim();
+  if (!raw) return { reply: "", hadExposure: false };
+  if (!containsAiExposure(raw)) return { reply: raw, hadExposure: false };
+  const parts = raw
+    .split(/\[\[MSG\]\]/)
+    .flatMap((bubble) => bubble.split(/(?<=[.!?])\s+/))
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const kept = parts.filter((part) => !containsAiExposure(part));
+  const cleaned = kept.join(" ").replace(/\s+/g, " ").trim();
+  return { reply: cleaned || SAFE_CLIENT_FALLBACK, hadExposure: true };
+}
+
 function normalizeReplyForCompare(text: string): string {
   return (text ?? "")
     .replace(/\[\[MSG\]\]/g, " ")
@@ -508,8 +538,9 @@ export function composeCancellationReply(params: {
 }
 
 /**
- * Silence beats an error leak or a repeated bubble.
- * Deterministic slot/presence/cancel copy is passed with composed=true so it is not wiped for exposure.
+ * Exposure leaks are scrubbed (the rest of the reply, or a safe fallback, still goes out).
+ * Repeated bubble and unverified catalog/hour claims can still be withheld.
+ * Deterministic slot/presence/cancel copy is passed with composed=true.
  */
 export type ClientReplyGuardInput = {
   reply: string;
@@ -530,7 +561,10 @@ export function guardClientReplyWithReason(input: ClientReplyGuardInput): {
 } {
   const reply = (input.reply ?? "").trim();
   if (!reply) return { reply: "", silencedBy: null };
-  if (!input.composed && containsAiExposure(reply)) return { reply: "", silencedBy: "ai_exposure" };
+  if (!input.composed && containsAiExposure(reply)) {
+    const scrubbed = scrubAiExposure(reply);
+    return { reply: scrubbed.reply, silencedBy: null };
+  }
   if (!input.composed && replyCitesUnalignedHour(input.userText, reply, input.opensAt, input.closesAt)) {
     return { reply: "", silencedBy: "unaligned_hour" };
   }
@@ -3292,6 +3326,267 @@ export async function runAgent(
     );
   }
 
+  function laterHHmm(...times: Array<string | undefined | null>): string | undefined {
+    const ok = times
+      .map((t) => (typeof t === "string" && /^\d{2}:\d{2}$/.test(t.slice(0, 5)) ? t.slice(0, 5) : ""))
+      .filter(Boolean);
+    if (!ok.length) return undefined;
+    return ok.sort()[ok.length - 1];
+  }
+
+  function withRobotPrefix(reply: string): string {
+    if (!looksLikeRobotQuestion(lastUserTextRaw)) return reply;
+    if (!reply) return `${ROBOT_QUESTION_DEFLECT}[[MSG]]${ROBOT_QUESTION_CONTINUE}`;
+    if (reply.startsWith(ROBOT_QUESTION_DEFLECT)) return reply;
+    return `${ROBOT_QUESTION_DEFLECT}[[MSG]]${reply}`;
+  }
+
+  function isRescheduleNextSlotContext(): boolean {
+    if (looksLikeCancelIntent(lastUserTextRaw) && !looksLikeRescheduleIntent(lastUserTextRaw)) return false;
+    if (looksLikeRescheduleIntent(lastUserTextRaw) || routing.primaryIntent === "reschedule") return true;
+    if (bookingDraft.appointment_id) return true;
+    const prior = lastN
+      .filter((m) => m.role === "user")
+      .map((m) => String(m.content ?? ""))
+      .slice(0, -1)
+      .slice(-3);
+    const marker = [...prior]
+      .reverse()
+      .find((t) => looksLikeRescheduleIntent(t) || looksLikeNewBookingIntent(t) || looksLikeCancelIntent(t));
+    return Boolean(marker && looksLikeRescheduleIntent(marker));
+  }
+
+  async function tryOfferNextHours(): Promise<string | null> {
+    if (looksLikeCancelIntent(lastUserTextRaw) && !looksLikeRescheduleIntent(lastUserTextRaw)) {
+      return null;
+    }
+    if (
+      looksLikeConsultIntent(lastUserTextRaw) ||
+      looksLikePixIntent(lastUserTextRaw) ||
+      looksLikeLocationIntent(lastUserTextRaw) ||
+      looksLikePlanIntent(lastUserTextRaw)
+    ) {
+      return null;
+    }
+
+    const rescheduling = isRescheduleNextSlotContext();
+    const movingId = rescheduling
+      ? bookingDraft.appointment_id && isValidUuid(bookingDraft.appointment_id)
+        ? bookingDraft.appointment_id
+        : movingAppointmentId
+      : undefined;
+    const moving = movingId
+      ? (upcomingAppointments.find((a) => a.id === movingId) ?? upcomingAppointments[0])
+      : undefined;
+
+    // «O mais cedo» depois da oferta escolhe o primeiro horário, não refaz a busca.
+    if (looksLikeNextAvailableIntent(lastUserTextRaw) && bookingDraft.offeredTimes?.length && bookingDraft.date) {
+      const picked = bookingDraft.offeredTimes[0]!.slice(0, 5);
+      const date = String(bookingDraft.date).slice(0, 10);
+      const serviceIds = bookingDraft.service_ids?.length ? bookingDraft.service_ids : (moving?.service_ids ?? []);
+      const barberId = bookingDraft.barber_id || moving?.barber_id;
+      if (serviceIds.length && barberId) {
+        try {
+          const checked = await aiTools.checkAvailability(effectiveBarbershopId, {
+            date,
+            time: picked,
+            barber_id: barberId,
+            ...(serviceIds.length === 1 ? { service_id: serviceIds[0] } : { service_ids: serviceIds }),
+            ...(movingId ? { exclude_appointment_id: movingId } : {}),
+          });
+          const snap = snapshotCheckAvailability(checked, barberId);
+          await persistTool(
+            "check_availability",
+            { date, time: picked, barber_id: barberId },
+            JSON.stringify(checked).slice(0, 4096),
+          );
+          turnTrace.toolsExecuted.push({ name: "check_availability", ok: Boolean(snap?.available) });
+          if (snap?.available && (snap.barberId || barberId)) {
+            const lockedBarber = snap.barberId || barberId;
+            bookingDraft = lockOfferedSlot(bookingDraft, {
+              date: snap.date || date,
+              time: (snap.time || picked).slice(0, 5),
+              barber_id: lockedBarber,
+              barber_name: snap.barberName || bookingDraft.barber_name,
+              appointment_id: movingId,
+              status: bookingName ? "offered" : "awaiting_name",
+            });
+            await saveBookingDraft(conversationId, bookingDraft);
+            return composeAvailableSlotConfirm({
+              serviceName: snap.serviceName || bookingDraft.service_name || "Horário",
+              barberName: snap.barberName || bookingDraft.barber_name || "o barbeiro",
+              dateIso: String(snap.date || date).slice(0, 10),
+              timeHHmm: (snap.time || picked).slice(0, 5),
+              totalPrice: snap.totalPrice ?? bookingDraft.total_price ?? 0,
+              firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+              todayIso: dateOnlyStr,
+            });
+          }
+        } catch {
+          // horários oferecidos podem ter fechado: busca de novo abaixo
+        }
+      }
+    }
+
+    if (!(bookingDraft.service_ids?.length)) {
+      if (moving?.service_ids?.length) {
+        bookingDraft = mergeBookingDraft(bookingDraft, {
+          service_ids: moving.service_ids,
+          service_name: moving.service_names,
+          ...(typeof moving.price === "number" ? { total_price: moving.price } : {}),
+        });
+      } else {
+        const recentUserTexts = [
+          lastUserTextRaw,
+          ...lastN.filter((m) => m.role === "user").map((m) => String(m.content ?? "")).reverse(),
+        ];
+        for (const text of recentUserTexts) {
+          const resolved = resolveServiceFromText(text, catalogServices);
+          if (resolved.match) {
+            bookingDraft = mergeBookingDraft(bookingDraft, {
+              service_ids: [resolved.match.id],
+              service_name: resolved.match.name,
+              total_price:
+                typeof resolved.match.price === "number" && Number.isFinite(resolved.match.price)
+                  ? resolved.match.price
+                  : undefined,
+            });
+            break;
+          }
+        }
+      }
+    }
+    if (rescheduling && moving) {
+      bookingDraft = mergeBookingDraft(bookingDraft, {
+        ...(moving.barber_id && !bookingDraft.barber_id
+          ? { barber_id: moving.barber_id, barber_name: moving.barber_name }
+          : {}),
+        appointment_id: moving.id,
+      });
+    }
+    if (!(bookingDraft.service_ids?.length)) return null;
+
+    const requestedDate =
+      bookingDraft.date && String(bookingDraft.date).slice(0, 10) >= dateOnlyStr
+        ? String(bookingDraft.date).slice(0, 10)
+        : dateOnlyStr;
+
+    const readSlots = async (date: string) => {
+      // after_time é piso só no dia pedido; no dia seguinte a busca começa do começo do expediente.
+      const after = laterHHmm(
+        date === dateOnlyStr ? currentTimeHHmm : undefined,
+        date === requestedDate ? bookingDraft.after_time : undefined,
+      );
+      const payload = {
+        date,
+        service_ids: bookingDraft.service_ids,
+        limit: 8,
+        ...(bookingDraft.barber_id ? { barber_id: bookingDraft.barber_id } : {}),
+        ...(after ? { after_time: after } : {}),
+        ...(movingId ? { exclude_appointment_id: movingId } : {}),
+      };
+      try {
+        const listed = await aiTools.getNextSlots(effectiveBarbershopId, payload);
+        await persistTool("get_next_slots", payload, JSON.stringify(listed).slice(0, 4096));
+        const err =
+          listed && typeof listed === "object" && "error" in (listed as object)
+            ? String((listed as { error?: unknown }).error ?? "")
+            : "";
+        turnTrace.toolsExecuted.push({ name: "get_next_slots", ok: !err });
+        if (err) return { error: err, slots: [] as string[] };
+        const raw =
+          listed && typeof listed === "object" && Array.isArray((listed as { slots?: unknown }).slots)
+            ? (listed as { slots: Array<{ time?: string; barber_id?: string; barber_name?: string }> }).slots
+            : [];
+        const times: string[] = [];
+        const seen = new Set<string>();
+        let barberId: string | undefined;
+        let barberName: string | undefined;
+        for (const slot of raw) {
+          const time = typeof slot?.time === "string" ? slot.time.slice(0, 5) : "";
+          if (!/^\d{2}:\d{2}$/.test(time) || seen.has(time)) continue;
+          seen.add(time);
+          times.push(time);
+          if (!barberId && typeof slot.barber_id === "string") {
+            barberId = slot.barber_id;
+            barberName = typeof slot.barber_name === "string" ? slot.barber_name : undefined;
+          }
+          if (times.length >= 3) break;
+        }
+        return { error: "", slots: times, barberId, barberName };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await persistTool("get_next_slots", payload, JSON.stringify({ error: msg }).slice(0, 4096));
+        turnTrace.toolsExecuted.push({ name: "get_next_slots", ok: false });
+        return { error: msg, slots: [] as string[] };
+      }
+    };
+
+    let anyToolOk = false;
+    let offerDate = requestedDate;
+    let times: string[] = [];
+    let rolledFromToday = false;
+    let slotBarberId: string | undefined;
+    let slotBarberName: string | undefined;
+
+    const consider = (
+      date: string,
+      found: { error: string; slots: string[]; barberId?: string; barberName?: string },
+      rolled = false,
+    ) => {
+      if (!found.error) anyToolOk = true;
+      if (found.slots.length) {
+        offerDate = date;
+        times = found.slots;
+        slotBarberId = found.barberId;
+        slotBarberName = found.barberName;
+        rolledFromToday = rolled;
+        return true;
+      }
+      return false;
+    };
+
+    const first = await readSlots(requestedDate);
+    if (!consider(requestedDate, first)) {
+      for (let i = 1; i <= 7; i++) {
+        const next = addDaysIso(requestedDate, i);
+        const found = await readSlots(next);
+        if (consider(next, found, requestedDate === dateOnlyStr)) break;
+      }
+    }
+
+    if (times.length) {
+      bookingDraft = mergeBookingDraft(bookingDraft, {
+        date: offerDate,
+        status: "collecting",
+        lastAgentQuestion: "datetime",
+        time: null,
+        offeredTimes: times,
+        ...(slotBarberId && !bookingDraft.barber_id
+          ? { barber_id: slotBarberId, barber_name: slotBarberName }
+          : {}),
+        ...(movingId ? { appointment_id: movingId } : {}),
+      });
+      await saveBookingDraft(conversationId, bookingDraft);
+      return composeNextAvailableOffer({
+        timesHHmm: times,
+        dateIso: offerDate,
+        todayIso: dateOnlyStr,
+        rolledFromToday,
+      });
+    }
+    if (!anyToolOk) {
+      return NEXT_SLOTS_UNAVAILABLE_SAFE;
+    }
+    bookingDraft = mergeBookingDraft(bookingDraft, { lastAgentQuestion: "datetime", time: null });
+    await saveBookingDraft(conversationId, bookingDraft);
+    if (requestedDate === dateOnlyStr) {
+      return `${CLOSING_TODAY_THEN_TOMORROW} Me diz um outro dia se preferir.`;
+    }
+    return "Não encontrei vaga nesse dia. Qual outro dia te atende?";
+  }
+
+
   function barberForThisAvailabilityCheck(toolBarberId: unknown): string | undefined {
     const named =
       intentSet.barber?.kind === "named" && intentSet.barber.id && isValidUuid(intentSet.barber.id)
@@ -3487,7 +3782,9 @@ export async function runAgent(
   }
 
   if (isAffirmativeOnly && !parseClientTime(lastUserTextRaw) && bookingDraft.date && !bookingDraft.time) {
-    return finishTurn("Qual hora você prefere?", true);
+    const offered = await tryOfferNextHours();
+    if (offered) return finishTurn(withRobotPrefix(offered), true);
+    return finishTurn(withRobotPrefix((bookingDraft.service_ids?.length ?? 0) > 0 ? ASK_HOUR : ASK_SERVICE), true);
   }
 
   if (looksLikeCancelIntent(lastUserTextRaw) && !looksLikeRescheduleIntent(lastUserTextRaw)) {
@@ -3620,9 +3917,39 @@ export async function runAgent(
     return finishTurn(PLAN_CHARGE_ACK, true);
   }
 
+  const confirmingOfferedSlot =
+    (isAffirmativeOnly || isClientConfirmation(lastUserTextRaw)) &&
+    (bookingDraft.status === "offered" || bookingDraft.status === "awaiting_name") &&
+    Boolean(bookingDraft.time);
+
+  const shouldOfferHours =
+    !alignedSpoken &&
+    !parseClientTime(lastUserTextRaw) &&
+    !confirmingOfferedSlot &&
+    (looksLikeNextAvailableIntent(lastUserTextRaw) ||
+      routing.turnDirective === ASK_HOUR ||
+      (!bookingDraft.time &&
+        ((bookingDraft.service_ids?.length ?? 0) > 0 || looksLikeNextAvailableIntent(lastUserTextRaw)) &&
+        (Boolean(bookingDraft.date) || looksLikeNextAvailableIntent(lastUserTextRaw) || routing.turnDirective === ASK_HOUR)));
+
+  if (shouldOfferHours) {
+    const offered = await tryOfferNextHours();
+    if (offered) return finishTurn(withRobotPrefix(offered), true);
+    if (looksLikeNextAvailableIntent(lastUserTextRaw) && !(bookingDraft.service_ids?.length)) {
+      return finishTurn(withRobotPrefix(ASK_CORTE_OR_COMBO), true);
+    }
+  }
+
+  if (routing.turnDirective === ASK_HOUR && !bookingDraft.time && !alignedSpoken) {
+    const offered = await tryOfferNextHours();
+    if (offered) return finishTurn(withRobotPrefix(offered), true);
+    if (!(bookingDraft.service_ids?.length)) {
+      return finishTurn(withRobotPrefix(ASK_CORTE_OR_COMBO), true);
+    }
+  }
+
   if (
     routing.turnDirective === ASK_SERVICE ||
-    routing.turnDirective === ASK_HOUR ||
     routing.turnDirective === ASK_CORTE_OR_COMBO ||
     routing.turnDirective === CLOCK_OUTSIDE_HOURS
   ) {
@@ -3658,15 +3985,14 @@ export async function runAgent(
     !bookingDraft.time &&
     bookingDraft.date &&
     (bookingDraft.service_ids?.length ?? 0) > 0 &&
-    upcomingAppointments.length === 0 &&
     !looksLikeCancelIntent(lastUserTextRaw) &&
-    !looksLikeRescheduleIntent(lastUserTextRaw) &&
     !looksLikeConsultIntent(lastUserTextRaw) &&
     !looksLikePixIntent(lastUserTextRaw) &&
     !looksLikeLocationIntent(lastUserTextRaw) &&
     !looksLikePlanIntent(lastUserTextRaw)
   ) {
-    return finishTurn(ASK_HOUR, true);
+    const offered = await tryOfferNextHours();
+    if (offered) return finishTurn(withRobotPrefix(offered), true);
   }
 
   if (
@@ -3730,7 +4056,17 @@ export async function runAgent(
         offerHour.time !== time ? `Às ${formatTimePt(time)} não cabe nesse dia.[[MSG]]` : "";
       return finishTurn(`${prefix}${card}`, true);
     }
-    return finishTurn(ASK_HOUR, true);
+    if (alignedSpoken) {
+      bookingDraft = mergeBookingDraft(bookingDraft, { after_time: alignedSpoken.slice(0, 5), time: null });
+      await saveBookingDraft(conversationId, bookingDraft);
+    }
+    const offered = await tryOfferNextHours();
+    if (offered) return finishTurn(withRobotPrefix(offered), true);
+    return finishTurn(withRobotPrefix(NEXT_SLOTS_UNAVAILABLE_SAFE), true);
+  }
+
+  if (looksLikeRobotQuestion(lastUserTextRaw)) {
+    return finishTurn(`${ROBOT_QUESTION_DEFLECT}[[MSG]]${ROBOT_QUESTION_CONTINUE}`, true);
   }
 
   for (let round = 0; round < maxToolRounds; round++) {

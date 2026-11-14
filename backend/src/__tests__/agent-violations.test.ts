@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectViolations, sanitizeClientFacingReply, composeAvailableSlotConfirm, composeUnwrittenSlotCard, looksLikeBookingConfirmationAsk, containsAiExposure, assistantMessageAskedForName, isUsableClientName, withBarberSubstitutionDisclosure, allowedConfirmAppointmentIds, guardClientReply, resolveServiceForTurn, composePresenceConfirmed, resolveToolClientPhone, confirmedPersonName, bookingDraftBlocksPresence, replyDeniesUpcoming, replyWithoutPixEcho, replyAfterPixCard, composeUpcomingRecap, looksLikeHallucinatedBookingClaim, composeBookingCreated, composeRemarcarFromLast, replyNegotiatesUnverifiedSlots, composeShopPixReply, formatMarkedWhen, minutesUntilAppointment, REMINDER_BUBBLE_LEAD_MINUTES, composeRescheduleDone, rescheduleDraftMatchesOffer, replyNarratesBookingFailure, replyClaimsPresenceConfirmed, barberIdForAvailability, pendingMoveSlot, affirmedUnverifiedClock, replyClaimsOtherClock, replyClaimsSlotIsFree, composeLocationSent, composeCancellationReply } from "../ai/agent.js";
+import { detectViolations, sanitizeClientFacingReply, composeAvailableSlotConfirm, composeUnwrittenSlotCard, looksLikeBookingConfirmationAsk, containsAiExposure, assistantMessageAskedForName, isUsableClientName, withBarberSubstitutionDisclosure, allowedConfirmAppointmentIds, guardClientReply, SAFE_CLIENT_FALLBACK, resolveServiceForTurn, composePresenceConfirmed, resolveToolClientPhone, confirmedPersonName, bookingDraftBlocksPresence, replyDeniesUpcoming, replyWithoutPixEcho, replyAfterPixCard, composeUpcomingRecap, looksLikeHallucinatedBookingClaim, composeBookingCreated, composeRemarcarFromLast, replyNegotiatesUnverifiedSlots, composeShopPixReply, formatMarkedWhen, minutesUntilAppointment, REMINDER_BUBBLE_LEAD_MINUTES, composeRescheduleDone, rescheduleDraftMatchesOffer, replyNarratesBookingFailure, replyClaimsPresenceConfirmed, barberIdForAvailability, pendingMoveSlot, affirmedUnverifiedClock, replyClaimsOtherClock, replyClaimsSlotIsFree, composeLocationSent, composeCancellationReply } from "../ai/agent.js";
 import { splitOutgoingBubbles } from "../ai/date-calendar.js";
 import { understandTurn } from "../ai/agent/understanding.js";
 
@@ -335,11 +335,18 @@ describe("output guard", () => {
     composed: false,
   };
 
-  it("silences error leaks instead of sending them", () => {
+  it("reformula vazamentos de automação em vez de apagar a resposta", () => {
     expect(containsAiExposure("Parece que houve um erro ao tentar acessar seus agendamentos. Um momento, por favor.")).toBe(true);
     expect(containsAiExposure("Parece que o serviço que você deseja não está disponível para agendamento.")).toBe(true);
     expect(containsAiExposure("Posso não ter entendido. Quer agendar?")).toBe(true);
-    expect(guardClientReply({ ...base, reply: "Parece que houve um erro ao tentar acessar seus agendamentos." })).toBe("");
+    expect(guardClientReply({ ...base, reply: "Parece que houve um erro ao tentar acessar seus agendamentos." })).toBe(SAFE_CLIENT_FALLBACK);
+    const mixed = guardClientReply({
+      ...base,
+      reply: "Parece que houve um erro ao tentar acessar seus agendamentos. Tenho às 18h com o Lucas.",
+    });
+    expect(mixed).toMatch(/Tenho às 18h com o Lucas/);
+    expect(mixed).not.toMatch(/erro ao tentar acessar/i);
+    expect(mixed.length).toBeGreaterThan(0);
   });
 
   it("silences a clock the shop window would shift", () => {

@@ -339,8 +339,9 @@ const SCENARIOS: GoldenScenario[] = [
           { kind: "intent_primary", equals: "reschedule" },
           { kind: "intents_exclude", value: "cancel" },
           { kind: "routing_primary", equals: "reschedule" },
-          // Sem hora nova o turno só pergunta a hora: cancel_appointment nem entra na lista de tools do turno.
-          { kind: "tools_executed", equals: [] },
+          // Sem hora nova o turno oferece 2–3 horários concretos; não cancela.
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
           { kind: "openai_rounds", equals: 0 },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
           { kind: "state", equals: null },
