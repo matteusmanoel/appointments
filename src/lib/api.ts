@@ -675,6 +675,7 @@ export type WhatsAppInboxConversation = {
   };
   paused_until?: string | null;
   paused_by?: string | null;
+  needs_human_followup?: boolean;
 };
 
 export type WhatsAppInboxMessage = {

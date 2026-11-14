@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import jwt from "jsonwebtoken";
 import { app } from "../app.js";
@@ -139,5 +139,45 @@ describe("WhatsApp inbox / conversations routes", () => {
       .get(`/api/integrations/whatsapp/conversations/${wrongId}/messages`)
       .set("Authorization", `Bearer ${token}`)
       .expect(404);
+  });
+});
+
+describe("GET /api/integrations/whatsapp/conversations: flag IA pausada por limite", () => {
+  const stamp = Date.now();
+  let shopId = "";
+  let convId = "";
+  let token = "";
+
+  beforeAll(async () => {
+    const shop = await pool.query<{ id: string }>(
+      `INSERT INTO public.barbershops (name, phone, billing_plan, slug, business_hours)
+       VALUES ('Inbox teto IA', '551199990100', 'pro', $1, '{}'::jsonb) RETURNING id`,
+      [`test-inbox-cap-${stamp}`],
+    );
+    shopId = shop.rows[0]!.id;
+    token = makeToken(shopId);
+    const conv = await pool.query<{ id: string }>(
+      `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox, needs_human_followup)
+       VALUES ($1, 'whatsapp', $2, false, true) RETURNING id`,
+      [shopId, `5511${stamp}cap`],
+    );
+    convId = conv.rows[0]!.id;
+  });
+
+  afterAll(async () => {
+    if (shopId) {
+      await pool.query("DELETE FROM public.ai_conversations WHERE barbershop_id = $1", [shopId]);
+      await pool.query("DELETE FROM public.barbershops WHERE id = $1", [shopId]);
+    }
+  });
+
+  it("devolve needs_human_followup=true na lista do tenant autenticado", async () => {
+    const res = await request(app)
+      .get("/api/integrations/whatsapp/conversations")
+      .set("Authorization", `Bearer ${token}`)
+      .expect(200);
+    const found = (res.body.conversations as Array<{ id: string; needs_human_followup?: boolean }>).find((c) => c.id === convId);
+    expect(found).toBeTruthy();
+    expect(found!.needs_human_followup).toBe(true);
   });
 });

@@ -562,6 +562,7 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
       last_role: "user" | "assistant" | "tool" | null;
       last_content: string | null;
       last_created_at: string | null;
+      needs_human_followup: boolean;
     }>(
       `SELECT
          c.id,
@@ -574,7 +575,8 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
          cl.phone AS client_phone,
          lm.role::text AS last_role,
          lm.content AS last_content,
-         lm.created_at::text AS last_created_at
+         lm.created_at::text AS last_created_at,
+         coalesce(c.needs_human_followup, false) AS needs_human_followup
        FROM public.ai_conversations c
        LEFT JOIN public.ai_conversation_runtime cr ON cr.conversation_id = c.id
        LEFT JOIN public.clients cl
@@ -653,6 +655,7 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
           last_message_at: row.last_message_at ?? undefined,
           paused_until: row.paused_until ?? null,
           paused_by: row.paused_by ?? null,
+          needs_human_followup: row.needs_human_followup === true,
           client_name,
           client_phone,
           last_message:

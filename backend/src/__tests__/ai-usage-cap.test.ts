@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleHardCapTurn } from "../ai/usage-cap.js";
+import { handleHardCapTurn, IA_PAUSED_BY_LIMIT_REASON } from "../ai/usage-cap.js";
 import {
   USAGE_ALERT_KEY_HARD_CAP,
   USAGE_ALERT_KEY_LIMIT,
@@ -83,6 +83,8 @@ describe("teto de uso da IA: silêncio com o cliente, registro 1x e alertas ao d
     );
   });
   afterAll(async () => {
+    await pool.query("DELETE FROM public.agenda_activity WHERE barbershop_id = $1", [shopId]);
+    await pool.query("DELETE FROM public.ai_handoff_events WHERE barbershop_id = $1", [shopId]);
     await pool.query("DELETE FROM public.ai_conversations WHERE barbershop_id = $1", [shopId]);
     await pool.query("DELETE FROM public.profiles WHERE barbershop_id = $1", [shopId]);
     await pool.query("DELETE FROM public.barbershops WHERE id = $1", [shopId]);
@@ -107,6 +109,38 @@ describe("teto de uso da IA: silêncio com o cliente, registro 1x e alertas ao d
     const next = await handleHardCapTurn({ ...p, conversationId: c1 }, { sender, env, now: nextMonth });
     expect(next).toMatchObject({ reply: "", event: "recorded" });
     expect(await noticeRows()).toHaveLength(3); // c1/maio, c2/maio, c1/junho
+  });
+
+  it("na primeira vez no mês marca a conversa para a atendente («IA pausada por limite»); no mesmo mês não repete; nada vai ao cliente", async () => {
+    const sender = vi.fn(async () => {});
+    const month = new Date("2028-01-10T12:00:00Z");
+    const c = await mkConv();
+    const first = await handleHardCapTurn({ barbershopId: shopId, conversationId: c, used: 1000, limit: 500 }, { sender, env, now: month });
+    expect(first).toMatchObject({ reply: "", event: "recorded" });
+    const conv = await pool.query<{ needs_human_followup: boolean }>(
+      "SELECT needs_human_followup FROM public.ai_conversations WHERE id = $1",
+      [c],
+    );
+    expect(conv.rows[0]!.needs_human_followup).toBe(true);
+    const handoff = await pool.query<{ reason: string }>(
+      "SELECT reason FROM public.ai_handoff_events WHERE conversation_id = $1 AND reason = $2",
+      [c, IA_PAUSED_BY_LIMIT_REASON],
+    );
+    expect(handoff.rows).toHaveLength(1);
+    expect(handoff.rows[0]!.reason).toBe(IA_PAUSED_BY_LIMIT_REASON);
+    const acts = await pool.query<{ summary: string; type: string }>(
+      "SELECT summary, type FROM public.agenda_activity WHERE conversation_id = $1 AND summary = $2",
+      [c, IA_PAUSED_BY_LIMIT_REASON],
+    );
+    expect(acts.rows).toHaveLength(1);
+    expect(acts.rows[0]!.type).toBe("agent_silenced");
+    await handleHardCapTurn({ barbershopId: shopId, conversationId: c, used: 1001, limit: 500 }, { sender, env, now: month });
+    expect((await pool.query("SELECT 1 FROM public.ai_handoff_events WHERE conversation_id = $1", [c])).rowCount).toBe(1);
+    expect((await pool.query("SELECT 1 FROM public.agenda_activity WHERE conversation_id = $1 AND summary = $2", [c, IA_PAUSED_BY_LIMIT_REASON])).rowCount).toBe(1);
+    const sb = await mkConv(true);
+    await handleHardCapTurn({ barbershopId: shopId, conversationId: sb, used: 1000, limit: 500 }, { sender, env, now: month });
+    const sbFlag = await pool.query<{ needs_human_followup: boolean }>("SELECT needs_human_followup FROM public.ai_conversations WHERE id = $1", [sb]);
+    expect(sbFlag.rows[0]!.needs_human_followup).toBe(false);
   });
 
   it("AI_HARD_CAP_CUSTOMER_MESSAGE, se ainda estiver no ambiente, é ignorada: reply continua vazia", async () => {
