@@ -50,3 +50,8 @@ A escrita é controlada pela flag **`AI_SIMULATOR_TRACE_ENABLED`** (`true`/`1`/`
 O terminal imprime o mesmo conteúdo de forma legível (telefone mascarado, ex. `***0001`).
 
 Conversas do simulador usam `is_sandbox = true` e não criam jobs de envio.
+
+
+## Preenchimento determinístico (fluxos básicos)
+
+Nos fluxos de agendar, reagendar, cancelar e responder a um lembrete, o código decide serviço, barbeiro, data, horário, quais tools chamar e quando confirmar. Sem relógio nomeado, o turno não cai no loop de LLM: oferece 2–3 horários ou usa uma fala segura. Os goldens desses fluxos também rodam pelo simulador CLI (`src/__tests__/slot-filling-simulator.test.ts`).

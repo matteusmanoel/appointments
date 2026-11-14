@@ -15,6 +15,11 @@ import {
 } from "./agent/orchestrator.js";
 import { composePendingIntentOffer, loadPendingIntents, savePendingIntents } from "./agent/pending-intents.js";
 import type { IntentType } from "./agent/types.js";
+import {
+  BASIC_FLOW_SAFE_FALLBACK,
+  isBasicBookingFlow,
+  shouldConfirmReminderPresence,
+} from "./agent/slot-filling.js";
 import type { ConversationState as CanonicalConversationState } from "./agent/types.js";
 import { buildAgentContext } from "./agent/context-builder.js";
 import type { AgentTurnTrace } from "./turn-trace.js";
@@ -3834,7 +3839,13 @@ export async function runAgent(
     );
   }
 
-  if (isAffirmativeOnly && !parseClientTime(lastUserTextRaw) && bookingDraft.date && !bookingDraft.time) {
+  if (
+    isAffirmativeOnly &&
+    !parseClientTime(lastUserTextRaw) &&
+    bookingDraft.date &&
+    !bookingDraft.time &&
+    conversationState !== "reminder_rsvp_pending"
+  ) {
     const offered = await tryOfferNextHours();
     if (offered) return finishTurn(withRobotPrefix(offered), true);
     return finishTurn(withRobotPrefix((bookingDraft.service_ids?.length ?? 0) > 0 ? ASK_HOUR : ASK_SERVICE), true);
@@ -3842,6 +3853,47 @@ export async function runAgent(
 
   if (looksLikeCancelIntent(lastUserTextRaw) && !looksLikeRescheduleIntent(lastUserTextRaw)) {
     return finishTurn("", true);
+  }
+
+  if (
+    shouldConfirmReminderPresence({
+      conversationState,
+      isAffirmative: isAffirmativeOnly || isClientConfirmation(lastUserTextRaw),
+      looksLikeCancel: looksLikeCancelIntent(lastUserTextRaw),
+      looksLikeReschedule: looksLikeRescheduleIntent(lastUserTextRaw),
+      looksLikeNewBooking: looksLikeNewBookingIntent(lastUserTextRaw),
+    })
+  ) {
+    const target = upcomingAppointments.find((a) => a.status === "pending") ?? upcomingAppointments[0];
+    if (target?.id) {
+      const confirmed = await aiTools.confirmAppointmentByAgent(
+        effectiveBarbershopId,
+        target.id,
+        clientPhone,
+        conversationId,
+      );
+      await persistTool(
+        "confirm_appointment",
+        { appointment_id: target.id },
+        JSON.stringify(confirmed).slice(0, 4096),
+      );
+      turnTrace.toolsExecuted.push({
+        name: "confirm_appointment",
+        ok: Boolean(confirmed && typeof confirmed === "object" && (confirmed as { ok?: boolean }).ok),
+      });
+      if (confirmed && typeof confirmed === "object" && (confirmed as { ok?: boolean }).ok) {
+        state = "appointment_confirmed";
+        return finishTurn(
+          composePresenceConfirmed({
+            firstName: bookingName || clientName ? firstNameFromClientName(bookingName || clientName) : undefined,
+            when: formatResumoWhen(String(target.date).slice(0, 10), String(target.time).slice(0, 5), dateOnlyStr),
+            barberName: target.barber_name,
+          }),
+          true,
+        );
+      }
+    }
+    return finishTurn(withRobotPrefix(BASIC_FLOW_SAFE_FALLBACK), true);
   }
 
   const acceptingOpenDraft =
@@ -4120,6 +4172,28 @@ export async function runAgent(
 
   if (looksLikeRobotQuestion(lastUserTextRaw)) {
     return finishTurn(`${ROBOT_QUESTION_DEFLECT}[[MSG]]${ROBOT_QUESTION_CONTINUE}`, true);
+  }
+
+  // Fluxos básicos sem relógio: não cai no loop de LLM. Com relógio nomeado, os
+  // caminhos anteriores (check_availability / carta) já devem ter fechado o turno;
+  // se ainda não, o modelo só entra para fechar o caso (ex. barbeiro desconhecido).
+  if (
+    isBasicBookingFlow({
+      primaryIntent: routing.primaryIntent,
+      conversationState,
+      looksLikeConsult: looksLikeConsultIntent(lastUserTextRaw),
+      looksLikePix: looksLikePixIntent(lastUserTextRaw),
+      looksLikeLocation: looksLikeLocationIntent(lastUserTextRaw),
+      looksLikePlan: looksLikePlanIntent(lastUserTextRaw),
+      looksLikeHumanHandoff: looksLikeHumanHandoff(lastUserTextRaw),
+    }) &&
+    !alignedSpoken &&
+    !parseClientTime(lastUserTextRaw) &&
+    !bookingDraft.time
+  ) {
+    const offered = await tryOfferNextHours();
+    if (offered) return finishTurn(withRobotPrefix(offered), true);
+    return finishTurn(withRobotPrefix(BASIC_FLOW_SAFE_FALLBACK), true);
   }
 
   for (let round = 0; round < maxToolRounds; round++) {
