@@ -59,6 +59,7 @@ locals {
     JWT_SECRET                      = var.jwt_secret
     JWT_EXPIRES_IN                  = "7d"
     APP_ENCRYPTION_KEY              = var.app_encryption_key
+    API_KEY_LOOKUP_PEPPER           = var.api_key_lookup_pepper
     APP_URL                         = local.app_url
     CORS_ORIGIN                     = local.cors_origin
     FROM_EMAIL                      = local.from_email
@@ -85,6 +86,9 @@ locals {
     N8N_CHAT_TRIGGER_URL            = ""
     TOOLS_API_KEY                   = ""
     BILLING_NOTIFY_PAYMENT_FAILED   = tostring(var.billing_notify_payment_failed)
+    AI_USAGE_ALERT_ENABLED          = tostring(var.ai_usage_alert_enabled)
+    AI_USAGE_ALERT_THRESHOLD_PCT    = tostring(var.ai_usage_alert_threshold_pct)
+    AI_USAGE_OWNER_EMAIL_ENABLED    = tostring(var.ai_usage_owner_email_enabled)
   }
 
   # Segredos dos webhooks de WhatsApp (valores vêm de variáveis sem default útil; ver docs/RUNBOOK_WEBHOOK_SECRET.md).

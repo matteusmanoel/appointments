@@ -20,7 +20,8 @@ import { classifySendError } from "../integrations/whatsapp/send-error-policy.js
 import { recordOperationalActivity } from "../agenda/record-operational-activity.js";
 import { maybeReapStuckAiJobs } from "./ai-jobs-reaper.js";
 import OpenAI from "openai";
-import { maybeAlertAiUsage } from "../ai/usage-alert.js";
+import { maybeAlertAiUsage, maybeAlertAiUsageLimit } from "../ai/usage-alert.js";
+import { handleHardCapTurn } from "../ai/usage-cap.js";
 
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
 const POLL_MS = 1500;
@@ -500,6 +501,12 @@ async function processOneJob(): Promise<boolean> {
         console.warn("[ai-worker] n8n bloqueado barbershopId=%s motivo=%s", barbershopId, n8nGate);
         turnSink.state = n8nGate;
         reply = "";
+        if (n8nGate === "hard_limit") {
+          // Teto de uso: silêncio com o cliente, registro do evento e e-mail ao dono; plano sem IA (limite 0) segue em silêncio.
+          const u = await getUsageAndLimit(barbershopId);
+          const cap = await handleHardCapTurn({ barbershopId, conversationId, used: u.used, limit: u.limit });
+          reply = cap.reply;
+        }
         turnSink.replyText = reply;
       } else {
         try {
@@ -547,16 +554,21 @@ async function processOneJob(): Promise<boolean> {
       } else if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         turnSink.state = "hard_limit";
-        reply = "";
+        // Silêncio com o cliente; e-mail ao dono (1x/mês) e registro em ai_hard_cap_notices. Ver ai/usage-cap.ts.
+        const cap = await handleHardCapTurn({ barbershopId, conversationId, used: usage.used, limit: usage.limit });
+        reply = cap.reply;
         turnSink.replyText = reply;
       } else {
         if (usage.softExceeded) {
           console.warn("[ai-worker] soft limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         }
-        // Aviso ao dono em 80% do limite (atrás de AI_USAGE_ALERT_ENABLED; desligado por padrão; nunca bloqueia o turno).
+        // Aviso ao dono em 80% e em 100% do limite (AI_USAGE_ALERT_ENABLED ligado por padrão; nunca bloqueia o turno).
+        // Em 100% vale o aviso de 100% (o de 80% já cobre a faixa anterior). O aviso do teto sai no ramo hard_limit acima.
         // AGUARDADO com teto de 3 s (um `void` solto podia ser congelado pelo fim do ciclo da Lambda no meio do envio).
         await Promise.race([
-          maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit }),
+          usage.softExceeded
+            ? maybeAlertAiUsageLimit({ barbershopId, used: usage.used, limit: usage.limit })
+            : maybeAlertAiUsage({ barbershopId, used: usage.used, limit: usage.limit }),
           new Promise<void>((resolve) => setTimeout(resolve, 3000).unref?.()),
         ]);
         const openai = new OpenAI({ apiKey: config.openaiApiKey });

@@ -7,6 +7,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { config } from "../config.js";
 import { notifyOwnerPaymentFailed } from "../lib/billing-notify.js";
+import { issueApiKey } from "../lib/api-keys.js";
 import { sendOnboardingEmail } from "../lib/ses.js";
 import { requireJwt, getBarbershopId, type JwtPayload } from "../middleware/auth.js";
 import { ADMIN_ONLY, requireRole } from "../middleware/rbac.js";
@@ -479,8 +480,8 @@ export async function provisionFromCheckoutSession(session: Stripe.Checkout.Sess
 
   const tempPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(tempPassword, 10);
-  const apiKey = `bfk_${crypto.randomUUID()}_${Math.random().toString(36).slice(2, 10)}`;
-  const keyHash = await bcrypt.hash(apiKey, 10);
+  const issued = await issueApiKey();
+  const apiKey = issued.plaintext;
 
   const review = (reason: string, barbershopId: string | null, details?: Record<string, unknown>): ManualReview => ({
     reason, stripeCustomerId, stripeSessionId: session.id, email: customerEmail, barbershopId, details,
@@ -639,12 +640,12 @@ export async function provisionFromCheckoutSession(session: Stripe.Checkout.Sess
 
     // Ensure an API key exists (idempotent by name).
     await client.query(
-      `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash)
-       SELECT $1, $2, $3
+      `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash, key_secret_bits)
+       SELECT $1, $2, $3, $4, $5, $6
        WHERE NOT EXISTS (
          SELECT 1 FROM public.barbershop_api_keys k WHERE k.barbershop_id = $1 AND k.name = $2
        )`,
-      [barbershopId, "n8n-default", keyHash]
+      [barbershopId, "n8n-default", issued.keyHash, issued.prefix, issued.lookupHash, issued.secretBits]
     );
 
     // Senha temporária (fallback legado do primeiro acesso): só existe quando ESTA compra criou o perfil. É também o que

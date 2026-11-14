@@ -57,7 +57,7 @@ describe("Lock por barbeiro/dia em PATCH /appointments/:id, /tools e agente", ()
     date = (await pool.query<{ d: string }>(
       `SELECT d::date::text AS d FROM generate_series(CURRENT_DATE + 3, CURRENT_DATE + 10, '1 day') d WHERE extract(dow from d) <> 0 ORDER BY d LIMIT 1`)).rows[0].d;
     token = jwt.sign({ profileId: "00000000-0000-0000-0000-000000000001", barbershopId: fx.barbershopId, role: "admin", email: "t@test.com" }, config.jwtSecret ?? "test-secret");
-    toolsKey = `tk_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+    toolsKey = `bfk_legacy-${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
     const hash = await bcrypt.hash(toolsKey, 4);
     await pool.query("INSERT INTO public.barbershop_api_keys (barbershop_id, key_hash, name) VALUES ($1, $2, 'teste lock')", [fx.barbershopId, hash]).catch(() =>
       pool.query("INSERT INTO public.barbershop_api_keys (barbershop_id, key_hash) VALUES ($1, $2)", [fx!.barbershopId, hash]));

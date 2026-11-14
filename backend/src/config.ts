@@ -1,3 +1,4 @@
+import { assertApiKeyLookupPepperConfigured } from "./lib/api-key-pepper.js";
 import { DEFAULT_AI_JOB_PROCESSING_TIMEOUT_SECONDS, resolveAiJobProcessingTimeoutSeconds } from "./lib/ai-job-timing.js";
 
 const required = (key: string): string => {
@@ -8,6 +9,9 @@ const required = (key: string): string => {
 
 const optional = (key: string, def: string): string => process.env[key] ?? def;
 const optionalNull = (key: string): string | null => (process.env[key] ?? null) || null;
+
+// Fail closed: em produção, sem API_KEY_LOOKUP_PEPPER o processo não sobe (o valor nunca é exposto em config).
+assertApiKeyLookupPepperConfigured();
 
 export const config = {
   port: parseInt(optional("PORT", "3000"), 10),

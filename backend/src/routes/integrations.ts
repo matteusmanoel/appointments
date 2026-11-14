@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
+import { issueApiKey } from "../lib/api-keys.js";
 import { pool } from "../db.js";
 import { config } from "../config.js";
 import { requireJwt, getBarbershopId } from "../middleware/auth.js";
@@ -120,20 +120,19 @@ integrationsRouter.post("/api-keys", async (req: Request, res: Response): Promis
     res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
     return;
   }
-  const apiKey = `bfk_${crypto.randomUUID()}_${Math.random().toString(36).slice(2, 10)}`;
-  const keyHash = await bcrypt.hash(apiKey, 10);
+  const issued = await issueApiKey();
   const r = await pool.query(
-    `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash)
-     VALUES ($1, $2, $3)
+    `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash, key_secret_bits)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, name, created_at`,
-    [barbershopId, parsed.data.name, keyHash]
+    [barbershopId, parsed.data.name, issued.keyHash, issued.prefix, issued.lookupHash, issued.secretBits]
   );
   const row = r.rows[0];
   res.status(201).json({
     id: row.id,
     name: row.name,
     created_at: row.created_at,
-    api_key: apiKey,
+    api_key: issued.plaintext,
   });
 });
 

@@ -21,6 +21,7 @@ import {
 import type { InstanceStatusResult } from "../integrations/uazapi/client.js";
 import { getAiPauseState, setAiPaused, clearAiPause, setConversationPaused, clearConversationPause } from "../ai/runtime-pause.js";
 import { getUsageAndLimit } from "../ai/usage-limits.js";
+import { aiUsageAlertThresholdPct, usageReachedThreshold } from "../ai/usage-alert.js";
 import { requireWhatsAppConnectAllowed } from "../lib/billing-gates.js";
 import { knowledgeRouter } from "./knowledge.js";
 import { brPhoneMatchKeys, brPhonesMatch, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
@@ -1004,12 +1005,14 @@ whatsappRouter.patch("/conversations/:id/contact", async (req: Request, res: Res
   }
 });
 
-/** GET /api/integrations/whatsapp/usage — uso de mensagens IA no mês (limites soft/hard) */
+/** GET /api/integrations/whatsapp/usage — uso de mensagens IA no mês (limites soft/hard e limiar de aviso). Tenant do JWT. */
 whatsappRouter.get("/usage", async (req: Request, res: Response): Promise<void> => {
   try {
     const barbershopId = getBarbershopId(req);
     const usage = await getUsageAndLimit(barbershopId);
-    res.json(usage);
+    const thresholdPct = aiUsageAlertThresholdPct();
+    const thresholdExceeded = usageReachedThreshold(usage.used, usage.limit, thresholdPct);
+    res.json({ ...usage, thresholdPct, thresholdExceeded });
   } catch (e) {
     console.error("whatsapp usage:", e);
     res.status(500).json({ error: "Falha ao obter uso" });

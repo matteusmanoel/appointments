@@ -1,12 +1,19 @@
 import { config } from "../config.js";
 import { pool } from "../db.js";
-import { sendAiUsageAlertEmail, type AiUsageAlertEmailParams } from "../lib/ses.js";
+import { sendAiUsageAlertEmail, type AiUsageAlertEmailParams, type AiUsageAlertKind } from "../lib/ses.js";
 
 type Env = Record<string, string | undefined>;
 
-/** Liga o aviso de uso da IA ao dono. PADRÃO DESLIGADO: sem AI_USAGE_ALERT_ENABLED=true nada é enviado. */
+/** Liga o registro do teto (`ai_hard_cap_notices`) e o contexto dos avisos de uso. PADRÃO LIGADO. Desliga com AI_USAGE_ALERT_ENABLED=false. Não dispara e-mail ao dono (veja `aiUsageOwnerEmailEnabled`). */
 export function aiUsageAlertEnabled(env: Env = process.env): boolean {
-  return (env.AI_USAGE_ALERT_ENABLED ?? "").trim().toLowerCase() === "true";
+  const raw = (env.AI_USAGE_ALERT_ENABLED ?? "").trim().toLowerCase();
+  if (raw === "false" || raw === "0" || raw === "off" || raw === "no") return false;
+  return true;
+}
+
+/** Liga o e-mail ao dono em 80%, 100% e no teto. PADRÃO DESLIGADO: sem AI_USAGE_OWNER_EMAIL_ENABLED=true nada é enviado. */
+export function aiUsageOwnerEmailEnabled(env: Env = process.env): boolean {
+  return (env.AI_USAGE_OWNER_EMAIL_ENABLED ?? "").trim().toLowerCase() === "true";
 }
 
 /** Percentual do limite que dispara o aviso (padrão 80; aceita 1–99). */
@@ -41,7 +48,7 @@ export function resetUsageAlertCacheForTests(): void {
 
 /**
  * Avisa o dono (e-mail do admin) quando o uso mensal da IA chega a AI_USAGE_ALERT_THRESHOLD_PCT% (padrão 80%) do limite.
- * - Flag desligada: retorna "disabled" sem tocar o banco nem enviar nada.
+ * - Flag de e-mail desligada (padrão; AI_USAGE_OWNER_EMAIL_ENABLED diferente de true): retorna "disabled" sem tocar o banco nem enviar nada.
  * - DEDUPE SÓ DEPOIS DO ENVIO: `ai_usage_alerts (barbershop_id, period, threshold_pct)` só recebe a linha quando o e-mail
  *   saiu. Falha do SES, `FROM_EMAIL` ausente (o envio lança) e dono sem e-mail não consomem o aviso do mês: o próximo
  *   turno tenta de novo. Execuções concorrentes são serializadas por advisory lock transacional (segunda = "duplicate").
@@ -49,12 +56,50 @@ export function resetUsageAlertCacheForTests(): void {
  */
 export async function maybeAlertAiUsage(
   params: { barbershopId: string; used: number; limit: number },
-  deps: { sender?: (p: AiUsageAlertEmailParams) => Promise<void>; env?: Env; now?: Date } = {},
+  deps: AlertDeps = {},
 ): Promise<UsageAlertResult> {
   const env = deps.env ?? process.env;
-  if (!aiUsageAlertEnabled(env)) return "disabled";
+  if (!aiUsageOwnerEmailEnabled(env)) return "disabled";
   const pct = aiUsageAlertThresholdPct(env);
   if (!usageReachedThreshold(params.used, params.limit, pct)) return "below";
+  return alertOnce(params, { key: pct, kind: "threshold" }, deps);
+}
+
+/** Chaves de dedupe (coluna threshold_pct de ai_usage_alerts) dos avisos de 100% e de teto. O de 80% usa o próprio percentual (1–99). */
+export const USAGE_ALERT_KEY_LIMIT = 100;
+export const USAGE_ALERT_KEY_HARD_CAP = 200;
+
+/**
+ * Aviso ao dono ao chegar a 100% do limite do plano (e ainda abaixo do teto). Mesmo canal, mesma flag
+ * (AI_USAGE_OWNER_EMAIL_ENABLED, desligada por padrão) e mesmo dedupe do aviso de 80%: um por barbearia e por mês.
+ */
+export async function maybeAlertAiUsageLimit(
+  params: { barbershopId: string; used: number; limit: number },
+  deps: AlertDeps = {},
+): Promise<UsageAlertResult> {
+  if (!aiUsageOwnerEmailEnabled(deps.env ?? process.env)) return "disabled";
+  if (!(params.limit > 0) || params.used < params.limit) return "below";
+  return alertOnce(params, { key: USAGE_ALERT_KEY_LIMIT, kind: "limit" }, deps);
+}
+
+/** Aviso ao dono ao chegar ao teto (2x o limite): a IA parou de responder. Um por barbearia e por mês. */
+export async function maybeAlertAiUsageHardCap(
+  params: { barbershopId: string; used: number; limit: number },
+  deps: AlertDeps = {},
+): Promise<UsageAlertResult> {
+  if (!aiUsageOwnerEmailEnabled(deps.env ?? process.env)) return "disabled";
+  if (!(params.limit > 0) || params.used < params.limit * 2) return "below";
+  return alertOnce(params, { key: USAGE_ALERT_KEY_HARD_CAP, kind: "hard_cap" }, deps);
+}
+
+type AlertDeps = { sender?: (p: AiUsageAlertEmailParams) => Promise<void>; env?: Env; now?: Date };
+
+async function alertOnce(
+  params: { barbershopId: string; used: number; limit: number },
+  alert: { key: number; kind: AiUsageAlertKind },
+  deps: AlertDeps,
+): Promise<UsageAlertResult> {
+  const pct = alert.key;
   const period = usagePeriod(deps.now);
   const cacheKey = `${params.barbershopId}:${period}:${pct}`;
   if (resolved.has(cacheKey)) return "duplicate";
@@ -95,6 +140,7 @@ export async function maybeAlertAiUsage(
       used: params.used,
       limit: params.limit,
       thresholdPct: pct,
+      kind: alert.kind,
     });
     await client.query(
       `INSERT INTO public.ai_usage_alerts (barbershop_id, period, threshold_pct) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,

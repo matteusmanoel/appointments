@@ -278,6 +278,66 @@ Se algum passo falhar (ex.: checkout 404, valor errado, onboarding sem credencia
 
 ---
 
+## 7.2 API keys de tools (n8n/integrações): pepper e rotação
+
+### Variável obrigatória
+
+| Variável                | Obrigatório | Descrição |
+| ----------------------- | ----------- | --------- |
+| `API_KEY_LOOKUP_PEPPER` | Sim em produção | Segredo de servidor (32+ caracteres, ex.: `openssl rand -hex 32`) usado como chave do HMAC-SHA256 do lookup das API keys. Em produção a API não sobe sem ele. Em dev/local também é exigido (só os testes têm um valor padrão próprio). No Terraform: variável sensível `api_key_lookup_pepper` (`infra/production`); só o nome vai para o repositório, nunca o valor. |
+
+Nunca grave o pepper no banco, em log ou em relatório. Guarde-o fora do repositório (gerenciador de segredos).
+
+### Formato das chaves e o que mudou
+
+- Chaves novas: `bfk_<uuid>_<32 hex>` (sufixo de 128 bits, `crypto.randomBytes(16)`). Antes o sufixo tinha 32 bits e o lookup era SHA-256 sem pepper, o que permitia recuperar a chave inteira por força bruta a partir de um dump do banco.
+- `key_lookup_hash` agora é `HMAC-SHA256(API_KEY_LOOKUP_PEPPER, chave)`. A migration `20261114030000_barbershop_api_keys_secret_bits.sql` (e o `ensure-schema`) apaga os SHA-256 antigos uma única vez; as chaves continuam funcionando pelo bcrypt (`key_hash`) e regravam o lookup com HMAC na primeira requisição.
+- `key_secret_bits` guarda a entropia do sufixo (128 nas chaves novas; `NULL` = emitida antes do formato novo e ainda não vista).
+- Chaves legadas e curtas seguem autenticando pelo fallback bcrypt. Nada é reemitido automaticamente.
+
+### Chaves curtas existentes DEVEM ser rotacionadas
+
+O hash HMAC protege o lookup, mas o `key_hash` (bcrypt) de uma chave de 32 bits continua sendo atacável offline. Liste o que rotacionar (somente leitura, sem segredos):
+
+```bash
+cd backend && npx tsx src/scripts/list-api-keys-for-rotation.ts
+```
+
+ou, direto no banco:
+
+```sql
+SELECT id, barbershop_id, name, created_at, last_used_at, key_secret_bits
+  FROM public.barbershop_api_keys
+ WHERE revoked_at IS NULL AND (key_secret_bits IS NULL OR key_secret_bits < 128);
+```
+
+Rotação (manual, uma chave por vez): criar a chave nova (painel Integrações ou `tsx src/scripts/create-api-key.ts <barbershop_id> [nome]`), trocar no n8n/integração e só então revogar a antiga.
+
+### Trocar o pepper
+
+Trocar `API_KEY_LOOKUP_PEPPER` invalida todos os `key_lookup_hash` gravados. Para as chaves voltarem a autenticar sem reemitir, apague os lookups (`UPDATE public.barbershop_api_keys SET key_lookup_hash = NULL WHERE revoked_at IS NULL;`): o próximo uso de cada chave passa pelo bcrypt e regrava o lookup com o pepper novo. Chaves de 128 bits cujo lookup foi apagado também voltam pelo caminho com prefixo (1 bcrypt).
+
+### Limites do caminho legado
+
+Chaves legadas não guardam o prefixo; por isso a varredura bcrypt só roda para chaves de formato legado (sufixo curto), com no máximo 250 linhas por varredura (ordem aleatória quando há mais pendentes), 20 varreduras por minuto por processo e cache negativo de 60 s. Chaves de formato novo que não existem no banco são recusadas sem nenhum bcrypt. Remova o caminho legado quando `SELECT count(*) FROM public.barbershop_api_keys WHERE revoked_at IS NULL AND key_lookup_hash IS NULL` retornar 0.
+
+## 7.3 Uso da IA: avisos ao dono e teto de uso
+
+Limite mensal de respostas da IA por plano (`usage-limits.ts`): Profissional 500, Premium 2.000. O **teto** é 2x o limite (1.000 e 4.000). Plano sem IA (limite 0) fica sempre bloqueado e em silêncio.
+
+| Uso no mês | O que acontece |
+| --- | --- |
+| 80% do limite (`AI_USAGE_ALERT_THRESHOLD_PCT`) | Aviso leve (badge) no painel admin. E-mail ao dono (primeiro admin com e-mail), 1x por mês, **somente** com `AI_USAGE_OWNER_EMAIL_ENABLED=true`. O e-mail diz quantas respostas faltam para o limite e a margem até o teto. |
+| 100% do limite | A IA continua até o teto. O painel segue com o aviso de uso. E-mail ao dono, 1x por mês, somente com o flag de e-mail ligado. |
+| Teto (2x o limite) | O agente do WhatsApp **fica em silêncio** com o cliente (nenhuma mensagem; nada que denuncie IA/robô). O painel admin mostra um badge de alerta: «Limite de IA atingido: o atendimento automático está pausado até o próximo ciclo». O evento é registrado em `ai_hard_cap_notices` (1 por conversa e mês). E-mail ao dono, 1x por mês, somente com o flag de e-mail ligado. O atendimento automático volta no próximo mês ou ao ampliar o plano. |
+
+- O registro em `ai_hard_cap_notices` fica atrás de `AI_USAGE_ALERT_ENABLED` (padrão ligado). Com `false`, não se grava o evento; o agente já fica em silêncio no teto de qualquer forma.
+- Os e-mails ao dono (80%, 100% e teto) ficam atrás de `AI_USAGE_OWNER_EMAIL_ENABLED` (padrão **desligado**; só `true` liga). Ausente ou `false` = nenhum e-mail.
+- Os e-mails exigem `FROM_EMAIL` verificado no SES; sem ele o envio falha, o aviso não é consumido e o próximo turno tenta de novo.
+- Dedupe dos e-mails: `ai_usage_alerts` (chaves 80, 100 e 200 em `threshold_pct`). Registro do teto por conversa: `ai_hard_cap_notices` (conversa + mês).
+- O badge do painel usa `GET /api/integrations/whatsapp/usage` (uso atual do tenant: `used`, `limit`, `softExceeded`, `hardExceeded`, `thresholdPct`, `thresholdExceeded`) e aparece com base no uso, independentemente dos flags de e-mail.
+- Não há mensagem ao cliente final no teto (o texto placeholder da Q14 foi removido). Não existe mais `AI_HARD_CAP_CUSTOMER_MESSAGE`.
+
 ## 8. Integração Uazapi (WhatsApp plug-and-play)
 
 ### Credenciais e variáveis
@@ -290,6 +350,8 @@ Configure as seguintes variáveis no backend (`.env` em dev ou parâmetros do st
 | `UAZAPI_ADMIN_TOKEN`        | Sim                      | Token de administrador obtido no painel da Uazapi (criação de instâncias).                                                |
 | `UAZAPI_WEBHOOK_PUBLIC_URL` | Sim                      | URL pública que receberá os eventos (ex.:`https://api.seudominio.com/api/webhooks/uazapi`). Deve ser HTTPS.               |
 | `APP_ENCRYPTION_KEY`        | Sim                      | Chave de pelo menos 32 caracteres para criptografar o token da instância no banco (ex.:`openssl rand -hex 32`).           |
+| `API_KEY_LOOKUP_PEPPER`     | Sim (produção)           | Pepper do HMAC do lookup das API keys (32+ caracteres). Ver seção 7.2.                                                    |
+| `AI_USAGE_OWNER_EMAIL_ENABLED` | Não                   | E-mail ao dono em 80%, 100% e no teto de uso da IA. Padrão desligado; só `true` liga. Ver seção 7.3.                      |
 | `N8N_CHAT_TRIGGER_URL`      | Não                      | URL do webhook “When chat message received” do fluxo de IA no n8n. Se não definida, o bot responderá com mensagem padrão. |
 
 Em desenvolvimento, use também `DATABASE_URL`, `JWT_SECRET` e, se quiser receber webhooks locais, exponha o backend via túnel HTTPS (ngrok, Cloudflare Tunnel, etc.) e defina `UAZAPI_WEBHOOK_PUBLIC_URL` com essa URL + `/api/webhooks/uazapi`.

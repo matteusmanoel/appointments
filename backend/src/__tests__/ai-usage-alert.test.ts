@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import {
   aiUsageAlertEnabled,
   aiUsageAlertThresholdPct,
+  aiUsageOwnerEmailEnabled,
   maybeAlertAiUsage,
   resetUsageAlertCacheForTests,
   usagePeriod,
@@ -9,13 +10,27 @@ import {
 } from "../ai/usage-alert.js";
 
 describe("regra do aviso de uso da IA (pura)", () => {
-  it("flag padrão desligada; limiar padrão 80, com fallback para valores inválidos", () => {
-    expect(aiUsageAlertEnabled({})).toBe(false);
+  it("AI_USAGE_ALERT_ENABLED padrão ligada; desliga só com false/0/off/no; limiar padrão 80, com fallback para valores inválidos", () => {
+    expect(aiUsageAlertEnabled({})).toBe(true);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "" })).toBe(true);
     expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "false" })).toBe(false);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "0" })).toBe(false);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "off" })).toBe(false);
+    expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: "no" })).toBe(false);
     expect(aiUsageAlertEnabled({ AI_USAGE_ALERT_ENABLED: " True " })).toBe(true);
     expect(aiUsageAlertThresholdPct({})).toBe(80);
     expect(aiUsageAlertThresholdPct({ AI_USAGE_ALERT_THRESHOLD_PCT: "90" })).toBe(90);
     for (const bad of ["0", "100", "abc", "-5"]) expect(aiUsageAlertThresholdPct({ AI_USAGE_ALERT_THRESHOLD_PCT: bad })).toBe(80);
+  });
+  it("e-mail ao dono só liga com AI_USAGE_OWNER_EMAIL_ENABLED=true (ausente, vazio ou false = desligado)", () => {
+    expect(aiUsageOwnerEmailEnabled({})).toBe(false);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: "" })).toBe(false);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: "false" })).toBe(false);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: "0" })).toBe(false);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: "off" })).toBe(false);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: "yes" })).toBe(false);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: "true" })).toBe(true);
+    expect(aiUsageOwnerEmailEnabled({ AI_USAGE_OWNER_EMAIL_ENABLED: " True " })).toBe(true);
   });
   it("dispara em >= 80% do limite; plano sem IA (limite 0) nunca", () => {
     expect(usageReachedThreshold(399, 500, 80)).toBe(false);
@@ -30,14 +45,25 @@ describe("regra do aviso de uso da IA (pura)", () => {
     expect(usagePeriod(new Date("2026-12-01T00:30:00Z"))).toBe("2026-11");
     expect(usagePeriod(new Date("2026-12-01T03:30:00Z"))).toBe("2026-12");
   });
-  it("flag desligada: não chama o remetente e nem toca o banco", async () => {
+  it("e-mail desligado (ausente ou false): não chama o remetente e nem toca o banco", async () => {
     const sender = vi.fn();
     expect(await maybeAlertAiUsage({ barbershopId: "x", used: 450, limit: 500 }, { sender, env: {} })).toBe("disabled");
+    expect(await maybeAlertAiUsage({ barbershopId: "x", used: 450, limit: 500 }, { sender, env: { AI_USAGE_OWNER_EMAIL_ENABLED: "false" } })).toBe("disabled");
+    expect(await maybeAlertAiUsage({ barbershopId: "x", used: 450, limit: 500 }, { sender, env: { AI_USAGE_ALERT_ENABLED: "true" } })).toBe("disabled");
     expect(sender).not.toHaveBeenCalled();
   });
-  it("abaixo do limiar: nada", async () => {
+  it("e-mail ligado (AI_USAGE_OWNER_EMAIL_ENABLED=true): com uso no limiar não retorna disabled", async () => {
     const sender = vi.fn();
-    expect(await maybeAlertAiUsage({ barbershopId: "x", used: 10, limit: 500 }, { sender, env: { AI_USAGE_ALERT_ENABLED: "true" } })).toBe("below");
+    const result = await maybeAlertAiUsage(
+      { barbershopId: "00000000-0000-0000-0000-000000000000", used: 450, limit: 500 },
+      { sender, env: { AI_USAGE_OWNER_EMAIL_ENABLED: "true" } },
+    );
+    expect(result).not.toBe("disabled");
+    expect(["no_recipient", "error", "sent"]).toContain(result);
+  });
+  it("abaixo do limiar: nada, mesmo com e-mail ligado", async () => {
+    const sender = vi.fn();
+    expect(await maybeAlertAiUsage({ barbershopId: "x", used: 10, limit: 500 }, { sender, env: { AI_USAGE_OWNER_EMAIL_ENABLED: "true" } })).toBe("below");
     expect(sender).not.toHaveBeenCalled();
   });
 });
@@ -75,7 +101,7 @@ describe("aviso de uso da IA (banco; remetente injetado, sem envio real)", () =>
     await pool.query("DELETE FROM public.barbershops WHERE id = $1", [shopId]);
   });
 
-  const env = { AI_USAGE_ALERT_ENABLED: "true" };
+  const env = { AI_USAGE_ALERT_ENABLED: "true", AI_USAGE_OWNER_EMAIL_ENABLED: "true" };
   const rows = async (id: string) => (await pool.query("SELECT period FROM public.ai_usage_alerts WHERE barbershop_id = $1", [id])).rows;
   beforeEach(() => resetUsageAlertCacheForTests());
   it("envia 1x por mês ao admin com uso/limite/percentual; repetições no mesmo mês são duplicata; mês novo avisa de novo", async () => {
