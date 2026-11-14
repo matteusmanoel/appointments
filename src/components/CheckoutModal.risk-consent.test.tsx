@@ -37,6 +37,7 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
     fillAndReachPlan();
     expect(screen.getByTestId("whatsapp-risk-notice").textContent).toContain(WHATSAPP_RISK_NOTICE_TEXT);
+    expect(screen.queryByRole("button", { name: "Voltar" })).toBeNull();
     const box = screen.getByRole("checkbox");
     expect(box.getAttribute("aria-checked")).toBe("false");
     expect((screen.getByRole("button", { name: /Ir para pagamento/ }) as HTMLButtonElement).disabled).toBe(false);
