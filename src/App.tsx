@@ -13,6 +13,8 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { UpgradeGate } from "@/components/UpgradeGate";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { LoadingState } from "@/components/LoadingState";
+import { TrackingRoot } from "@/components/TrackingRoot";
+import { ConsentBanner } from "@/components/ConsentBanner";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
@@ -54,7 +56,9 @@ const AppLayout = () => (
 
 const RootLayout = () => (
   <AuthProvider>
+    <TrackingRoot />
     <Outlet />
+    <ConsentBanner />
   </AuthProvider>
 );
 

@@ -7,6 +7,7 @@ import { billingApi, authApi } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
+import { trackPurchase } from "@/lib/tracking";
 
 type SessionState = "loading" | "pending" | "ready" | "consumed" | "error";
 
@@ -54,6 +55,12 @@ export default function Onboarding() {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  // Retorno de sucesso do Stripe: Purchase uma vez por session_id (guarda no localStorage).
+  useEffect(() => {
+    if (!sessionId) return;
+    trackPurchase({ sessionId });
+  }, [sessionId]);
 
   // If provisioning is still happening, poll for a short period.
   useEffect(() => {
