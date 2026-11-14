@@ -95,3 +95,40 @@ describe("ConnectTab: contagem regressiva só depois que o QR aparece", () => {
     expect(screen.getByText(/O tempo de pareamento acabou/)).toBeTruthy();
   });
 });
+
+describe("ConnectTab: texto de uso com saída de upgrade", () => {
+  it("no teto mostra o aviso e o link «Faça upgrade» para os planos", () => {
+    render(
+      <ConnectTab
+        {...props({
+          connection: { connected: true },
+          usage: { used: 1000, limit: 500, softExceeded: true, hardExceeded: true },
+        })}
+      />,
+    );
+    expect(screen.getByText(/Limite de IA atingido/)).toBeTruthy();
+    const link = screen.getByRole("link", { name: /Faça upgrade/i });
+    expect(link.getAttribute("href")).toBe("/app/planos");
+  });
+
+  it("em 80% também oferece «Faça upgrade» para evitar bloqueio", () => {
+    render(
+      <ConnectTab
+        {...props({
+          connection: { connected: true },
+          usage: {
+            used: 400,
+            limit: 500,
+            softExceeded: false,
+            hardExceeded: false,
+            thresholdExceeded: true,
+            thresholdPct: 80,
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText(/Uso de IA em 80%/)).toBeTruthy();
+    expect(screen.getByText(/para evitar bloqueio/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Faça upgrade/i }).getAttribute("href")).toBe("/app/planos");
+  });
+});
