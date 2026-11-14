@@ -259,7 +259,7 @@ export default function Landing() {
           <div className="relative max-w-6xl mx-auto w-full grid lg:grid-cols-[1fr_420px] gap-10 lg:gap-16 items-center">
             {/* Copy */}
             <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/30 bg-primary/10 text-[12px] font-mono text-primary mb-6">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/30 bg-primary/10 text-[12px] font-mono text-white/70 mb-6">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
                 Secretária virtual · agenda enquanto você corta
               </div>
@@ -273,9 +273,7 @@ export default function Landing() {
               </h1>
 
               <p className="text-lg md:text-xl text-white/75 mb-8 max-w-xl leading-relaxed">
-                Sua barbearia precisa girar. Você só precisa aparecer.
-                Nossa secretária virtual cuida do WhatsApp, agenda horários
-                e lembra seus clientes — 24 horas por dia, sem você parar a tesoura.
+              Sua barbearia precisa girar enquanto você atende. Nossa secretária virtual cuida do WhatsApp, marca horários e gerencia seus clientes — 24 horas por dia, com atendimento padrão e eficiente.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-3 mb-8">
@@ -301,7 +299,7 @@ export default function Landing() {
               </div>
 
               <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-white/35 font-mono">
-                {["Pronto em 30 minutos", "Sem fidelidade", "Cancele quando quiser"].map((t) => (
+                {["Responde imediatamente", "Atendimento padrão", "Cadeiras lotadas"].map((t) => (
                   <span key={t} className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-primary/70" />
                     {t}
@@ -667,7 +665,7 @@ export default function Landing() {
                     <span className="text-sm text-white/40">/mês</span>
                   </div>
                   <ul className="flex-1 space-y-2 text-sm text-white/55">
-                    {["Tudo do Profissional", "Tom da sua barbearia", "Várias unidades", "Prioridade no suporte", "1 número incluso"].map((f) => (
+                    {["Tudo do Profissional", "Tom personalizado da sua barbearia", "Várias unidades", "Prioridade no suporte", "3 números inclusos"].map((f) => (
                       <li key={f} className="flex items-center gap-2">
                         <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-violet-400/70" />{f}
                       </li>
@@ -680,7 +678,7 @@ export default function Landing() {
               </div>
 
               <div className="mt-8 grid md:grid-cols-3 gap-3 max-w-3xl mx-auto text-center">
-                {[["Sem fidelidade", "Cancele quando quiser, sem multa."], ["Pronto em 30 minutos", "Configuração guiada, sem complicação."], ["Pagamento seguro", "Assinatura mensal, simples assim."]].map(([title, desc], i) => (
+                {[["Sem fidelidade", "Cancele quando quiser, sem multa."], ["Simples de configurar", "Configuração guiada, sem complicação."], ["Pagamento seguro", "Assinatura mensal, simples assim."]].map(([title, desc], i) => (
                   <div key={i} className="p-4 rounded-xl border border-white/6 bg-white/[0.02]">
                     <p className="text-sm font-medium text-white/70">{title}</p>
                     <p className="text-xs text-white/30 mt-1">{desc}</p>
@@ -805,7 +803,7 @@ export default function Landing() {
                 </button>
 
                 <p className="text-white/30 text-sm font-mono">
-                  Pronto em 30 minutos · Sem fidelidade · Cancele quando quiser
+                  Simples de configurar · Sem fidelidade · Cancele quando quiser
                 </p>
 
                 <button

@@ -130,7 +130,9 @@ export function ConnectTab({
   expiredRef.current = onPairingExpired;
   const expiredFiredRef = useRef(false);
 
-  const isConnected = !!(connection?.connected || statusData?.connected);
+  const isConnected = statusData
+    ? statusData.connected === true || statusData.status === "connected"
+    : !!connection?.connected;
   const isConnecting = !isConnected && (pairingActive || startPending);
 
   // Sucesso some sozinho. O erro (ex.: tempo esgotado) fica até o dono tentar de novo.

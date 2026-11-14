@@ -63,7 +63,7 @@ const STEPS = [
 const PLAN_FEATURES: Record<BillingPlan, string[]> = {
   essential: ["Painel e link de agendamento", "Serviços, barbeiros, horários", "Cliente agenda online 24h"],
   pro: ["Tudo do Essencial", "Secretária no WhatsApp", "Lembretes 24h e 2h antes", "1 número incluso"],
-  premium: ["Tudo do Profissional", "Tom da sua barbearia", "Várias unidades", "1 número incluso"],
+  premium: ["Tudo do Profissional", "Tom personalizado da sua barbearia", "Várias unidades", "3 números inclusos"],
 };
 
 function isValidEmail(value: string): boolean {
@@ -287,7 +287,10 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         className={
           view === "embedded"
             ? "max-w-md sm:max-w-2xl md:max-w-4xl max-h-[90dvh] overflow-hidden w-[calc(100vw-2rem)] sm:w-full pb-0 flex flex-col"
-            : "left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-white/10 bg-[#0e0e0e] p-0 text-white shadow-[0_0_80px_hsl(239_84%_62%/0.22)] md:left-1/2 md:top-1/2 md:h-[min(900px,94dvh)] md:max-h-[94dvh] md:w-full md:max-w-5xl md:translate-x-[-50%] md:translate-y-[-50%] md:rounded-2xl [&>button]:top-6 [&>button]:flex [&>button]:h-8 [&>button]:w-8 [&>button]:items-center [&>button]:justify-center [&>button]:text-white [&>button]:opacity-80 [&>button]:hover:bg-white/10 [&>button]:hover:opacity-100"
+            : cn(
+                "left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-white/10 bg-[#0e0e0e] p-0 text-white shadow-[0_0_80px_hsl(239_84%_62%/0.22)] md:left-1/2 md:top-1/2 md:h-[min(900px,94dvh)] md:max-h-[94dvh] md:w-full md:max-w-5xl md:translate-x-[-50%] md:translate-y-[-50%] md:rounded-2xl [&>button]:top-6 [&>button]:flex [&>button]:h-8 [&>button]:w-8 [&>button]:items-center [&>button]:justify-center [&>button]:text-white [&>button]:opacity-80 [&>button]:hover:bg-white/10 [&>button]:hover:opacity-100",
+                step.id === "plan" && "max-md:[&>button]:hidden",
+              )
         }
         onPointerDownOutside={(e) => loading && e.preventDefault()}
         onEscapeKeyDown={() => !loading && onOpenChange(false)}
@@ -310,7 +313,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
               className={cn(
                 "min-h-0 flex-1 overflow-x-hidden px-6",
                 step.id === "plan"
-                  ? "flex flex-col overflow-y-auto pb-1 pt-14 md:py-4"
+                  ? "flex flex-col overflow-y-auto pb-1 pt-3 md:py-4"
                   : "flex flex-col justify-center overflow-y-auto py-4",
               )}
             >
@@ -430,7 +433,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                           aria-checked={selected}
                           onClick={() => setPlan(p.id)}
                           className={cn(
-                            "relative flex h-full min-h-0 w-full rounded-2xl p-1 text-left transition-all duration-200",
+                            "relative flex h-full min-h-0 w-full rounded-2xl p-1 pr-5 text-left transition-all duration-200",
                             selected
                               ? "bg-gradient-to-b from-primary via-violet-500 to-violet-300 shadow-[0_0_40px_hsl(262_83%_58%/0.6)]"
                               : "bg-white/10 hover:bg-white/20",
@@ -460,8 +463,8 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                             <span className="hidden text-sm text-white/40 md:block">{p.desc}</span>
                             <span className="mt-1 flex min-h-0 flex-1 flex-col justify-evenly gap-2">
                               {PLAN_FEATURES[p.id].map((feature) => (
-                                <span key={feature} className="flex items-start gap-2 text-xs leading-snug text-white/80 md:text-sm">
-                                  <CheckCircle2 className={cn("mt-0.5 h-3.5 w-3.5 shrink-0 md:h-4 md:w-4", selected ? "text-primary" : "text-primary/70")} />
+                                <span key={feature} className="flex items-start gap-2 text-sm leading-snug text-white/80 md:text-base">
+                                  <CheckCircle2 className={cn("mt-0.5 h-4 w-4 shrink-0 md:h-5 md:w-5", selected ? "text-primary" : "text-primary/70")} />
                                   {feature}
                                 </span>
                               ))}

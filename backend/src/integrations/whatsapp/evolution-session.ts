@@ -141,10 +141,16 @@ export class EvolutionSession implements WhatsAppSession {
 
   async status(): Promise<StatusResult> {
     let live: "disconnected" | "connecting" | "connected" = "disconnected";
+    let liveKnown = false;
     try {
       live = evo.mapEvolutionState(await evo.connectionState(this.instanceName, 8_000));
+      liveKnown = true;
     } catch {
+      // Sem resposta da Evolution, mantém o último estado gravado. Não promove "conectado".
       live = this.row.status === "connected" ? "connected" : "disconnected";
+    }
+    if (liveKnown && live !== this.row.status) {
+      await persistEvolutionSocketState(this.barbershopId, live);
     }
     if (live === "connected") {
       clearPairing(this.instanceName);
@@ -171,13 +177,18 @@ export class EvolutionSession implements WhatsAppSession {
     clearPairing(this.instanceName);
     try {
       await evo.logoutInstance(this.instanceName);
-    } finally {
-      await pool.query(
-        `UPDATE public.barbershop_whatsapp_connections
-         SET status = 'disconnected', disconnected_at = now(), updated_at = now()
-         WHERE barbershop_id = $1 AND provider = 'evolution'`,
-        [this.barbershopId],
+    } catch (e) {
+      // A sessão local precisa fechar mesmo se a Evolution estiver fora (stack incompleta ou instância já caída).
+      console.warn(
+        "[evolution] logout indisponível, conexão local encerrada:",
+        e instanceof Error ? e.message : e,
       );
     }
+    await pool.query(
+      `UPDATE public.barbershop_whatsapp_connections
+       SET status = 'disconnected', disconnected_at = now(), updated_at = now()
+       WHERE barbershop_id = $1 AND provider = 'evolution'`,
+      [this.barbershopId],
+    );
   }
 }
