@@ -4,6 +4,7 @@ import { pool, directPool } from "../db.js";
 import { config } from "../config.js";
 import { setPaymentPendingFlag } from "../ai/memory/client-memory.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { isNoopWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { brPhoneMatchKeys, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
 import {
   buildBirthdayMessage,
@@ -39,6 +40,7 @@ export type ScheduleReminderParams = {
  * Dedupe by appointment_id so we don't double-enqueue.
  */
 export async function scheduleReminderForAppointment(params: ScheduleReminderParams): Promise<void> {
+  if (isNoopWhatsAppOutbound()) return;
   const {
     barbershopId,
     appointmentId,
@@ -118,6 +120,7 @@ export async function scheduleReminderForAppointment(params: ScheduleReminderPar
 }
 
 export async function scheduleReminder2hForAppointment(params: ScheduleReminderParams): Promise<void> {
+  if (isNoopWhatsAppOutbound()) return;
   const {
     barbershopId,
     appointmentId,

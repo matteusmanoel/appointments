@@ -29,7 +29,8 @@
     "benchmark:refine": "tsx benchmark/cli.ts refine",
     "benchmark:list": "tsx benchmark/cli.ts list",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "simulate:agent": "tsx src/scripts/agent-simulator.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.998.0",
