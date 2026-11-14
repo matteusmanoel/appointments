@@ -1,10 +1,43 @@
 -- =============================================================================
--- Seed produção: admin + dados de teste (executar no SQL Editor do Supabase)
--- Idempotente: só insere quando não existir.
--- Login: admin@navalhia.com.br / Senha: admin123
+-- Seed de DEMONSTRAÇÃO: admin + dados de teste. NÃO é para produção com clientes reais.
 --
--- Inclui alteração de profiles (email/password_hash) se ainda não existir.
+-- !! NÃO rodar no Neon novo / em qualquer banco que já tenha dados reais. !!
+--    O script cria barbearia, barbeiros, clientes e agendamentos FICTÍCIOS e um admin; usado em
+--    produção, mistura dado de teste com dado de cliente. Por segurança ele aborta sozinho se já
+--    existir qualquer barbearia diferente de 'minha-navalhia'.
+--
+-- Uso (psql; o editor SQL do Supabase/Neon NÃO suporta -v / \if, de propósito):
+--   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v admin_password='<senha forte, 12+ caracteres>' \
+--        -f scripts/seed-production.sql
+--
+-- A senha NÃO tem valor padrão: sem -v admin_password (ou com menos de 12 caracteres) o script
+-- falha antes de gravar qualquer coisa. O admin sai com must_change_password = true quando a coluna existe.
+-- Idempotente: só insere quando não existir.
 -- =============================================================================
+
+\set ON_ERROR_STOP on
+
+\if :{?admin_password}
+\else
+  \echo 'ERRO: passe a senha do admin: psql ... -v admin_password=<senha forte> -f scripts/seed-production.sql'
+  DO $$ BEGIN RAISE EXCEPTION 'admin_password não informado (sem valor padrão, de propósito)'; END $$;
+\endif
+
+-- Guardas (falham com exceção; nada é gravado antes disso)
+SELECT length(:'admin_password') >= 12 AS senha_ok \gset
+\if :senha_ok
+\else
+  \echo 'ERRO: admin_password precisa ter pelo menos 12 caracteres.'
+  DO $$ BEGIN RAISE EXCEPTION 'admin_password curto demais (mínimo 12 caracteres)'; END $$;
+\endif
+
+DO $$
+BEGIN
+  IF to_regclass('public.barbershops') IS NOT NULL
+     AND EXISTS (SELECT 1 FROM public.barbershops WHERE slug IS DISTINCT FROM 'minha-navalhia') THEN
+    RAISE EXCEPTION 'Abortado: já existem barbearias reais neste banco. Este seed é só para banco vazio/demonstração.';
+  END IF;
+END $$;
 
 -- Colunas de login em profiles (idempotente)
 ALTER TABLE public.profiles
@@ -19,16 +52,24 @@ INSERT INTO public.barbershops (id, name, slug, phone, email, address)
 SELECT gen_random_uuid(), 'Minha NavalhIA', 'minha-navalhia', NULL, NULL, NULL
 WHERE NOT EXISTS (SELECT 1 FROM public.barbershops LIMIT 1);
 
--- 2) Admin (senha: admin123) — só se o email ainda não existir
+-- 2) Admin (senha vinda de -v admin_password) — só se o email ainda não existir
 INSERT INTO public.profiles (user_id, barbershop_id, full_name, email, password_hash, role)
 SELECT
   gen_random_uuid(),
   (SELECT id FROM public.barbershops ORDER BY created_at ASC LIMIT 1),
   'Admin',
   'admin@navalhia.com.br',
-  crypt('admin123', gen_salt('bf', 10)),
+  crypt(:'admin_password', gen_salt('bf', 10)),
   'admin'
 WHERE NOT EXISTS (SELECT 1 FROM public.profiles WHERE email = 'admin@navalhia.com.br');
+
+-- Força troca de senha no primeiro login (a coluna é criada pelas migrations; ignora se ainda não existir)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='profiles' AND column_name='must_change_password') THEN
+    UPDATE public.profiles SET must_change_password = true WHERE email = 'admin@navalhia.com.br' AND created_at > now() - interval '1 minute';
+  END IF;
+END $$;
 
 -- 3) Serviços de teste (só se ainda não houver serviços para a barbershop)
 DO $$
