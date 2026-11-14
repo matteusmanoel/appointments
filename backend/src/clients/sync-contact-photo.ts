@@ -2,6 +2,7 @@ import { pool } from "../db.js";
 import { brPhoneMatchKeys, phoneForStorage } from "../lib/phone-match.js";
 import { loadConnection } from "../integrations/whatsapp/index.js";
 import { fetchProfilePictureUrl } from "../integrations/whatsapp/evolution-client.js";
+import { isNoopWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 
 /** Busca a foto do WhatsApp só quando o cliente ainda não tem photo_url. Não lança. */
 export async function syncClientPhotoIfMissing(barbershopId: string, phone: string): Promise<string | null> {
@@ -47,6 +48,7 @@ export async function syncClientPhotoIfMissing(barbershopId: string, phone: stri
 
 /** Não bloqueia o turno do WhatsApp. */
 export function scheduleClientPhotoSync(barbershopId: string, phone: string): void {
+  if (isNoopWhatsAppOutbound()) return;
   void syncClientPhotoIfMissing(barbershopId, phone).catch((e) => {
     console.warn("[client-photo] sync failed:", e instanceof Error ? e.message : e);
   });

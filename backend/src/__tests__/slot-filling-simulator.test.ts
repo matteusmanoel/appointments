@@ -4,7 +4,8 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { pool } from "../db.js";
-import { runSimulator } from "../ai/simulator/session.js";
+import { ensureSimulatorConversation, runSimulator } from "../ai/simulator/session.js";
+import { simulatorClientPhone } from "../ai/simulator/namespace.js";
 import { createFakeSlotInterpreter } from "../ai/agent/slot-interpreter.js";
 import { resetWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { setSimulatorTraceEnabled } from "../ai/simulator/trace.js";
@@ -70,6 +71,13 @@ async function seedShop(suffix: string): Promise<ShopFx> {
     barberId: barber.rows[0]!.id,
     tomorrowIso: dates.rows[0]!.t,
   };
+}
+
+
+async function prepareSimulatorIdentity(fx: ShopFx, displayPhone: string) {
+  const sandboxPhone = simulatorClientPhone(fx.barbershopId, displayPhone);
+  const conversationId = await ensureSimulatorConversation(fx.barbershopId, displayPhone);
+  return { sandboxPhone, conversationId };
 }
 
 async function insertUpcoming(fx: ShopFx, phone: string): Promise<string> {
@@ -191,7 +199,8 @@ describe("fluxos básicos pelo simulador", () => {
 
   it("cancelar: cancela o horário futuro e não oferece vaga", async () => {
     const phone = "5500000000102";
-    const appointmentId = await insertUpcoming(cancelFx, phone);
+    const { sandboxPhone } = await prepareSimulatorIdentity(cancelFx, phone);
+    const appointmentId = await insertUpcoming(cancelFx, sandboxPhone);
     const result = await runSimulator({
       tenant: cancelFx.slug,
       phone,
@@ -209,27 +218,9 @@ describe("fluxos básicos pelo simulador", () => {
 
   it("lembrar: «confirmo» confirma presença sem chamar o LLM", async () => {
     const phone = "5500000000103";
-    const appointmentId = await insertUpcoming(remindFx, phone);
-    const boot = await runSimulator({
-      tenant: remindFx.slug,
-      phone,
-      turns: [],
-      interactive: false,
-      llm: "none",
-      trace: false,
-      print: () => {},
-    }).catch(() => null);
-    // Garante a conversa sandbox mesmo sem turnos? runSimulator exige replay ou interactive.
-    // Cria a conversa direto:
-    const conv = await pool.query<{ id: string }>(
-      `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox)
-       VALUES ($1, 'whatsapp', $2, true)
-       ON CONFLICT (barbershop_id, channel, external_thread_id) DO UPDATE SET is_sandbox = true
-       RETURNING id`,
-      [remindFx.barbershopId, phone],
-    );
-    void boot;
-    await seedReminder(remindFx, conv.rows[0]!.id, appointmentId, phone);
+    const { sandboxPhone, conversationId } = await prepareSimulatorIdentity(remindFx, phone);
+    const appointmentId = await insertUpcoming(remindFx, sandboxPhone);
+    await seedReminder(remindFx, conversationId, appointmentId, sandboxPhone);
     const result = await runSimulator({
       tenant: remindFx.slug,
       phone,
@@ -247,15 +238,9 @@ describe("fluxos básicos pelo simulador", () => {
 
   it("lembrar: pedido de remarcação oferece horários e mantém o agendamento", async () => {
     const phone = "5500000000104";
-    const appointmentId = await insertUpcoming(reschedFx, phone);
-    const conv = await pool.query<{ id: string }>(
-      `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox)
-       VALUES ($1, 'whatsapp', $2, true)
-       ON CONFLICT (barbershop_id, channel, external_thread_id) DO UPDATE SET is_sandbox = true
-       RETURNING id`,
-      [reschedFx.barbershopId, phone],
-    );
-    await seedReminder(reschedFx, conv.rows[0]!.id, appointmentId, phone);
+    const { sandboxPhone, conversationId } = await prepareSimulatorIdentity(reschedFx, phone);
+    const appointmentId = await insertUpcoming(reschedFx, sandboxPhone);
+    await seedReminder(reschedFx, conversationId, appointmentId, sandboxPhone);
     const result = await runSimulator({
       tenant: reschedFx.slug,
       phone,
@@ -403,10 +388,11 @@ describe("fluxos básicos pelo simulador", () => {
 
   it("«você é robô?» no meio do agendamento desvia e segue com o card", async () => {
     const phone = "5500000000117";
+    const { sandboxPhone } = await prepareSimulatorIdentity(extraFx, phone);
     await pool.query(
       `INSERT INTO public.clients (barbershop_id, name, phone, name_confirmed) VALUES ($1, 'Mateus', $2, true)
        ON CONFLICT (barbershop_id, phone) DO UPDATE SET name = 'Mateus', name_confirmed = true`,
-      [extraFx.barbershopId, phone],
+      [extraFx.barbershopId, sandboxPhone],
     );
     const result = await runSimulator({
       tenant: extraFx.slug,

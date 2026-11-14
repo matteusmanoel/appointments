@@ -1,4 +1,5 @@
 import { pool } from "../../db.js";
+import { maskPhone } from "../turn-trace.js";
 
 export const SIMULATOR_TRACE_FLAG = "AI_SIMULATOR_TRACE_ENABLED";
 
@@ -52,6 +53,41 @@ function truncateJson(value: unknown, max = 8000): unknown {
   }
 }
 
+
+export const SIMULATOR_TRACE_TTL_DAYS = 7;
+
+function maskPhonesInText(text: string): string {
+  return text.replace(/\+?\d[\d\s().-]{8,}\d/g, (match) => maskPhone(match));
+}
+
+export function maskSimulatorTraceValue(value: unknown): unknown {
+  if (typeof value === "string") return maskPhonesInText(value);
+  if (Array.isArray(value)) return value.map(maskSimulatorTraceValue);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (/(phone|telefone|external_thread)/i.test(key) && typeof val === "string") {
+        out[key] = maskPhone(val);
+      } else {
+        out[key] = maskSimulatorTraceValue(val);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+export async function purgeExpiredSimulatorTurnTraces(
+  olderThanDays = SIMULATOR_TRACE_TTL_DAYS,
+): Promise<number> {
+  const days = Number.isFinite(olderThanDays) && olderThanDays > 0 ? olderThanDays : SIMULATOR_TRACE_TTL_DAYS;
+  const r = await pool.query(
+    `DELETE FROM public.ai_simulator_turn_traces WHERE created_at < now() - ($1::int * interval '1 day')`,
+    [days],
+  );
+  return r.rowCount ?? 0;
+}
+
 export async function saveSimulatorTurnTrace(trace: SimulatorTurnTrace): Promise<string | null> {
   if (!isSimulatorTraceEnabled()) return null;
   const r = await pool.query<{ id: string }>(
@@ -69,19 +105,21 @@ export async function saveSimulatorTurnTrace(trace: SimulatorTurnTrace): Promise
       trace.conversationId,
       trace.turnIndex,
       trace.simulatedNow ?? null,
-      trace.userMessage,
-      JSON.stringify(truncateJson(trace.intent)),
-      JSON.stringify(truncateJson(trace.draft)),
-      JSON.stringify(truncateJson(trace.tools)),
-      trace.finalReply,
-      trace.aiExposure ? JSON.stringify(truncateJson(trace.aiExposure)) : null,
+      maskPhonesInText(trace.userMessage),
+      JSON.stringify(truncateJson(maskSimulatorTraceValue(trace.intent))),
+      JSON.stringify(truncateJson(maskSimulatorTraceValue(trace.draft))),
+      JSON.stringify(truncateJson(maskSimulatorTraceValue(trace.tools))),
+      maskPhonesInText(trace.finalReply ?? ""),
+      trace.aiExposure ? JSON.stringify(truncateJson(maskSimulatorTraceValue(trace.aiExposure))) : null,
       trace.latencyMs,
       trace.promptTokens,
       trace.completionTokens,
       trace.totalTokens,
     ],
   );
-  return r.rows[0]?.id ?? null;
+  const id = r.rows[0]?.id ?? null;
+  await purgeExpiredSimulatorTurnTraces().catch(() => undefined);
+  return id;
 }
 
 export function formatSimulatorTurn(trace: SimulatorTurnTrace, phoneMasked: string): string {
@@ -109,13 +147,13 @@ export function formatSimulatorTurn(trace: SimulatorTurnTrace, phoneMasked: stri
   const reply = (trace.finalReply || "(vazio)").replace(/\[\[MSG\]\]/g, "\n  ");
   return [
     `── turno ${trace.turnIndex}${when} · ${phoneMasked}`,
-    `cliente: ${trace.userMessage}`,
+    `cliente: ${maskPhonesInText(trace.userMessage)}`,
     `intent:  ${intent}`,
     `rascunho: ${draft}`,
     `tools:`,
     tools || "  (nenhuma)",
     `resposta:`,
-    `  ${reply}`,
+    `  ${maskPhonesInText(reply)}`,
     `ai_exposure:`,
     exposure,
     `latência: ${trace.latencyMs} ms · tokens: ${trace.promptTokens}/${trace.completionTokens} (total ${trace.totalTokens})`,

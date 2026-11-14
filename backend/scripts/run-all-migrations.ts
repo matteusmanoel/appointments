@@ -23,6 +23,11 @@ const client = new pg.Client({
 
 const MIGRATIONS_TABLE = "public._migrations";
 
+/** Tabela de trace do simulador CLI: não criar em produção. O follow-up de endurecimento (sem FKs) permanece, é inofensivo. */
+const SKIP_IN_MIGRATE_ALL = new Set([
+  "20261114210000_ai_simulator_turn_traces.sql",
+]);
+
 async function run() {
   await client.connect();
 
@@ -72,6 +77,10 @@ async function run() {
   // 2) Migrations Supabase (ordenadas)
   const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort();
   for (const file of files) {
+    if (SKIP_IN_MIGRATE_ALL.has(file)) {
+      console.log("Skipping (local simulator only):", file);
+      continue;
+    }
     if (applied.has(file)) {
       console.log("Skipping (already applied):", file);
       continue;

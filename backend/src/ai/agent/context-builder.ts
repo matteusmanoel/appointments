@@ -16,6 +16,7 @@
 import { pool } from "../../db.js";
 import * as aiTools from "../tools.js";
 import { addDaysIso } from "../date-calendar.js";
+import { getSimulatedNow, parseSimulatedNow } from "../simulator/clock.js";
 import {
   getClientMemory,
   clientMemoryTableExists,
@@ -227,11 +228,8 @@ export async function buildAgentContext(
     settings?.timezone && settings.timezone.includes("/")
       ? settings.timezone
       : "America/Sao_Paulo";
-  const simulatedNowDate = simulatedNow ? new Date(simulatedNow) : null;
   const now =
-    simulatedNowDate && !Number.isNaN(simulatedNowDate.getTime())
-      ? simulatedNowDate
-      : new Date();
+    parseSimulatedNow(simulatedNow) ?? getSimulatedNow() ?? new Date();
   const dateTimeStr = new Intl.DateTimeFormat("sv-SE", {
     timeZone,
     year: "numeric",

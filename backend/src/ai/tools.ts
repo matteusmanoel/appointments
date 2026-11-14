@@ -15,6 +15,7 @@ import {
 import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
 import { scheduleClientPhotoSync } from "../clients/sync-contact-photo.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { isNoopWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { dateToolMeta, weekdayKeyFromIso } from "./date-calendar.js";
 import { appendClientNote } from "./memory/client-memory.js";
 import {
@@ -755,7 +756,8 @@ export async function validateSlotForPublicReschedule(
     [params.date, timeNorm, tz],
   );
   const startUtc = startUtcRow.rows[0]?.start_utc;
-  if (!startUtc || startUtc.getTime() <= Date.now()) {
+  const nowMs = getSimulatedNow()?.getTime() ?? Date.now();
+  if (!startUtc || startUtc.getTime() <= nowMs) {
     return { ok: false, error: "Horário não pode ser no passado" };
   }
 
@@ -2374,6 +2376,16 @@ export async function sendPixPlanCharge(
   const clientPhone = (params.client_phone || sub.client_phone).replace(/\D/g, "");
   const amount = openCharge ? Number(openCharge.amount) : Number(sub.price);
   const city = (shop.address ?? "").split(",").pop()?.trim() || "Brasil";
+
+  if (isNoopWhatsAppOutbound()) {
+    return {
+      ok: true,
+      skipped_send: true,
+      amount,
+      charged_month: openCharge?.due_date ?? null,
+      message: "Simulador: cobrança PIX não foi marcada como enviada nem despachada.",
+    };
+  }
 
   const session = await getWhatsAppOrNull(barbershopId);
   let sentNative = false;

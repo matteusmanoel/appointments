@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import type OpenAI from "openai";
 import { pool } from "../../db.js";
+import { assertLocalDatabaseUrl } from "../../db/local-database-url.js";
 import { runAgent } from "../agent.js";
 import { loadBookingDraft } from "../booking-draft.js";
 import { isValidUuid } from "../../lib/uuid.js";
@@ -23,6 +24,7 @@ import {
   setSimulatorTraceEnabled,
   type SimulatorTurnTrace,
 } from "./trace.js";
+import { SIMULATOR_CHANNEL, simulatorClientPhone, simulatorThreadId } from "./namespace.js";
 
 export type SimulatorOptions = {
   tenant: string;
@@ -33,7 +35,7 @@ export type SimulatorOptions = {
   interactive?: boolean;
   llm?: "none" | "openai";
   openai?: OpenAI;
-  /** Default: liga o trace neste processo. */
+  /** Só grava trace no Postgres quando true (--trace). Default: desligado. */
   trace?: boolean;
   persistAssistantMessages?: boolean;
   print?: (line: string) => void;
@@ -84,25 +86,20 @@ export async function ensureSimulatorConversation(
   phone: string,
 ): Promise<string> {
   const digits = phone.replace(/\D/g, "");
+  const threadId = simulatorThreadId(digits);
   const existing = await pool.query<{ id: string }>(
     `SELECT id FROM public.ai_conversations
-     WHERE barbershop_id = $1 AND channel = 'whatsapp' AND external_thread_id = $2
+     WHERE barbershop_id = $1 AND channel = $2 AND external_thread_id = $3
      ORDER BY updated_at DESC NULLS LAST
      LIMIT 1`,
-    [barbershopId, digits],
+    [barbershopId, SIMULATOR_CHANNEL, threadId],
   );
-  if (existing.rows[0]) {
-    await pool.query(
-      `UPDATE public.ai_conversations SET is_sandbox = true, updated_at = now() WHERE id = $1`,
-      [existing.rows[0].id],
-    );
-    return existing.rows[0].id;
-  }
+  if (existing.rows[0]) return existing.rows[0].id;
   const created = await pool.query<{ id: string }>(
     `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox, updated_at)
-     VALUES ($1, 'whatsapp', $2, true, now())
+     VALUES ($1, $2, $3, true, now())
      RETURNING id`,
-    [barbershopId, digits],
+    [barbershopId, SIMULATOR_CHANNEL, threadId],
   );
   return created.rows[0]!.id;
 }
@@ -171,17 +168,22 @@ export async function runSimulatorTurn(params: {
 }
 
 export async function runSimulator(options: SimulatorOptions): Promise<SimulatorRunResult> {
+  assertLocalDatabaseUrl();
   useNoopWhatsAppOutbound();
-  if (options.trace !== false) setSimulatorTraceEnabled(true);
+  if (options.trace === true) setSimulatorTraceEnabled(true);
+  else setSimulatorTraceEnabled(false);
 
   const print = options.print ?? ((line: string) => process.stdout.write(`${line}\n`));
-  const shop = await resolveTenant(options.tenant);
-  const phone = (options.phone ?? DEFAULT_PHONE).replace(/\D/g, "") || DEFAULT_PHONE;
-  const nowRaw = options.now;
+  let script: ReplayScript | undefined;
+  if (options.replayPath) script = parseReplayFile(options.replayPath);
+  const shop = await resolveTenant(options.tenant ?? script?.tenant ?? "");
+  const phone = (options.phone ?? script?.phone ?? DEFAULT_PHONE).replace(/\D/g, "") || DEFAULT_PHONE;
+  const nowRaw = options.now ?? script?.now;
   if (nowRaw && !parseSimulatedNow(nowRaw)) {
     throw new Error(`--now inválido (${nowRaw}). Use ISO, ex. 2026-11-14T18:08:00-03:00.`);
   }
   const conversationId = await ensureSimulatorConversation(shop.id, phone);
+  const sandboxPhone = simulatorClientPhone(shop.id, phone);
   const openai =
     options.openai ??
     (options.llm === "openai" ? await loadLiveOpenAI() : stubOpenAI());
@@ -199,7 +201,7 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
     const trace = await runSimulatorTurn({
       barbershopId: shop.id,
       conversationId,
-      phone,
+      phone: sandboxPhone,
       userText: text,
       now: nowRaw,
       openai,
@@ -215,8 +217,6 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
     results.push({ trace, printed, reply: trace.finalReply });
   };
 
-  let script: ReplayScript | undefined;
-  if (options.replayPath) script = parseReplayFile(options.replayPath);
   const seeded = options.turns ?? script?.turns ?? [];
   for (const turn of seeded) {
     if (turn.role === "assistant") {

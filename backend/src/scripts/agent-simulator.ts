@@ -6,6 +6,7 @@
  *   npm run simulate:agent -- --tenant <slug|uuid> --interactive --now 2026-11-14T18:08:00-03:00
  */
 import { runSimulator } from "../ai/simulator/session.js";
+import { assertLocalDatabaseUrl } from "../db/local-database-url.js";
 
 function usage(): string {
   return `Uso:
@@ -19,7 +20,8 @@ Opções:
   --replay, -r     Arquivo de conversa (JSON ou YAML)
   --interactive, -i
   --llm none|openai   Padrão: none (sem custo de API). openai só interpreta se o turno cair no modelo.
-  --trace / --no-trace   Grava trace no Postgres local (flag AI_SIMULATOR_TRACE_ENABLED; padrão no CLI: ligado)
+  --trace               Grava trace no Postgres local (flag AI_SIMULATOR_TRACE_ENABLED; padrão: desligado)
+  --no-trace            Mantém o trace desligado (padrão)
 
 Nada é enviado pelo WhatsApp (provider noop). Não use este comando contra clientes reais.
 A tabela de trace só é escrita com a flag ligada (desligada por padrão na API/produção).`;
@@ -44,6 +46,7 @@ function has(args: string[], names: string[]): boolean {
 }
 
 async function main() {
+  assertLocalDatabaseUrl();
   const args = process.argv.slice(2);
   if (has(args, ["-h", "--help"]) || args.length === 0) {
     process.stdout.write(`${usage()}\n`);
@@ -64,7 +67,7 @@ async function main() {
       replayPath: arg(args, ["--replay", "-r"]),
       interactive: has(args, ["--interactive", "-i"]),
       llm,
-      trace: has(args, ["--no-trace"]) ? false : true,
+      trace: has(args, ["--trace"]) && !has(args, ["--no-trace"]),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
