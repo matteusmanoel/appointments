@@ -72,7 +72,7 @@ const checkoutBody = z.object({
 });
 
 /** Versão do texto do aviso mostrada no checkout (a UI envia a que exibiu; fica gravada na sessão do Stripe). */
-export const WHATSAPP_RISK_NOTICE_VERSION = "2026-11-13";
+export const WHATSAPP_RISK_NOTICE_VERSION = "2026-11-13b";
 
 /**
  * O aceite é obrigatório no servidor (não só na UI). CHECKOUT_REQUIRE_RISK_ACCEPTANCE=false desliga a exigência

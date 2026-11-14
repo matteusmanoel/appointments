@@ -18,10 +18,13 @@ vi.mock("@/lib/api", () => ({
 import { CheckoutModal } from "./CheckoutModal";
 import { WHATSAPP_RISK_NOTICE_TEXT, WHATSAPP_RISK_NOTICE_VERSION, WHATSAPP_RISK_REQUIRED_MESSAGE } from "@/lib/whatsapp-risk-notice";
 
-function fillForm() {
-  fireEvent.change(document.getElementById("barbershop_name")!, { target: { value: "Barbearia Teste" } });
-  fireEvent.change(document.getElementById("phone")!, { target: { value: "45999990000" } });
-  fireEvent.change(document.getElementById("email")!, { target: { value: "dono@example.test" } });
+function fillAndReachPlan() {
+  fireEvent.change(document.getElementById("checkout-email")!, { target: { value: "dono@example.test" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.change(document.getElementById("checkout-phone")!, { target: { value: "45999990000" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.change(document.getElementById("checkout-name")!, { target: { value: "Barbearia Teste" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
 }
 
 describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
@@ -32,7 +35,7 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
 
   it("mostra o aviso na íntegra e a caixa desmarcada; o botão de pagar NÃO fica desativado (o motivo aparece ao clicar)", () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
-    fillForm();
+    fillAndReachPlan();
     expect(screen.getByTestId("whatsapp-risk-notice").textContent).toContain(WHATSAPP_RISK_NOTICE_TEXT);
     const box = screen.getByRole("checkbox");
     expect(box.getAttribute("aria-checked")).toBe("false");
@@ -41,18 +44,21 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
 
   it("clicar em pagar sem aceitar mostra a mensagem, leva o foco à caixa e não envia nada", async () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
-    fillForm();
+    fillAndReachPlan();
     fireEvent.click(screen.getByRole("button", { name: /Ir para pagamento/ }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(WHATSAPP_RISK_REQUIRED_MESSAGE));
     expect(document.activeElement).toBe(document.getElementById("whatsapp_risk"));
     expect(createCheckout).not.toHaveBeenCalled();
   });
 
-  it("campo inválido tem prioridade no foco; marcar a caixa limpa a mensagem de aceite", async () => {
+  it("e-mail vazio segura o foco no passo atual; no plano, marcar a caixa limpa o aviso", async () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await waitFor(() => expect(document.activeElement).toBe(document.getElementById("checkout-email")));
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fillAndReachPlan();
     fireEvent.click(screen.getByRole("button", { name: /Ir para pagamento/ }));
-    await waitFor(() => expect(document.activeElement).toBe(document.getElementById("barbershop_name")));
-    expect(screen.getByRole("alert").textContent).toBe(WHATSAPP_RISK_REQUIRED_MESSAGE);
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(WHATSAPP_RISK_REQUIRED_MESSAGE));
     fireEvent.click(screen.getByRole("checkbox"));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(createCheckout).not.toHaveBeenCalled();
@@ -60,7 +66,7 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
 
   it("sem marcar não envia nada ao servidor (nem forçando o submit do formulário)", async () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
-    fillForm();
+    fillAndReachPlan();
     fireEvent.submit(document.querySelector("form")!);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/aceite do aviso/i));
     expect(createCheckout).not.toHaveBeenCalled();
@@ -68,7 +74,7 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
 
   it("marcando a caixa envia o aceite com a versão do texto", async () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
-    fillForm();
+    fillAndReachPlan();
     fireEvent.click(screen.getByRole("checkbox"));
     const btn = screen.getByRole("button", { name: /Ir para pagamento/ }) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
@@ -81,7 +87,7 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
 
   it("desmarcar de novo volta a exigir o aceite ao clicar", async () => {
     render(<CheckoutModal open onOpenChange={() => {}} />);
-    fillForm();
+    fillAndReachPlan();
     const box = screen.getByRole("checkbox");
     fireEvent.click(box);
     fireEvent.click(box);

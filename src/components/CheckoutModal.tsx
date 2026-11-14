@@ -21,10 +21,12 @@ import { billingApi, type BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
 import { checkoutErrorMessage } from "@/lib/checkout-validation";
 import {
-  WHATSAPP_RISK_CHECKBOX_LABEL,
-  WHATSAPP_RISK_NOTICE_TEXT,
+  WHATSAPP_RISK_CHECKBOX_AFTER,
+  WHATSAPP_RISK_CHECKBOX_BEFORE,
+  WHATSAPP_RISK_CHECKBOX_LINK,
   WHATSAPP_RISK_NOTICE_VERSION,
   WHATSAPP_RISK_REQUIRED_MESSAGE,
+  WHATSAPP_RISK_TERMS_URL,
 } from "@/lib/whatsapp-risk-notice";
 import { cn } from "@/lib/utils";
 
@@ -147,6 +149,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     }
     if (!riskAccepted) {
       setFieldError(WHATSAPP_RISK_REQUIRED_MESSAGE);
+      document.getElementById("whatsapp_risk")?.focus();
       return;
     }
     setError(null);
@@ -238,7 +241,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         className={
           view === "embedded"
             ? "max-w-md sm:max-w-2xl md:max-w-4xl max-h-[90dvh] overflow-hidden w-[calc(100vw-2rem)] sm:w-full pb-0 flex flex-col"
-            : "left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-white/10 bg-[#0e0e0e] p-0 text-white shadow-[0_0_80px_hsl(239_84%_62%/0.22)] sm:left-1/2 sm:top-1/2 sm:h-[min(760px,92dvh)] sm:max-h-[92dvh] sm:w-full sm:max-w-xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-2xl [&>button]:top-6 [&>button]:flex [&>button]:h-8 [&>button]:w-8 [&>button]:items-center [&>button]:justify-center [&>button]:text-white [&>button]:opacity-80 [&>button]:hover:bg-white/10 [&>button]:hover:opacity-100"
+            : "left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-screen max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-white/10 bg-[#0e0e0e] p-0 text-white shadow-[0_0_80px_hsl(239_84%_62%/0.22)] md:left-1/2 md:top-1/2 md:h-[min(900px,94dvh)] md:max-h-[94dvh] md:w-full md:max-w-5xl md:translate-x-[-50%] md:translate-y-[-50%] md:rounded-2xl [&>button]:top-6 [&>button]:flex [&>button]:h-8 [&>button]:w-8 [&>button]:items-center [&>button]:justify-center [&>button]:text-white [&>button]:opacity-80 [&>button]:hover:bg-white/10 [&>button]:hover:opacity-100"
         }
         onPointerDownOutside={(e) => loading && e.preventDefault()}
         onEscapeKeyDown={() => !loading && onOpenChange(false)}
@@ -359,7 +362,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
                 {step.id === "plan" && (
                   <>
-                  <div role="radiogroup" aria-label="Plano" className="space-y-3 pt-3">
+                  <div role="radiogroup" aria-label="Plano" className="grid grid-cols-1 gap-3 pt-4 md:grid-cols-3 md:items-stretch">
                     {BILLING_PLANS.map((p) => {
                       const selected = plan === p.id;
                       const featured = p.id === "pro";
@@ -371,7 +374,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                           aria-checked={selected}
                           onClick={() => setPlan(p.id)}
                           className={cn(
-                            "relative w-full rounded-2xl text-left transition-all duration-200",
+                            "relative flex h-full w-full rounded-2xl text-left transition-all duration-200",
                             selected
                               ? "bg-gradient-to-b from-primary via-violet-500 to-violet-300 p-1 shadow-[0_0_40px_hsl(262_83%_58%/0.6)]"
                               : "bg-white/10 p-px hover:bg-white/20",
@@ -385,7 +388,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                           )}
                           <span
                             className={cn(
-                              "flex flex-col gap-2 rounded-2xl px-4 py-3.5",
+                              "flex h-full flex-col gap-2 rounded-2xl px-4 py-3.5",
                               selected
                                 ? "bg-gradient-to-b from-[#2a2158] via-[#1a1630] to-[#12101c]"
                                 : featured
@@ -393,7 +396,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                                   : "bg-[#101014]",
                             )}
                           >
-                            <span className="flex items-baseline justify-between gap-3">
+                            <span className="flex flex-col items-start gap-1">
                               <span className="font-display text-lg font-bold text-white">{p.label}</span>
                               <span className="font-display text-lg font-bold text-white">{p.price}</span>
                             </span>
@@ -417,30 +420,35 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     })}
                   </div>
                   <div
-                      className={cn(
-                        "mt-4 rounded-2xl border bg-white/5 px-4 py-3 text-sm",
-                        fieldError === WHATSAPP_RISK_REQUIRED_MESSAGE ? "border-red-400/70" : "border-white/10",
-                      )}
-                      data-testid="whatsapp-risk-notice"
-                    >
-                      <p className="font-medium text-white">Aviso sobre o WhatsApp</p>
-                      <p id="whatsapp_risk_text" className="mt-1 text-sm text-white/55">{WHATSAPP_RISK_NOTICE_TEXT}</p>
-                      <div className="mt-3 flex items-start gap-2">
-                        <Checkbox
-                          id="whatsapp_risk"
-                          checked={riskAccepted}
-                          onCheckedChange={(v) => {
-                            setRiskAccepted(v === true);
-                            setFieldError("");
-                          }}
-                          aria-describedby="whatsapp_risk_text"
-                          className="mt-0.5 h-5 w-5 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
-                        />
-                        <Label htmlFor="whatsapp_risk" className="cursor-pointer text-sm font-normal leading-snug text-white/80">
-                          {WHATSAPP_RISK_CHECKBOX_LABEL}
-                        </Label>
-                      </div>
-                    </div>
+                    className={cn(
+                      "mt-4 flex items-start gap-3 rounded-xl px-1 py-1",
+                      fieldError === WHATSAPP_RISK_REQUIRED_MESSAGE && "ring-1 ring-red-400/70",
+                    )}
+                    data-testid="whatsapp-risk-notice"
+                  >
+                    <Checkbox
+                      id="whatsapp_risk"
+                      checked={riskAccepted}
+                      onCheckedChange={(v) => {
+                        setRiskAccepted(v === true);
+                        setFieldError("");
+                      }}
+                      aria-describedby="whatsapp_risk_text"
+                      className="mt-0.5 h-5 w-5 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
+                    />
+                    <p id="whatsapp_risk_text" className="text-sm font-normal leading-snug text-white/80">
+                      <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_BEFORE}</label>
+                      <a
+                        href={WHATSAPP_RISK_TERMS_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-primary hover:underline"
+                      >
+                        {WHATSAPP_RISK_CHECKBOX_LINK}
+                      </a>
+                      <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_AFTER}</label>
+                    </p>
+                  </div>
                   </>
                 )}
 
