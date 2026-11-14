@@ -54,6 +54,12 @@ export type OrchestratorInput = {
   spokenHourOutside?: boolean;
   /** This message names a catalog barber and does not name a new hour. */
   namedBarberThisTurn?: boolean;
+  /** Returning client's usual service (from visit history/memory). Suggested, never filled in silently. */
+  usualService?: { service_ids: string[]; service_name: string } | null;
+  /** The client just refused the usual service the agent suggested: ask which one, do not suggest again. */
+  usualServiceRefused?: boolean;
+  /** The client said yes to the suggested usual service this turn: it is now on the draft, the booking goes on. */
+  usualServiceAccepted?: boolean;
 };
 
 export const ASK_BOOKING_NAME = "Para confirmar, qual seu nome?";
@@ -118,6 +124,12 @@ export type OrchestratorRouting = {
    * Empty means silence.
    */
   turnDirective: string;
+
+  /**
+   * Set when the turn asks for the service (turnDirective === ASK_SERVICE) and the client has a usual one:
+   * the agent suggests it ("Vai ser o de sempre, X?") and books only after a yes. Null otherwise.
+   */
+  usualServiceSuggestion: { service_ids: string[]; service_name: string } | null;
 };
 
 /** Changes the agenda; one per turn, always handled first. */
@@ -252,7 +264,10 @@ export function orchestrate(input: OrchestratorInput): OrchestratorRouting {
   // An open draft alone must not turn "não vou conseguir ir" into a new booking.
   const hasClock = Boolean(intentSet.dateTime?.time || intentSet.dateTime?.date || input.carriedClock);
   const hasServiceSignal = intentSet.service != null || Boolean(input.carriedServiceIds?.length);
-  const turnAddsSlot = intentSet.service != null || Boolean(intentSet.dateTime?.time || intentSet.dateTime?.date);
+  const turnAddsSlot =
+    intentSet.service != null ||
+    Boolean(intentSet.dateTime?.time || intentSet.dateTime?.date) ||
+    Boolean(input.usualServiceAccepted);
   if (effectivePrimary === "unknown" && turnAddsSlot && hasServiceSignal && hasClock) {
     effectivePrimary = "schedule";
     intents = ["schedule"];
@@ -380,6 +395,7 @@ function routing(
     waitlistMissingClock: null,
     allowedTools: [],
     turnDirective: "",
+    usualServiceSuggestion: null,
     ...partial,
   };
   const plan = buildTurnPlan(input, base);
@@ -388,6 +404,7 @@ function routing(
     ...base,
     allowedTools,
     turnDirective: plan.turnDirective,
+    usualServiceSuggestion: plan.usualServiceSuggestion,
     recordingAuthorized: base.recordingAuthorized || planWrites(allowedTools),
   };
 }
@@ -400,9 +417,13 @@ function routing(
 export function buildTurnPlan(
   input: OrchestratorInput,
   routing: OrchestratorRouting,
-): { allowedTools: string[]; turnDirective: string } {
+): {
+  allowedTools: string[];
+  turnDirective: string;
+  usualServiceSuggestion: OrchestratorRouting["usualServiceSuggestion"];
+} {
   if (routing.triggerHandoff) {
-    return { allowedTools: [], turnDirective: "" };
+    return { allowedTools: [], turnDirective: "", usualServiceSuggestion: null };
   }
   const state = input.conversationState;
   const affirmative = Boolean(input.isAffirmative);
@@ -535,7 +556,13 @@ export function buildTurnPlan(
     tools.delete("add_to_waitlist");
   }
 
-  return { allowedTools: [...tools], turnDirective };
+  // Cliente que volta: pedir o serviço vira "Vai ser o de sempre, X?". A sugestão só vale na pergunta de serviço,
+  // e só uma vez: depois da recusa a pessoa escolhe sozinha.
+  const usualServiceSuggestion =
+    turnDirective === ASK_SERVICE && input.usualService?.service_ids.length && !input.usualServiceRefused
+      ? input.usualService
+      : null;
+  return { allowedTools: [...tools], turnDirective, usualServiceSuggestion };
 }
 
 /**

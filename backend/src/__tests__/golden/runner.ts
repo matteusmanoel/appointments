@@ -68,6 +68,10 @@ export type Contract =
   | { kind: "draft_status"; equals: BookingDraft["status"] }
   | { kind: "draft_service_ids"; equals: string[] }
   | { kind: "draft_barber_id"; equals: string | null }
+  | { kind: "draft_last_question"; equals: NonNullable<BookingDraft["lastAgentQuestion"]> | null }
+  | { kind: "draft_proposal_service_ids"; equals: string[] }
+  | { kind: "reply_includes"; value: string }
+  | { kind: "reply_excludes"; value: string }
   | { kind: "draft_time_not"; value: string }
   | { kind: "pending_intents"; equals: PendingIntents }
   | { kind: "openai_rounds"; equals: number }
@@ -379,6 +383,18 @@ export function checkContracts(outcome: TurnOutcome, contracts: Contract[]): str
         break;
       case "draft_barber_id":
         if ((outcome.draft.barber_id ?? null) !== c.equals) fail(c, outcome.draft.barber_id);
+        break;
+      case "draft_last_question":
+        if ((outcome.draft.lastAgentQuestion ?? null) !== c.equals) fail(c, outcome.draft.lastAgentQuestion);
+        break;
+      case "draft_proposal_service_ids":
+        if (!same(outcome.draft.pendingProposal?.service_ids ?? [], c.equals)) fail(c, outcome.draft.pendingProposal);
+        break;
+      case "reply_includes":
+        if (!outcome.result.reply.includes(c.value)) fail(c, outcome.result.reply);
+        break;
+      case "reply_excludes":
+        if (outcome.result.reply.includes(c.value)) fail(c, outcome.result.reply);
         break;
       case "draft_time_not":
         if ((outcome.draft.time ?? "").slice(0, 5) === c.value) fail(c, outcome.draft.time);
