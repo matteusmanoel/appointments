@@ -59,6 +59,7 @@ locals {
     JWT_SECRET                      = var.jwt_secret
     JWT_EXPIRES_IN                  = "7d"
     APP_ENCRYPTION_KEY              = var.app_encryption_key
+    API_KEY_LOOKUP_PEPPER           = var.api_key_lookup_pepper
     APP_URL                         = local.app_url
     CORS_ORIGIN                     = local.cors_origin
     FROM_EMAIL                      = local.from_email

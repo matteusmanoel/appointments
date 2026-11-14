@@ -13,10 +13,10 @@ async function main() {
   const issued = await issueApiKey();
 
   const result = await pool.query(
-    `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash, key_secret_bits)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
-    [barbershopId, name, issued.keyHash, issued.prefix, issued.lookupHash]
+    [barbershopId, name, issued.keyHash, issued.prefix, issued.lookupHash, issued.secretBits]
   );
 
   const row = result.rows[0];

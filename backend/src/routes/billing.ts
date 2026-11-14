@@ -439,12 +439,12 @@ async function provisionFromCheckoutSession(session: Stripe.Checkout.Session): P
 
     // Ensure an API key exists (idempotent by name).
     await client.query(
-      `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash)
-       SELECT $1, $2, $3, $4, $5
+      `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash, key_secret_bits)
+       SELECT $1, $2, $3, $4, $5, $6
        WHERE NOT EXISTS (
          SELECT 1 FROM public.barbershop_api_keys k WHERE k.barbershop_id = $1 AND k.name = $2
        )`,
-      [barbershopId, "n8n-default", issued.keyHash, issued.prefix, issued.lookupHash]
+      [barbershopId, "n8n-default", issued.keyHash, issued.prefix, issued.lookupHash, issued.secretBits]
     );
 
     // Temporary password storage: legacy fallback for email-based first access.

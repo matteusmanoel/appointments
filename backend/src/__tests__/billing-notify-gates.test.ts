@@ -133,8 +133,8 @@ describe("gates por assinatura/plano", () => {
   it("/tools: assinatura vencida → 402; plano em dia passa pela porta", async () => {
     const blocked = await shop("t1", { status: "past_due", changed: EXPIRED });
     const fine = await shop("t2", { status: "active" });
-    const keyBlocked = `tk_${stamp}_blocked`;
-    const keyFine = `tk_${stamp}_fine`;
+    const keyBlocked = `bfk_legacy-${stamp}-blocked_k${stamp.toString(36).slice(-6)}`;
+    const keyFine = `bfk_legacy-${stamp}-fine_k${stamp.toString(36).slice(-6)}`;
     for (const [sid, key] of [[blocked, keyBlocked], [fine, keyFine]] as const) {
       await pool.query("INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash) VALUES ($1, 'teste', $2)", [sid, await bcrypt.hash(key, 4)]);
     }

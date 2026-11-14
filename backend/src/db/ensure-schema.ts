@@ -396,5 +396,21 @@ export async function ensureCriticalSchema(): Promise<void> {
        WHERE key_prefix IS NOT NULL`,
     )
     .catch(() => {});
+  // Revisão de segurança do PR #30: lookup vira HMAC com pepper; os SHA-256 antigos são apagados uma
+  // única vez (a coluna key_secret_bits marca a aplicação). Mesmo bloco de supabase/migrations/20261114030000_*.sql.
+  await pool
+    .query(
+      `DO $$
+       BEGIN
+         IF NOT EXISTS (
+           SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'barbershop_api_keys' AND column_name = 'key_secret_bits'
+         ) THEN
+           ALTER TABLE public.barbershop_api_keys ADD COLUMN key_secret_bits integer;
+           UPDATE public.barbershop_api_keys SET key_lookup_hash = NULL WHERE key_lookup_hash IS NOT NULL;
+         END IF;
+       END $$`,
+    )
+    .catch(() => {});
 }
 

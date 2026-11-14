@@ -44,7 +44,7 @@ describe("Isolamento entre tenants (IDOR) em ids de body/query", () => {
       `SELECT d::date::text AS d FROM generate_series(CURRENT_DATE + 3, CURRENT_DATE + 10, '1 day') d WHERE extract(dow from d) <> 0 ORDER BY d LIMIT 1`,
     );
     date = d.rows[0].d;
-    toolsKey = `tk_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+    toolsKey = `bfk_legacy-${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
     await pool.query("INSERT INTO public.barbershop_api_keys (barbershop_id, key_hash, name) VALUES ($1, $2, 'teste idor')", [
       A.fx.barbershopId,
       await bcrypt.hash(toolsKey, 4),

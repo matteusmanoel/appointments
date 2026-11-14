@@ -23,6 +23,7 @@ log_retention_days      = 14
 database_url            = ""
 jwt_secret              = ""
 app_encryption_key      = ""
+api_key_lookup_pepper   = ""            # OBRIGATÓRIO em produção: 32+ chars (openssl rand -hex 32). Sem ele a API não sobe.
 whatsapp_provider      = "evolution"   # OBRIGATÓRIO com zip real, sem padrão: evolution | uazapi (produção usava uazapi antes deste tema)
 evolution_api_url      = ""            # host externo sempre ligado; nada é provisionado aqui
 evolution_api_key      = ""
