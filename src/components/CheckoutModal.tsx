@@ -29,7 +29,7 @@ import {
   WHATSAPP_RISK_TERMS_URL,
 } from "@/lib/whatsapp-risk-notice";
 import { cn } from "@/lib/utils";
-import { getAttributionForCheckout, trackInitiateCheckout } from "@/lib/tracking";
+import { getCheckoutTrackingFields, trackInitiateCheckout } from "@/lib/tracking";
 
 const STRIPE_PK = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || "";
 
@@ -162,7 +162,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
       plan,
       whatsapp_risk_accepted: true as const,
       whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
-      attribution: getAttributionForCheckout(),
+      ...getCheckoutTrackingFields(),
     };
     trackInitiateCheckout(plan);
     try {
@@ -206,7 +206,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         plan,
         whatsapp_risk_accepted: true,
         whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
-        attribution: getAttributionForCheckout(),
+        ...getCheckoutTrackingFields(),
       });
       window.location.href = url;
     } catch (err) {

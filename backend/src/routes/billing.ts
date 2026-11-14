@@ -11,7 +11,7 @@ import { sendOnboardingEmail } from "../lib/ses.js";
 import { requireJwt, getBarbershopId, type JwtPayload } from "../middleware/auth.js";
 import { ADMIN_ONLY, requireRole } from "../middleware/rbac.js";
 import { schedulePaymentReminder } from "../outbound/scheduled-messages.js";
-import { attributionMetadata } from "../lib/checkout-attribution.js";
+import { checkoutAttribution, marketingConsentMetadata } from "../lib/checkout-attribution.js";
 
 const stripe = config.stripeSecretKey ? new Stripe(config.stripeSecretKey, { apiVersion: "2025-02-24.acacia" }) : null;
 
@@ -70,8 +70,12 @@ const checkoutBody = z.object({
   /** Aceite do aviso de risco do WhatsApp (QR/API não oficial), marcado antes de pagar (lp-correcoes §16.2/§16.5, B-05). */
   whatsapp_risk_accepted: z.boolean().optional(),
   whatsapp_risk_notice_version: z.string().max(40).optional(),
-  /** First/last-touch UTMs e click ids (whitelist no attributionMetadata). */
+  /** First/last-touch UTMs e click ids (whitelist no attributionMetadata). Só vale com marketing_consent: true. */
   attribution: z.unknown().optional(),
+  /** Escolha de consentimento de marketing do visitante (banner), a versão do texto e a data (ISO) do registro. */
+  marketing_consent: z.boolean().optional(),
+  marketing_consent_notice_version: z.string().max(40).optional(),
+  marketing_consent_at: z.string().max(40).optional(),
 });
 
 /** Versão do texto do aviso mostrada no checkout (a UI envia a que exibiu; fica gravada na sessão do Stripe). */
@@ -97,8 +101,8 @@ export function riskAcceptanceMetadata(
   };
 }
 
-function checkoutSessionAttribution(body: { attribution?: unknown }): Record<string, string> {
-  return attributionMetadata(body.attribution);
+function checkoutSessionAttribution(body: Parameters<typeof checkoutAttribution>[0]): Record<string, string> {
+  return checkoutAttribution(body);
 }
 
 const RISK_NOT_ACCEPTED_BODY = {
@@ -538,6 +542,7 @@ billingRouter.post("/checkout", async (req: Request, res: Response): Promise<voi
         extra_numbers: String(extraNumbers),
         whatsapp_numbers_total: String(1 + extraNumbers),
         ...riskAcceptanceMetadata(parsed.data),
+        ...marketingConsentMetadata(parsed.data),
         ...attr,
       },
       ...(Object.keys(attr).length ? { subscription_data: { metadata: attr } } : {}),
@@ -592,6 +597,7 @@ billingRouter.post("/checkout_embedded", async (req: Request, res: Response): Pr
         extra_numbers: String(extraNumbers),
         whatsapp_numbers_total: String(1 + extraNumbers),
         ...riskAcceptanceMetadata(parsed.data),
+        ...marketingConsentMetadata(parsed.data),
         ...attr,
       },
       ...(Object.keys(attr).length ? { subscription_data: { metadata: attr } } : {}),

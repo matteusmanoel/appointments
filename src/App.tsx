@@ -18,6 +18,7 @@ import { ConsentBanner } from "@/components/ConsentBanner";
 import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
+import Privacidade from "./pages/Privacidade";
 import PublicBooking from "./pages/PublicBooking";
 import RescheduleOrCancel from "./pages/RescheduleOrCancel";
 import NotFound from "./pages/NotFound";
@@ -107,6 +108,7 @@ const router = createBrowserRouter(
         { path: "/", element: <Landing /> },
         { path: "/login", element: <Login /> },
         { path: "/onboarding", element: <Onboarding /> },
+        { path: "/privacidade", element: <Privacidade /> },
         { path: "/docs", element: <Suspense fallback={<LoadingState fullPage />}><Docs /></Suspense> },
         { path: "/b/:slug", element: <PublicBooking /> },
         { path: "/reagendar/:token", element: <RescheduleOrCancel /> },

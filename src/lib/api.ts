@@ -152,9 +152,9 @@ export function normalizeAuthProfile<T extends AuthProfile>(raw: T): T {
 export type BillingPlan = "essential" | "pro" | "premium";
 
 export const billingApi = {
-  createCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan?: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string; attribution?: Record<string, string> }) =>
+  createCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan?: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string; attribution?: Record<string, string>; marketing_consent?: boolean; marketing_consent_notice_version?: string; marketing_consent_at?: string }) =>
     api<{ url: string }>("/api/billing/checkout", { method: "POST", body: JSON.stringify(body) }),
-  createEmbeddedCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string; attribution?: Record<string, string> }) =>
+  createEmbeddedCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string; attribution?: Record<string, string>; marketing_consent?: boolean; marketing_consent_notice_version?: string; marketing_consent_at?: string }) =>
     api<{ client_secret: string }>("/api/billing/checkout_embedded", { method: "POST", body: JSON.stringify(body) }),
   getSession: (sessionId: string) =>
     api<{ email: string; barbershop_name?: string; token?: string; message?: string }>(

@@ -19,6 +19,15 @@ export const PENDING_CHECKOUT_KEY = "navalhia_pending_checkout";
 export const CONSENT_OPEN_EVENT = "navalhia:consent-open";
 export const ATTRIBUTION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 export const STRIPE_METADATA_VALUE_MAX = 500;
+/** Versão do TEXTO do banner de consentimento. Mudou o texto ou a política? Mude aqui (o aceite antigo deixa de valer). */
+export const CONSENT_NOTICE_VERSION = "2026-11-14";
+export const PRIVACY_POLICY_PATH = "/privacidade";
+export const ONBOARDING_SESSION_KEY = "navalhia_onboarding_session";
+/** Limites dos valores de atribuição (iguais no backend). */
+export const UTM_VALUE_MAX = 100;
+export const CLICK_ID_VALUE_MAX = 200;
+/** Cookies que os pixels gravam no navegador do visitante. */
+export const MARKETING_COOKIE_NAMES = ["_fbp", "_fbc", "_ttp", "ttclid", "_tt_enable_cookie", "_tt_sessionId"] as const;
 
 export const ATTRIBUTION_PARAM_KEYS = [
   "utm_source",
@@ -53,6 +62,8 @@ type FbqFn = ((...args: unknown[]) => void) & {
   loaded?: boolean;
   version?: string;
   push?: unknown;
+  disablePushState?: boolean;
+  allowDuplicatePageViews?: boolean;
 };
 
 type TtqFn = {
@@ -79,6 +90,10 @@ let testConfigOverride: Partial<TrackingConfig> | null = null;
 let pixelsLoaded = false;
 let viewContentFired = false;
 let lastPageView: { path: string; at: number } | null = null;
+let metaInitialized = false;
+let tiktokInitialized = false;
+/** Atribuição vista antes do aceite: só em memória (nada vai ao localStorage nem ao Stripe sem consentimento). */
+let pendingAttribution: AttributionTouch | null = null;
 
 function readEnvId(value: unknown): string {
   return String(value ?? "").trim();
@@ -100,6 +115,9 @@ export function resetTrackingForTests(): void {
   pixelsLoaded = false;
   viewContentFired = false;
   lastPageView = null;
+  metaInitialized = false;
+  tiktokInitialized = false;
+  pendingAttribution = null;
   testConfigOverride = null;
   if (typeof document !== "undefined") {
     document.getElementById(META_SCRIPT_ID)?.remove();
@@ -117,21 +135,28 @@ export function hasPixelIds(config: TrackingConfig = getTrackingConfig()): boole
   return Boolean(config.metaPixelId || config.tiktokPixelId);
 }
 
-function readConsentRecord(): { choice: ConsentChoice; at: string } | null {
+export type ConsentRecord = { choice: ConsentChoice; at: string; noticeVersion: string };
+
+/**
+ * Lê o registro de consentimento. Registro de outra versão do TEXTO do banner
+ * (ou sem versão) não vale: o visitante é perguntado de novo.
+ */
+export function getConsentRecord(): ConsentRecord | null {
   if (typeof localStorage === "undefined") return null;
   try {
     const raw = localStorage.getItem(CONSENT_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { choice?: string; at?: string };
+    const parsed = JSON.parse(raw) as { choice?: string; at?: string; notice_version?: string };
     if (parsed.choice !== "granted" && parsed.choice !== "denied") return null;
-    return { choice: parsed.choice, at: typeof parsed.at === "string" ? parsed.at : "" };
+    if (parsed.notice_version !== CONSENT_NOTICE_VERSION) return null;
+    return { choice: parsed.choice, at: typeof parsed.at === "string" ? parsed.at : "", noticeVersion: parsed.notice_version };
   } catch {
     return null;
   }
 }
 
 export function getConsentChoice(): ConsentChoice | null {
-  return readConsentRecord()?.choice ?? null;
+  return getConsentRecord()?.choice ?? null;
 }
 
 export function hasMarketingConsent(): boolean {
@@ -142,25 +167,91 @@ export function canTrack(config: TrackingConfig = getTrackingConfig()): boolean 
   return hasMarketingConsent() && hasPixelIds(config);
 }
 
-export function setConsent(choice: ConsentChoice): void {
-  if (typeof localStorage !== "undefined") {
-    localStorage.setItem(CONSENT_STORAGE_KEY, JSON.stringify({ v: 1, choice, at: new Date().toISOString() }));
+/** Apaga um cookie em todos os domínios/caminhos plausíveis (os pixels gravam no domínio raiz). */
+function expireCookie(name: string): void {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  const host = window.location.hostname;
+  const parts = host.split(".");
+  const domains: Array<string | null> = [null, host];
+  for (let i = 1; i < parts.length - 1; i += 1) domains.push(`.${parts.slice(i).join(".")}`);
+  for (const domain of domains) {
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=/${domain ? `; domain=${domain}` : ""}`;
   }
-  if (choice === "granted") {
-    loadPixelsIfAllowed();
-  } else {
-    // Eventos passam a ser no-op. Scripts já injetados não são um desligamento completo
-    // (limitação dos pixels); o visitante pode recarregar a página após recusar.
-    pixelsLoaded = false;
-    const w = window as Window & { fbq?: FbqFn };
-    if (typeof w.fbq === "function") {
-      try {
-        w.fbq("consent", "revoke");
-      } catch {
-        /* ignore */
-      }
+}
+
+/** Remove cookies dos pixels e a atribuição guardada (localStorage e memória). */
+export function clearMarketingStorage(): void {
+  pendingAttribution = null;
+  if (typeof localStorage !== "undefined") {
+    try {
+      localStorage.removeItem(ATTRIBUTION_STORAGE_KEY);
+    } catch {
+      /* ignore */
     }
   }
+  for (const name of MARKETING_COOKIE_NAMES) expireCookie(name);
+}
+
+function callTtq(method: string): void {
+  const ttq = (window as Window & { ttq?: Record<string, unknown> }).ttq;
+  const fn = ttq?.[method];
+  if (typeof fn === "function") {
+    try {
+      (fn as () => void).call(ttq);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function callFbqConsent(mode: "grant" | "revoke"): void {
+  const fbq = (window as Window & { fbq?: FbqFn }).fbq;
+  if (typeof fbq === "function") {
+    try {
+      fbq("consent", mode);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Grava a escolha (com a versão do texto do banner) e aplica o efeito.
+ * Recusa/revogação: revoga Meta e TikTok, apaga _fbp/_fbc/_ttp e a atribuição.
+ * Retorna `reloadRecommended: true` quando um script de pixel já estava ativo
+ * (só recarregar a página o descarrega por completo).
+ */
+export function setConsent(choice: ConsentChoice): { reloadRecommended: boolean } {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(
+      CONSENT_STORAGE_KEY,
+      JSON.stringify({ v: 1, notice_version: CONSENT_NOTICE_VERSION, choice, at: new Date().toISOString() }),
+    );
+  }
+  if (typeof window === "undefined") return { reloadRecommended: false };
+  if (choice === "granted") {
+    const wasInitialized = metaInitialized || tiktokInitialized;
+    if (pendingAttribution) {
+      const pending = pendingAttribution;
+      pendingAttribution = null;
+      storeTouch(pending, Date.now());
+    }
+    loadPixelsIfAllowed();
+    if (wasInitialized) {
+      // Reaceite depois de revogar: sem isto o Meta continua revogado e perde os eventos.
+      callFbqConsent("grant");
+      callTtq("enableCookie");
+      callTtq("grantConsent");
+    }
+    return { reloadRecommended: false };
+  }
+  const wasActive = pixelsLoaded || metaInitialized || tiktokInitialized;
+  pixelsLoaded = false;
+  callFbqConsent("revoke");
+  callTtq("revokeConsent");
+  callTtq("disableCookie");
+  clearMarketingStorage();
+  return { reloadRecommended: wasActive };
 }
 
 export function openConsentPreferences(): void {
@@ -169,13 +260,30 @@ export function openConsentPreferences(): void {
   }
 }
 
-export function sanitizeAttributionValue(value: unknown, max = STRIPE_METADATA_VALUE_MAX): string | undefined {
+const SAFE_ATTRIBUTION_VALUE = /^[A-Za-z0-9 _.~:+|-]+$/;
+
+function isClickIdKey(key: string): boolean {
+  return /clid$/.test(key.replace(/^first_/, ""));
+}
+
+/**
+ * Valida um valor de atribuição: tira caracteres de controle, trunca (utm_* 100, click ids 200)
+ * e só aceita letras, números, espaço e `_ . ~ : + | -`. Qualquer outra coisa (por exemplo `@`, que
+ * apareceria num e-mail) descarta o valor. utm_* que parece telefone (só dígitos, 8+) também é descartado.
+ */
+export function sanitizeAttributionValue(value: unknown, key = "utm_source"): string | undefined {
   if (value == null) return undefined;
+  const clickId = isClickIdKey(key);
   const cleaned = String(value)
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F]/g, "")
+    .trim()
+    .slice(0, clickId ? CLICK_ID_VALUE_MAX : UTM_VALUE_MAX)
     .trim();
   if (!cleaned) return undefined;
-  return cleaned.slice(0, max);
+  if (!SAFE_ATTRIBUTION_VALUE.test(cleaned)) return undefined;
+  if (!clickId && /^\d{8,}$/.test(cleaned.replace(/[ .+-]/g, ""))) return undefined;
+  return cleaned;
 }
 
 export function parseAttributionParams(search: string | URLSearchParams): AttributionTouch {
@@ -184,7 +292,7 @@ export function parseAttributionParams(search: string | URLSearchParams): Attrib
   for (const [rawKey, rawValue] of params.entries()) {
     const key = rawKey.trim().toLowerCase();
     if (!ATTRIBUTION_KEY_SET.has(key)) continue;
-    const value = sanitizeAttributionValue(rawValue);
+    const value = sanitizeAttributionValue(rawValue, key);
     if (!value) continue;
     out[key as AttributionParamKey] = value;
   }
@@ -236,15 +344,9 @@ function touchIsEmpty(touch: AttributionTouch): boolean {
   return ATTRIBUTION_PARAM_KEYS.every((k) => !touch[k]);
 }
 
-/**
- * Lê UTMs / click ids da URL, grava first-touch (se ainda não houver ou se expirou)
- * e last-touch (quando a URL traz parâmetros), com TTL de 90 dias.
- */
-export function captureAttributionFromSearch(search: string | URLSearchParams, now = Date.now()): AttributionStore | null {
-  const incoming = parseAttributionParams(search);
+function storeTouch(incoming: AttributionTouch, now: number): AttributionStore | null {
+  if (touchIsEmpty(incoming)) return readAttributionStore(now);
   const existing = readAttributionStore(now);
-  if (touchIsEmpty(incoming)) return existing;
-
   const firstExpired = !existing || isExpired(existing.firstAt, now);
   const store: AttributionStore = {
     v: 1,
@@ -257,6 +359,19 @@ export function captureAttributionFromSearch(search: string | URLSearchParams, n
   return store;
 }
 
+/**
+ * Lê UTMs / click ids da URL. SÓ grava first-touch (se ainda não houver ou se expirou) e
+ * last-touch (quando a URL traz parâmetros), com TTL de 90 dias, com consentimento de marketing.
+ * Enquanto o visitante ainda não escolheu, fica só em memória (vai para o localStorage no aceite
+ * e é descartada na recusa). Recusou: nada é guardado.
+ */
+export function captureAttributionFromSearch(search: string | URLSearchParams, now = Date.now()): AttributionStore | null {
+  const incoming = parseAttributionParams(search);
+  if (hasMarketingConsent()) return storeTouch(incoming, now);
+  if (getConsentChoice() === null && !touchIsEmpty(incoming)) pendingAttribution = incoming;
+  return null;
+}
+
 export function getStoredAttribution(now = Date.now()): AttributionStore | null {
   return readAttributionStore(now);
 }
@@ -264,20 +379,48 @@ export function getStoredAttribution(now = Date.now()): AttributionStore | null 
 function flattenTouch(touch: AttributionTouch, prefix: "" | "first_"): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of ATTRIBUTION_PARAM_KEYS) {
-    const value = sanitizeAttributionValue(touch[key]);
+    const value = sanitizeAttributionValue(touch[key], key);
     if (value) out[`${prefix}${key}`] = value;
   }
   return out;
 }
 
-/** Payload flattened para o body do checkout (first + last touch). */
+/** Payload flattened para o body do checkout (first + last touch). Vazio sem consentimento de marketing. */
 export function getAttributionForCheckout(now = Date.now()): Record<string, string> {
+  if (!hasMarketingConsent()) return {};
   const store = readAttributionStore(now);
   if (!store) return {};
   return {
     ...flattenTouch(store.last, ""),
     ...flattenTouch(store.first, "first_"),
   };
+}
+
+export type CheckoutTrackingFields = {
+  attribution?: Record<string, string>;
+  marketing_consent?: boolean;
+  marketing_consent_notice_version?: string;
+  marketing_consent_at?: string;
+};
+
+/**
+ * Campos de rastreamento para o body do checkout: a atribuição só vai com aceite
+ * (e com `marketing_consent: true`, que o servidor exige). Quem já escolheu tem a escolha,
+ * a versão do texto e a data registradas no metadata do checkout; quem não escolheu não envia nada.
+ */
+export function getCheckoutTrackingFields(now = Date.now()): CheckoutTrackingFields {
+  const record = getConsentRecord();
+  if (!record) return {};
+  const fields: CheckoutTrackingFields = {
+    marketing_consent: record.choice === "granted",
+    marketing_consent_notice_version: record.noticeVersion,
+    ...(record.at ? { marketing_consent_at: record.at } : {}),
+  };
+  if (record.choice === "granted") {
+    const attribution = getAttributionForCheckout(now);
+    if (Object.keys(attribution).length) fields.attribution = attribution;
+  }
+  return fields;
 }
 
 function planOffer(plan: BillingPlan): PendingCheckout {
@@ -339,7 +482,7 @@ function ensureTtq(): TtqFn | null {
   const w = window as Window & { ttq?: TtqFn; TiktokAnalyticsObject?: string };
   if (w.ttq) return w.ttq;
   const ttq: TtqFn = [] as unknown as TtqFn;
-  const methods = ["page", "track", "identify", "instances", "debug", "on", "off", "once", "ready", "alias", "group", "enableCookie", "disableCookie"];
+  const methods = ["page", "track", "identify", "instances", "debug", "on", "off", "once", "ready", "alias", "group", "enableCookie", "disableCookie", "holdConsent", "grantConsent", "revokeConsent"];
   ttq.methods = methods;
   ttq.setAndDefer = (target: Record<string, unknown>, name: string) => {
     target[name] = function deferred(...args: unknown[]) {
@@ -363,18 +506,27 @@ export function loadPixelsIfAllowed(config: TrackingConfig = getTrackingConfig()
 
   if (config.metaPixelId) {
     const fbq = ensureFbq();
-    fbq?.("init", config.metaPixelId);
+    if (fbq && !metaInitialized) {
+      // Sem PageView automático em pushState e sem eventos automáticos (cliques, microdados):
+      // só disparamos os eventos que o código escolhe, nas páginas permitidas.
+      fbq.disablePushState = true;
+      fbq.allowDuplicatePageViews = true;
+      fbq("set", "autoConfig", false, config.metaPixelId);
+      fbq("init", config.metaPixelId);
+      metaInitialized = true;
+    }
     injectScript(META_SCRIPT_ID, META_SCRIPT_SRC);
   }
   if (config.tiktokPixelId) {
     const ttq = ensureTtq();
     const src = `${TIKTOK_SCRIPT_SRC}?sdkid=${encodeURIComponent(config.tiktokPixelId)}&lib=ttq`;
-    if (ttq) {
+    if (ttq && !tiktokInitialized) {
       ttq._i = ttq._i || {};
       ttq._t = ttq._t || {};
       ttq._o = ttq._o || {};
       ttq._i[config.tiktokPixelId] = [];
       ttq._t[config.tiktokPixelId] = Date.now();
+      tiktokInitialized = true;
     }
     injectScript(TIKTOK_SCRIPT_ID, src);
   }
@@ -386,9 +538,128 @@ function pixelPayload(extra: Record<string, unknown> = {}) {
   return extra;
 }
 
+/** PageView e ViewContent: só nas páginas de marketing. */
+const PAGE_EVENT_PATHS = new Set(["/"]);
+/** Eventos de conversão: também no login (modal de checkout) e no retorno do pagamento. */
+const CONVERSION_EVENT_PATHS = new Set(["/", "/login", "/onboarding"]);
+/** Com qualquer um destes na URL, nenhum evento sai (a URL inteira iria para Meta/TikTok). */
+const BLOCKING_QUERY_KEYS = new Set(["reset_token", "token", "access_token", "refresh_token", "id_token"]);
+
+function normalizePath(pathname: string): string {
+  const path = pathname.replace(/\/+$/, "");
+  return path === "" ? "/" : path;
+}
+
+/**
+ * Decide se a página atual pode emitir evento aos pixels e deixa a URL só com o que pode sair:
+ *  - fora das páginas permitidas (/app, /b/:slug, /reagendar/:token, /cancelar/:token, /docs…): não;
+ *  - com reset_token/token na URL: não;
+ *  - /login: só sem query; /onboarding: a query (session_id) é removida da barra de endereço;
+ *  - /: ficam só utm_*, fbclid, ttclid, gclid.
+ * O pixel lê `location.href` na hora do evento, por isso a URL é limpa antes de disparar.
+ */
+export function preparePixelLocation(kind: "page" | "conversion"): boolean {
+  if (typeof window === "undefined") return false;
+  const { pathname, search, hash } = window.location;
+  const path = normalizePath(pathname);
+  const allowed = kind === "page" ? PAGE_EVENT_PATHS : CONVERSION_EVENT_PATHS;
+  if (!allowed.has(path)) return false;
+  const params = new URLSearchParams(search);
+  for (const key of params.keys()) {
+    if (BLOCKING_QUERY_KEYS.has(key.trim().toLowerCase())) return false;
+  }
+  if (path === "/login") return search === "" || search === "?";
+  const keep = path === "/" ? ATTRIBUTION_KEY_SET : new Set<string>();
+  let changed = false;
+  for (const key of [...params.keys()]) {
+    if (!keep.has(key.trim().toLowerCase())) {
+      params.delete(key);
+      changed = true;
+    }
+  }
+  const stripHash = path !== "/" && hash !== "";
+  if (changed || stripHash) {
+    const qs = params.toString();
+    try {
+      window.history.replaceState(window.history.state, "", `${pathname}${qs ? `?${qs}` : ""}${path === "/" ? hash : ""}`);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** SHA-256 síncrono (hex), para o event_id do Purchase não expor o session_id do Stripe. */
+function sha256Hex(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  const K = new Uint32Array(64);
+  let c = 0;
+  for (let n = 2; c < 64; n += 1) {
+    let prime = true;
+    for (let d = 2; d * d <= n; d += 1) if (n % d === 0) prime = false;
+    if (prime) {
+      K[c] = Math.floor((n ** (1 / 3) % 1) * 2 ** 32);
+      c += 1;
+    }
+  }
+  const H = new Uint32Array(8);
+  c = 0;
+  for (let n = 2; c < 8; n += 1) {
+    let prime = true;
+    for (let d = 2; d * d <= n; d += 1) if (n % d === 0) prime = false;
+    if (prime) {
+      H[c] = Math.floor((n ** (1 / 2) % 1) * 2 ** 32);
+      c += 1;
+    }
+  }
+  const total = Math.ceil((bytes.length + 9) / 64) * 64;
+  const msg = new Uint8Array(total);
+  msg.set(bytes);
+  msg[bytes.length] = 0x80;
+  const view = new DataView(msg.buffer);
+  view.setUint32(total - 8, Math.floor((bytes.length * 8) / 2 ** 32));
+  view.setUint32(total - 4, (bytes.length * 8) >>> 0);
+  const rotr = (x: number, n: number) => (x >>> n) | (x << (32 - n));
+  const w = new Uint32Array(64);
+  for (let off = 0; off < total; off += 64) {
+    for (let i = 0; i < 16; i += 1) w[i] = view.getUint32(off + i * 4);
+    for (let i = 16; i < 64; i += 1) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let [a, b, cc, d, e, f, g, h] = H;
+    for (let i = 0; i < 64; i += 1) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & g);
+      const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & cc) ^ (b & cc);
+      const t2 = (S0 + maj) >>> 0;
+      h = g;
+      g = f;
+      f = e;
+      e = (d + t1) >>> 0;
+      d = cc;
+      cc = b;
+      b = a;
+      a = (t1 + t2) >>> 0;
+    }
+    H[0] += a; H[1] += b; H[2] += cc; H[3] += d; H[4] += e; H[5] += f; H[6] += g; H[7] += h;
+  }
+  return [...H].map((x) => x.toString(16).padStart(8, "0")).join("");
+}
+
+/** event_id do Purchase: hash do session_id (o session_id em si é um segredo de curta duração). */
+export function purchaseEventId(sessionId: string): string {
+  return `purchase_${sha256Hex(sessionId).slice(0, 40)}`;
+}
+
 export function trackPageView(path?: string): void {
   if (!canTrack()) return;
-  const key = path ?? (typeof window !== "undefined" ? window.location.pathname : "/");
+  if (!preparePixelLocation("page")) return;
+  // A chave de dedupe é só o caminho (sem query); a URL que o pixel lê já foi limpa acima.
+  const key = normalizePath((path ?? window.location.pathname).split(/[?#]/)[0] || "/");
   const now = Date.now();
   if (lastPageView && lastPageView.path === key && now - lastPageView.at < 1000) return;
   lastPageView = { path: key, at: now };
@@ -400,6 +671,7 @@ export function trackPageView(path?: string): void {
 
 export function trackViewContentPlans(): void {
   if (!canTrack()) return;
+  if (!preparePixelLocation("page")) return;
   if (viewContentFired) return;
   viewContentFired = true;
   loadPixelsIfAllowed();
@@ -434,6 +706,7 @@ export function observePlansSection(sectionId = "planos"): () => void {
 export function trackInitiateCheckout(plan: BillingPlan): void {
   const offer = rememberCheckoutOffer(plan);
   if (!canTrack()) return;
+  if (!preparePixelLocation("conversion")) return;
   loadPixelsIfAllowed();
   const payload = pixelPayload({
     content_name: offer.plan,
@@ -467,7 +740,7 @@ export function markPurchaseFired(sessionId: string): void {
 
 /**
  * Purchase no retorno de sucesso. Dispara no máximo uma vez por session_id do Stripe
- * (guarda no localStorage). event_id = session_id, pronto para uma CAPI futura.
+ * (guarda no localStorage). event_id = hash do session_id (nunca o session_id), pronto para uma CAPI futura.
  * Retorna true se o evento foi de fato enviado.
  */
 export function trackPurchase(opts: { sessionId: string; plan?: BillingPlan; value?: number }): boolean {
@@ -478,6 +751,8 @@ export function trackPurchase(opts: { sessionId: string; plan?: BillingPlan; val
   // quando o visitante aceitar cookies depois no mesmo retorno de sucesso? Não:
   // sem consentimento não marcamos, para poder disparar após o aceite na mesma visita.
   if (!canTrack()) return false;
+  // O pixel lê a URL na hora do evento: a query (session_id) sai da barra de endereço antes.
+  if (!preparePixelLocation("conversion")) return false;
   markPurchaseFired(sessionId);
   loadPixelsIfAllowed();
   const pending = readPendingCheckout();
@@ -489,9 +764,10 @@ export function trackPurchase(opts: { sessionId: string; plan?: BillingPlan; val
   });
   const w = window as Window & { fbq?: FbqFn; ttq?: TtqFn };
   // Meta: eventID no 4º argumento (event_id para dedup com CAPI).
-  w.fbq?.("track", "Purchase", payload, { eventID: sessionId });
+  const eventId = purchaseEventId(sessionId);
+  w.fbq?.("track", "Purchase", payload, { eventID: eventId });
   // TikTok: CompletePayment é o evento padrão de compra; event_id no payload para CAPI futura.
-  w.ttq?.track?.("CompletePayment", { ...payload, event_id: sessionId });
+  w.ttq?.track?.("CompletePayment", { ...payload, event_id: eventId });
   return true;
 }
 
