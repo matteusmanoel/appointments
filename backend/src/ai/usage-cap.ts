@@ -31,9 +31,9 @@ export type HardCapTurn = {
 
 /**
  * Turno no teto duro (uso >= 2x o limite). O cliente final nunca recebe mensagem:
- *  - avisa o dono por e-mail (1 por mês), mesmo canal e flag do aviso de 80% (AI_USAGE_ALERT_ENABLED);
- *  - registra o evento em ai_hard_cap_notices (1 por conversa e mês) quando o flag está ligado.
- * Flag desligada = comportamento antigo (silêncio, sem e-mail e sem registro).
+ *  - avisa o dono por e-mail (1 por mês) só com AI_USAGE_OWNER_EMAIL_ENABLED=true (desligado por padrão);
+ *  - registra o evento em ai_hard_cap_notices (1 por conversa e mês) quando AI_USAGE_ALERT_ENABLED está ligado.
+ * AI_USAGE_ALERT_ENABLED desligado = silêncio e sem registro (o e-mail, se o outro flag estiver ligado, não sai por este caminho).
  * Plano sem IA (limite 0) e conversa sandbox ficam em silêncio e não registram.
  * Nunca lança.
  */

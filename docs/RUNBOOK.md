@@ -327,14 +327,15 @@ Limite mensal de respostas da IA por plano (`usage-limits.ts`): Profissional 500
 
 | Uso no mês | O que acontece |
 | --- | --- |
-| 80% do limite (`AI_USAGE_ALERT_THRESHOLD_PCT`) | E-mail ao dono (primeiro admin com e-mail), 1x por mês, e aviso leve (badge) no painel admin. O e-mail diz quantas respostas faltam para o limite e a margem até o teto. |
-| 100% do limite | E-mail ao dono, 1x por mês. A IA continua até o teto. O painel segue com o aviso de uso. |
-| Teto (2x o limite) | E-mail ao dono, 1x por mês. O agente do WhatsApp **fica em silêncio** com o cliente (nenhuma mensagem; nada que denuncie IA/robô). O painel admin mostra um badge de alerta: «Limite de IA atingido: o atendimento automático está pausado até o próximo ciclo». O evento é registrado em `ai_hard_cap_notices` (1 por conversa e mês). O atendimento automático volta no próximo mês ou ao ampliar o plano. |
+| 80% do limite (`AI_USAGE_ALERT_THRESHOLD_PCT`) | Aviso leve (badge) no painel admin. E-mail ao dono (primeiro admin com e-mail), 1x por mês, **somente** com `AI_USAGE_OWNER_EMAIL_ENABLED=true`. O e-mail diz quantas respostas faltam para o limite e a margem até o teto. |
+| 100% do limite | A IA continua até o teto. O painel segue com o aviso de uso. E-mail ao dono, 1x por mês, somente com o flag de e-mail ligado. |
+| Teto (2x o limite) | O agente do WhatsApp **fica em silêncio** com o cliente (nenhuma mensagem; nada que denuncie IA/robô). O painel admin mostra um badge de alerta: «Limite de IA atingido: o atendimento automático está pausado até o próximo ciclo». O evento é registrado em `ai_hard_cap_notices` (1 por conversa e mês). E-mail ao dono, 1x por mês, somente com o flag de e-mail ligado. O atendimento automático volta no próximo mês ou ao ampliar o plano. |
 
-- Os e-mails ao dono e o registro em `ai_hard_cap_notices` ficam atrás de `AI_USAGE_ALERT_ENABLED` (padrão ligado). Com `false`, não sai e-mail nem se grava o evento; o agente já fica em silêncio no teto de qualquer forma.
+- O registro em `ai_hard_cap_notices` fica atrás de `AI_USAGE_ALERT_ENABLED` (padrão ligado). Com `false`, não se grava o evento; o agente já fica em silêncio no teto de qualquer forma.
+- Os e-mails ao dono (80%, 100% e teto) ficam atrás de `AI_USAGE_OWNER_EMAIL_ENABLED` (padrão **desligado**; só `true` liga). Ausente ou `false` = nenhum e-mail.
 - Os e-mails exigem `FROM_EMAIL` verificado no SES; sem ele o envio falha, o aviso não é consumido e o próximo turno tenta de novo.
 - Dedupe dos e-mails: `ai_usage_alerts` (chaves 80, 100 e 200 em `threshold_pct`). Registro do teto por conversa: `ai_hard_cap_notices` (conversa + mês).
-- O badge do painel usa `GET /api/integrations/whatsapp/usage` (uso atual do tenant: `used`, `limit`, `softExceeded`, `hardExceeded`, `thresholdPct`, `thresholdExceeded`) e aparece com base no uso, independentemente do flag de e-mail.
+- O badge do painel usa `GET /api/integrations/whatsapp/usage` (uso atual do tenant: `used`, `limit`, `softExceeded`, `hardExceeded`, `thresholdPct`, `thresholdExceeded`) e aparece com base no uso, independentemente dos flags de e-mail.
 - Não há mensagem ao cliente final no teto (o texto placeholder da Q14 foi removido). Não existe mais `AI_HARD_CAP_CUSTOMER_MESSAGE`.
 
 ## 8. Integração Uazapi (WhatsApp plug-and-play)
@@ -350,6 +351,7 @@ Configure as seguintes variáveis no backend (`.env` em dev ou parâmetros do st
 | `UAZAPI_WEBHOOK_PUBLIC_URL` | Sim                      | URL pública que receberá os eventos (ex.:`https://api.seudominio.com/api/webhooks/uazapi`). Deve ser HTTPS.               |
 | `APP_ENCRYPTION_KEY`        | Sim                      | Chave de pelo menos 32 caracteres para criptografar o token da instância no banco (ex.:`openssl rand -hex 32`).           |
 | `API_KEY_LOOKUP_PEPPER`     | Sim (produção)           | Pepper do HMAC do lookup das API keys (32+ caracteres). Ver seção 7.2.                                                    |
+| `AI_USAGE_OWNER_EMAIL_ENABLED` | Não                   | E-mail ao dono em 80%, 100% e no teto de uso da IA. Padrão desligado; só `true` liga. Ver seção 7.3.                      |
 | `N8N_CHAT_TRIGGER_URL`      | Não                      | URL do webhook “When chat message received” do fluxo de IA no n8n. Se não definida, o bot responderá com mensagem padrão. |
 
 Em desenvolvimento, use também `DATABASE_URL`, `JWT_SECRET` e, se quiser receber webhooks locais, exponha o backend via túnel HTTPS (ngrok, Cloudflare Tunnel, etc.) e defina `UAZAPI_WEBHOOK_PUBLIC_URL` com essa URL + `/api/webhooks/uazapi`.

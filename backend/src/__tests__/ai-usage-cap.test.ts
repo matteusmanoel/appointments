@@ -53,7 +53,7 @@ describe("teto de uso da IA: silêncio com o cliente, registro 1x e alertas ao d
   const stamp = Date.now();
   let shopId = "";
   const convs: string[] = [];
-  const env = { AI_USAGE_ALERT_ENABLED: "true" };
+  const env = { AI_USAGE_ALERT_ENABLED: "true", AI_USAGE_OWNER_EMAIL_ENABLED: "true" };
   const now = new Date("2027-05-10T12:00:00Z");
 
   async function mkConv(sandbox = false): Promise<string> {
@@ -146,6 +146,26 @@ describe("teto de uso da IA: silêncio com o cliente, registro 1x e alertas ao d
     expect(sender).toHaveBeenCalledTimes(2);
     expect(sender).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "limit", thresholdPct: USAGE_ALERT_KEY_LIMIT, used: 500 }));
     expect(await maybeAlertAiUsageHardCap(params(999), { sender, env, now: month })).toBe("below");
+  });
+
+  it("e-mail ao dono desligado (ausente ou false): não envia, mas o teto ainda é gravado com AI_USAGE_ALERT_ENABLED=true", async () => {
+    const sender = vi.fn(async () => {});
+    const month = new Date("2027-12-10T12:00:00Z");
+    const before = (await noticeRows()).length;
+    const c1 = await mkConv();
+    const unset = { AI_USAGE_ALERT_ENABLED: "true" };
+    const r1 = await handleHardCapTurn({ barbershopId: shopId, conversationId: c1, used: 1000, limit: 500 }, { sender, env: unset, now: month });
+    expect(r1).toMatchObject({ reply: "", ownerAlert: "disabled", event: "recorded" });
+    const c2 = await mkConv();
+    const off = { AI_USAGE_ALERT_ENABLED: "true", AI_USAGE_OWNER_EMAIL_ENABLED: "false" };
+    const r2 = await handleHardCapTurn({ barbershopId: shopId, conversationId: c2, used: 1000, limit: 500 }, { sender, env: off, now: month });
+    expect(r2).toMatchObject({ reply: "", ownerAlert: "disabled", event: "recorded" });
+    expect(await maybeAlertAiUsage({ barbershopId: shopId, used: 400, limit: 500 }, { sender, env: unset, now: month })).toBe("disabled");
+    expect(await maybeAlertAiUsageLimit({ barbershopId: shopId, used: 500, limit: 500 }, { sender, env: off, now: month })).toBe("disabled");
+    expect(await maybeAlertAiUsageHardCap({ barbershopId: shopId, used: 1000, limit: 500 }, { sender, env: unset, now: month })).toBe("disabled");
+    expect(sender).not.toHaveBeenCalled();
+    expect(await noticeRows()).toHaveLength(before + 2);
+    expect((await alertRows()).filter((x) => x.period === "2027-12")).toHaveLength(0);
   });
 
   it("alertas desligados (AI_USAGE_ALERT_ENABLED=false): nada sai, nem e-mail nem registro, e o cliente permanece em silêncio", async () => {
