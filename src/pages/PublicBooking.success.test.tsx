@@ -47,7 +47,8 @@ async function bookUntilSuccess() {
   fireEvent.click(await screen.findByRole("button", { name: "10:00" }));
   fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
   fireEvent.change(await screen.findByPlaceholderText(/Seu nome|Nome/i), { target: { value: "Cliente Teste" } });
-  fireEvent.change(screen.getByPlaceholderText("(11) 99999-9999"), { target: { value: "11987654321" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.change(await screen.findByPlaceholderText("(11) 98765-4321"), { target: { value: "11987654321" } });
   fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
   await screen.findByText("Agendamento solicitado!");
 }

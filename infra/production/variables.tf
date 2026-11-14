@@ -63,7 +63,7 @@ variable "ses_sender_email" {
 
 variable "app_public_url" {
   type        = string
-  description = "URL pública do front quando attach_custom_domains=false (ex.: https://appointments-psi-five.vercel.app). Vazio com o flag false deixa APP_URL vazio (não cai em app.navalhia.com). Com o flag true, é ignorada."
+  description = "URL pública do front quando attach_custom_domains=false (produção: https://navalhia.com; a URL *.vercel.app continua válida). Vazio com o flag false deixa APP_URL vazio (não cai em app.navalhia.com). Com o flag true, é ignorada."
   default     = ""
 }
 
@@ -75,8 +75,8 @@ variable "api_public_url" {
 
 variable "cors_origin" {
   type        = string
-  description = "Origens CORS da API, separadas por vírgula. Não pode ser vazio (fail closed). Sem domínio próprio: URL de produção da Vercel; depois do 1º apply, acrescente https://<cloudfront_domain>."
-  default     = "https://appointments-psi-five.vercel.app"
+  description = "Origens CORS da API, separadas por vírgula. Não pode ser vazio (fail closed). Sem domínio próprio na API: https://navalhia.com (front) + a URL *.vercel.app; depois do 1º apply, acrescente https://<cloudfront_domain>."
+  default     = "https://navalhia.com,https://appointments-psi-five.vercel.app"
 
   validation {
     condition     = length([for o in split(",", var.cors_origin) : o if trimspace(o) != ""]) > 0

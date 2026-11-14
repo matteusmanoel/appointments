@@ -50,21 +50,243 @@ const SCENARIOS: GoldenScenario[] = [
     ],
   },
   {
-    id: "partial_fields_memory_fills",
+    // Contrato (CONTEXT.md, "Serviço" e "Rascunho"): cliente que volta recebe "Vai ser o de sempre, X?" e o serviço
+    // só entra no rascunho no "sim". A memória NÃO preenche o serviço sozinha e a pergunta não fica aberta.
+    id: "recurring_client_suggests_usual_service_then_yes",
     client: { name: "Mateus", pastVisit: true },
     turns: [
       {
         user: "Quero marcar amanhã às 10h",
-        llm: (fx) => [{ tool: "check_availability", args: { date: fx.tomorrowIso, time: "10:00" } }],
+        llm: () => [],
         contracts: (fx) => [
           { kind: "intent_primary", equals: "schedule" },
           { kind: "intent_field", field: "service", equals: null },
           { kind: "name_known", equals: true },
           { kind: "name_source", equals: null },
-          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
-          { kind: "draft_service_ids", equals: [fx.services.corte] },
-          { kind: "draft_status", equals: "offered" },
+          { kind: "tools_executed", equals: [] },
+          // sugere, não preenche
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "reply_includes", value: "Vai ser o de sempre, *Corte masculino*?" },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "state", equals: null },
           { kind: "not_silenced" },
+        ],
+      },
+      {
+        // O "sim" aceita a sugestão: o serviço entra no rascunho e a agenda é conferida; nada é gravado sem o aceite do horário.
+        user: "Sim",
+        llm: (fx) => [
+          {
+            tool: "check_availability",
+            args: { date: fx.tomorrowIso, time: "10:00", barber_id: fx.barbers.eduardo, service_ids: [fx.services.corte] },
+          },
+        ],
+        contracts: (fx) => [
+          { kind: "draft_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: null },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // "Não" ao de sempre: pergunta qual serviço (sem sugerir de novo, sem preencher nada); o serviço dito depois segue o fluxo.
+    id: "recurring_client_refuses_usual_service_picks_another",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "openai_rounds", equals: 0 },
+        ],
+      },
+      {
+        user: "Não",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: "service" },
+          { kind: "reply_includes", value: "Qual serviço deseja?" },
+          { kind: "reply_excludes", value: "de sempre" },
+          { kind: "tools_executed", equals: [] },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "Quero corte e barba",
+        llm: (fx) => [
+          {
+            tool: "check_availability",
+            args: { date: fx.tomorrowIso, time: "10:00", service_ids: [fx.services.corteBarba] },
+          },
+        ],
+        contracts: (fx) => [
+          { kind: "draft_service_ids", equals: [fx.services.corteBarba] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // O "sim" é da sugestão, só do turno imediatamente seguinte: sugestão -> outra pergunta -> "sim" não aplica o de sempre.
+    id: "usual_service_yes_after_other_question_does_not_apply",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "draft_usual_suggested", equals: true },
+        ],
+      },
+      {
+        user: "Vocês abrem no sábado?",
+        llm: () => [{ content: "Abrimos sim, das 9h às 20h." }],
+        contracts: () => [
+          // a proposta não sobrevive a um turno que não respondeu a ela
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: null },
+          { kind: "draft_service_ids", equals: [] },
+        ],
+      },
+      {
+        user: "Pode contar comigo",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "tools_executed", equals: [] },
+          { kind: "reply_excludes", value: "Posso confirmar" },
+        ],
+      },
+    ],
+  },
+  {
+    // Rascunho velho com a proposta, mas a última fala do agente não foi a sugestão: o "sim" não a aceita.
+    id: "usual_service_stale_proposal_is_not_accepted",
+    client: { name: "Mateus", pastVisit: true },
+    prepare: async (fx) => {
+      await pool.query(
+        `INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`,
+        [fx.conversationId, "Qual hora você prefere?"],
+      );
+      await pool.query(
+        `INSERT INTO public.ai_conversation_runtime (conversation_id, booking_draft, updated_at)
+         VALUES ($1, $2::jsonb, now())
+         ON CONFLICT (conversation_id) DO UPDATE SET booking_draft = $2::jsonb, updated_at = now()`,
+        [
+          fx.conversationId,
+          JSON.stringify({
+            status: "collecting",
+            date: fx.tomorrowIso,
+            time: "10:00",
+            lastAgentQuestion: "usual_service",
+            usualSuggested: true,
+            pendingProposal: { service_ids: [fx.services.corte], service_name: "Corte masculino" },
+          }),
+        ],
+      );
+    },
+    turns: [
+      {
+        user: "Sim",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "tools_executed", equals: [] },
+        ],
+      },
+    ],
+  },
+  {
+    // "Não sugerir de novo" dura o agendamento todo: depois da recusa, dizer só dia/hora outra vez não repete a sugestão.
+    id: "usual_service_refusal_persists_for_the_booking",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [{ kind: "draft_last_question", equals: "usual_service" }],
+      },
+      {
+        user: "Não",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_usual_suggested", equals: true },
+          { kind: "reply_excludes", value: "de sempre" },
+        ],
+      },
+      {
+        user: "então amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "reply_includes", value: "Qual serviço deseja?" },
+          { kind: "reply_excludes", value: "de sempre" },
+          { kind: "openai_rounds", equals: 0 },
+        ],
+      },
+    ],
+  },
+  {
+    // Resposta que não é sim nem recusa da lista ("não sei"): também não aceita e não repete a sugestão.
+    id: "usual_service_vague_answer_does_not_repeat_suggestion",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [{ kind: "draft_last_question", equals: "usual_service" }],
+      },
+      {
+        user: "não sei ainda",
+        llm: () => [{ content: "Sem pressa." }],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_usual_suggested", equals: true },
+        ],
+      },
+      {
+        user: "pode ser amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "reply_excludes", value: "de sempre" },
+        ],
+      },
+    ],
+  },
+  {
+    // Cliente sem histórico: continua a pergunta simples, sem "o de sempre".
+    id: "first_contact_asks_service_without_usual",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero marcar amanhã às 10h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [] },
+          { kind: "draft_last_question", equals: "service" },
+          { kind: "reply_includes", value: "Qual serviço deseja?" },
+          { kind: "reply_excludes", value: "de sempre" },
+          { kind: "openai_rounds", equals: 0 },
         ],
       },
     ],
@@ -74,7 +296,9 @@ const SCENARIOS: GoldenScenario[] = [
     client: { name: "Mateus" },
     turns: [
       {
-        user: "Quero cortar amanhã às 15h com o Gabriel",
+        // "Corte masculino" explícito: "cortar" sozinho é ambíguo (corte simples x combo) e o turno só pergunta isso,
+        // sem liberar check_availability. Aqui o contrato é o barbeiro fora do catálogo.
+        user: "Quero um corte masculino amanhã às 15h com o Gabriel",
         llm: (fx) => [
           {
             tool: "check_availability",
@@ -92,7 +316,11 @@ const SCENARIOS: GoldenScenario[] = [
           { kind: "barber_disclosure", name: "Gabriel" },
           { kind: "routing_applied_includes", value: "barber_disclosure" },
           { kind: "catalog_rejections", equals: [{ tool: "check_availability", field: "barber_id" }] },
-          { kind: "draft_barber_id", equals: null },
+          // O barbeiro inventado é descartado e o turno só confere a agenda; o substituto (outro barbeiro do
+          // catálogo) é apenas OFERECIDO ("Posso confirmar?"), nada é gravado sem o aceite.
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "state", equals: null },
         ],
       },
     ],
@@ -111,8 +339,40 @@ const SCENARIOS: GoldenScenario[] = [
           { kind: "intent_primary", equals: "reschedule" },
           { kind: "intents_exclude", value: "cancel" },
           { kind: "routing_primary", equals: "reschedule" },
-          { kind: "routing_applied_includes", value: "block_cancel_on_reschedule" },
-          { kind: "tools_executed", equals: [{ name: "cancel_appointment", ok: false }] },
+          // Sem hora nova o turno só pergunta a hora: cancel_appointment nem entra na lista de tools do turno.
+          { kind: "tools_executed", equals: [] },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // Com hora nova o turno chega a conferir a agenda; se o modelo ainda pedir cancel_appointment,
+    // a tool está fora da lista do turno e o horário atual continua intacto.
+    id: "reschedule_with_clock_refuses_cancel",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Preciso remarcar, pode ser amanhã às 10h?",
+        llm: (fx) => [
+          { tool: "cancel_appointment", args: { appointment_id: fx.upcomingAppointmentId } },
+          { content: "Vou ver esse horário pra você." },
+        ],
+        contracts: (fx) => [
+          { kind: "intent_primary", equals: "reschedule" },
+          { kind: "intents_exclude", value: "cancel" },
+          { kind: "routing_primary", equals: "reschedule" },
+          { kind: "routing_applied_includes", value: "tool_not_in_plan" },
+          { kind: "routing_applied_includes", value: "check_before_draft" },
+          {
+            kind: "tools_executed",
+            equals: [
+              { name: "cancel_appointment", ok: false },
+              { name: "check_availability", ok: true },
+            ],
+          },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
           { kind: "state", equals: null },
         ],
@@ -182,7 +442,9 @@ const SCENARIOS: GoldenScenario[] = [
     ],
   },
   {
-    id: "booking_failure_hands_off",
+    // Horário ocupado ao gravar não é falha técnica: o turno confere a agenda e oferece uma hora livre do mesmo
+    // barbeiro, sem handoff (CONTEXT.md "Fato do turno"; golden g05 forbid "Encaminhar para atendente").
+    id: "booking_failure_offers_free_hour",
     client: { name: "Mateus" },
     prepare: async (fx) => {
       const other = await pool.query<{ id: string }>(
@@ -222,11 +484,27 @@ const SCENARIOS: GoldenScenario[] = [
           { content: "Esse horário não está disponível. Tenho às 14h30 ou às 15h30." },
         ],
         contracts: () => [
-          { kind: "state", equals: "handoff_requested" },
-          { kind: "tools_executed", equals: [{ name: "create_appointment", ok: false }] },
-          { kind: "openai_rounds", equals: 1 },
-          { kind: "routing_applied_includes", value: "action_failed_handoff" },
-          { kind: "activity_includes", value: "tool_error_escalated" },
+          { kind: "state", equals: null },
+          {
+            kind: "tools_executed",
+            equals: [
+              { name: "create_appointment", ok: false },
+              { name: "check_availability", ok: true },
+            ],
+          },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "draft_time_not", value: "15:00" },
+        ],
+      },
+      {
+        // O "sim" aceita a hora oferecida: grava a hora livre, não repete a ocupada.
+        user: "Sim",
+        llm: () => [],
+        contracts: () => [
+          { kind: "state", equals: "appointment_created" },
+          { kind: "tools_executed", equals: [{ name: "create_appointment", ok: true }] },
+          { kind: "openai_rounds", equals: 0 },
         ],
       },
     ],
@@ -240,10 +518,9 @@ const SCENARIOS: GoldenScenario[] = [
         llm: () => [{ content: "O horário das 15h não está disponível. Tenho às 14h30 ou às 15h30." }],
         contracts: (fx) => [
           { kind: "state", equals: null },
-          { kind: "routing_applied_includes", value: "check_before_draft" },
-          { kind: "routing_applied_excludes", value: "action_failed_handoff" },
+          // O check roda no próprio turno, antes de qualquer rascunho/fala (sem chamar o modelo).
           { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
-          { kind: "openai_rounds", equals: 1 },
+          { kind: "openai_rounds", equals: 0 },
           { kind: "draft_status", equals: "awaiting_name" },
           { kind: "draft_service_ids", equals: [fx.services.corteBarba] },
           { kind: "draft_barber_id", equals: fx.barbers.lucas },
@@ -285,8 +562,8 @@ const SCENARIOS: GoldenScenario[] = [
         contracts: () => [
           { kind: "state", equals: "appointment_created" },
           { kind: "tools_executed", equals: [{ name: "create_appointment", ok: true }] },
-          { kind: "openai_rounds", equals: 1 },
-          { kind: "routing_applied_excludes", value: "action_failed_handoff" },
+          // Ação decidida: texto fixo, sem chamada ao modelo (agente-contrato-nao-roteiro.mdc).
+          { kind: "openai_rounds", equals: 0 },
           { kind: "client_name", equals: "Mateus" },
         ],
       },

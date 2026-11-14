@@ -49,7 +49,7 @@ describe("Stripe webhook: idempotência por event.id", () => {
     if (!ok) return;
     const evt = {
       id: `evt_idem_${stamp}`, object: "event", type: "checkout.session.completed",
-      data: { object: { id: `cs_idem_${stamp}`, object: "checkout.session", mode: "subscription", customer: cus, customer_email: email, subscription: `sub_idem_${stamp}`, status: "complete", metadata: { barbershop_name: `Idem ${stamp}`, plan: "pro" } } },
+      data: { object: { id: `cs_idem_${stamp}`, object: "checkout.session", mode: "subscription", customer: cus, customer_email: email, subscription: `sub_idem_${stamp}`, status: "complete", payment_status: "paid", metadata: { barbershop_name: `Idem ${stamp}`, plan: "pro" } } },
     };
     expect((await send(evt)).status).toBe(200);
     const first = await pool.query<{ temporary_password: string }>("SELECT temporary_password FROM public.checkout_onboarding WHERE email = $1", [email]);
@@ -64,7 +64,7 @@ describe("Stripe webhook: idempotência por event.id", () => {
     if (!ok) return;
     const evt = {
       id: `evt_idem_${stamp}_b`, object: "event", type: "checkout.session.completed",
-      data: { object: { id: `cs_idem_${stamp}`, object: "checkout.session", mode: "subscription", customer: cus, customer_email: email, subscription: `sub_idem_${stamp}`, status: "complete", metadata: { barbershop_name: `Idem ${stamp}`, plan: "pro" } } },
+      data: { object: { id: `cs_idem_${stamp}`, object: "checkout.session", mode: "subscription", customer: cus, customer_email: email, subscription: `sub_idem_${stamp}`, status: "complete", payment_status: "paid", metadata: { barbershop_name: `Idem ${stamp}`, plan: "pro" } } },
     };
     const before = await pool.query<{ temporary_password: string }>("SELECT temporary_password FROM public.checkout_onboarding WHERE email = $1", [email]);
     expect((await send(evt)).status).toBe(200);

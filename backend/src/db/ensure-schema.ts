@@ -375,5 +375,53 @@ export async function ensureCriticalSchema(): Promise<void> {
       )`
     )
     .catch(() => {});
+
+  await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.ai_hard_cap_notices (
+        conversation_id uuid NOT NULL REFERENCES public.ai_conversations(id) ON DELETE CASCADE,
+        period text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (conversation_id, period)
+      )`
+    )
+    .catch(() => {});
+
+  await pool
+    .query(`ALTER TABLE public.barbershop_api_keys ADD COLUMN IF NOT EXISTS key_prefix text`)
+    .catch(() => {});
+  await pool
+    .query(`ALTER TABLE public.barbershop_api_keys ADD COLUMN IF NOT EXISTS key_lookup_hash text`)
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS barbershop_api_keys_lookup_hash_uidx
+       ON public.barbershop_api_keys (key_lookup_hash)
+       WHERE key_lookup_hash IS NOT NULL`,
+    )
+    .catch(() => {});
+  await pool
+    .query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS barbershop_api_keys_prefix_uidx
+       ON public.barbershop_api_keys (key_prefix)
+       WHERE key_prefix IS NOT NULL`,
+    )
+    .catch(() => {});
+  // Revisão de segurança do PR #30: lookup vira HMAC com pepper; os SHA-256 antigos são apagados uma
+  // única vez (a coluna key_secret_bits marca a aplicação). Mesmo bloco de supabase/migrations/20261114030000_*.sql.
+  await pool
+    .query(
+      `DO $$
+       BEGIN
+         IF NOT EXISTS (
+           SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'barbershop_api_keys' AND column_name = 'key_secret_bits'
+         ) THEN
+           ALTER TABLE public.barbershop_api_keys ADD COLUMN key_secret_bits integer;
+           UPDATE public.barbershop_api_keys SET key_lookup_hash = NULL WHERE key_lookup_hash IS NOT NULL;
+         END IF;
+       END $$`,
+    )
+    .catch(() => {});
 }
 

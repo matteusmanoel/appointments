@@ -1,5 +1,5 @@
-import bcrypt from "bcryptjs";
 import { pool } from "../db.js";
+import { issueApiKey } from "../lib/api-keys.js";
 
 async function main() {
   const barbershopId = process.argv[2];
@@ -10,14 +10,13 @@ async function main() {
     process.exit(1);
   }
 
-  const apiKey = `bfk_${crypto.randomUUID()}_${Math.random().toString(36).slice(2, 10)}`;
-  const keyHash = await bcrypt.hash(apiKey, 10);
+  const issued = await issueApiKey();
 
   const result = await pool.query(
-    `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash)
-     VALUES ($1, $2, $3)
+    `INSERT INTO public.barbershop_api_keys (barbershop_id, name, key_hash, key_prefix, key_lookup_hash, key_secret_bits)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING id, created_at`,
-    [barbershopId, name, keyHash]
+    [barbershopId, name, issued.keyHash, issued.prefix, issued.lookupHash, issued.secretBits]
   );
 
   const row = result.rows[0];
@@ -27,11 +26,10 @@ async function main() {
   console.log(`  name: ${name}`);
   console.log("");
   console.log("  >>> Save this key securely, it will not be shown again:");
-  console.log(`  api_key: ${apiKey}`);
+  console.log(`  api_key: ${issued.plaintext}`);
 }
 
 main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-

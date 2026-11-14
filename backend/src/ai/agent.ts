@@ -49,6 +49,7 @@ import {
   composeHumanConsult,
   draftPatchFromTurn,
   isClientConfirmation,
+  isClientRefusal,
   isShopHoursQuestion,
   lastAssistantTurnText,
   assistantMessageIsPlanCharge,
@@ -76,6 +77,9 @@ import {
   applyTurnToDraft,
   composeUnavailableReply,
   composeAskService,
+  composeSuggestUsualService,
+  assistantSuggestedUsualService,
+  resolveUsualService,
   composeAmbiguousCorte,
   draftIsCloseable,
   emptyBookingDraft,
@@ -2438,17 +2442,34 @@ export async function runAgent(
     services: catalogServices,
     barbers: catalogBarbers,
   });
-  if (
+  // "Vai ser o de sempre, X?": a proposta vale só para a resposta ao turno imediatamente seguinte. O "sim" só a
+  // aceita se a última fala do agente FOI a sugestão (o rascunho sozinho não basta: um "sim" a outra pergunta,
+  // "pode contar comigo" ou "vou sim" não aplica o de sempre). Qualquer outra resposta descarta a proposta.
+  const usualProposal = bookingDraft.pendingProposal;
+  const usualSuggestionOpen =
+    bookingDraft.lastAgentQuestion === "usual_service" && Boolean(usualProposal?.service_ids?.length);
+  const usualSuggestionIsPreviousTurn =
+    usualSuggestionOpen && assistantSuggestedUsualService(lastAssistantTurnText(lastN));
+  // O serviço pode ter saído do catálogo entre a sugestão e o sim: nesse caso não aceita.
+  const catalogIds = new Set(catalogServices.map((s) => s.id));
+  const usualServiceAccepted =
+    usualSuggestionIsPreviousTurn &&
     isClientConfirmation(lastUserTextRaw) &&
-    bookingDraft.pendingProposal?.service_ids?.length &&
-    !turnFacts.patch.service_ids?.length
-  ) {
-    const proposal = bookingDraft.pendingProposal;
+    !turnFacts.patch.service_ids?.length &&
+    (usualProposal?.service_ids ?? []).every((id) => catalogIds.has(id));
+  const usualServiceRefused =
+    usualSuggestionIsPreviousTurn && isClientRefusal(lastUserTextRaw) && !turnFacts.patch.service_ids?.length;
+  if (usualServiceAccepted && usualProposal) {
     bookingDraft = mergeBookingDraft(bookingDraft, {
-      service_ids: proposal.service_ids,
-      service_name: proposal.service_name,
+      service_ids: usualProposal.service_ids,
+      service_name: usualProposal.service_name,
       pendingProposal: null,
       lastAgentQuestion: null,
+    });
+  } else if (usualSuggestionOpen) {
+    bookingDraft = mergeBookingDraft(bookingDraft, {
+      pendingProposal: null,
+      lastAgentQuestion: usualServiceRefused ? "service" : null,
     });
   }
   if (typeof turnFacts.patch.time === "string" && /^\d{2}:\d{2}/.test(turnFacts.patch.time)) {
@@ -2636,6 +2657,9 @@ export async function runAgent(
       : (upcomingAppointments[0]?.service_ids ?? []),
     replyingToPlanCharge,
     spokenHourOutside,
+    usualService: resolveUsualService({ favorites: clientFavorites, memory: clientMemory, catalog: catalogServices }),
+    usualServiceAlreadySuggested: Boolean(bookingDraft.usualSuggested),
+    usualServiceAccepted,
   });
   if (routing.primaryIntent === "hours") {
     const openNow = shopOpenStatusNow({
@@ -3536,6 +3560,8 @@ export async function runAgent(
     !parseClientTime(lastUserTextRaw) &&
     !draftIsCloseable(bookingDraft) &&
     upcomingAppointments.length > 0 &&
+    // Um "sim" que aceita a oferta pendente (ex.: plano, logo após agendar) não é "tudo certo com o horário".
+    !resumingPending &&
     !looksLikeCancelIntent(lastUserTextRaw) &&
     !looksLikeRescheduleIntent(lastUserTextRaw)
   ) {
@@ -3600,6 +3626,7 @@ export async function runAgent(
     routing.turnDirective === ASK_CORTE_OR_COMBO ||
     routing.turnDirective === CLOCK_OUTSIDE_HOURS
   ) {
+    const suggestion = routing.turnDirective === ASK_SERVICE ? routing.usualServiceSuggestion : null;
     if (routing.turnDirective === ASK_SERVICE && alignedSpoken) {
       bookingDraft = mergeBookingDraft(bookingDraft, {
         time: alignedSpoken,
@@ -3608,6 +3635,20 @@ export async function runAgent(
         lastAgentQuestion: "service",
       });
       await saveBookingDraft(conversationId, bookingDraft);
+    }
+    if (suggestion) {
+      // Cliente que volta: sugere o de sempre e espera o "sim". O serviço só entra no rascunho no aceite.
+      bookingDraft = mergeBookingDraft(bookingDraft, {
+        pendingProposal: { service_ids: suggestion.service_ids, service_name: suggestion.service_name },
+        lastAgentQuestion: "usual_service",
+        usualSuggested: true,
+      });
+      await saveBookingDraft(conversationId, bookingDraft);
+      return finishTurn(composeSuggestUsualService({ usualName: suggestion.service_name }), true);
+    }
+    if (routing.turnDirective === ASK_SERVICE && usualServiceRefused) {
+      await saveBookingDraft(conversationId, bookingDraft);
+      return finishTurn(`Sem problema! ${ASK_SERVICE}`, true);
     }
     return finishTurn(routing.turnDirective, true);
   }

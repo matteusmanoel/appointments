@@ -29,9 +29,11 @@ export type BookingDraft = {
   /** Last service/barber the agent suggested to the client. Resolved when client affirms. */
   pendingProposal?: PendingProposal | null;
   /** What the agent asked in its last turn. Used to resolve bare affirmations. */
-  lastAgentQuestion?: "service" | "datetime" | "confirm" | null;
+  lastAgentQuestion?: "service" | "usual_service" | "datetime" | "confirm" | null;
   /** Previous turn offered the waitlist for the clock already on this draft. */
   waitlistOffer?: boolean;
+  /** "Vai ser o de sempre, X?" já foi dito neste agendamento: não sugerir de novo (aceito, recusado ou ignorado). */
+  usualSuggested?: boolean;
 };
 
 export type CatalogService = {
@@ -70,7 +72,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
   const total = Number(r.total_price);
   const PHASES = new Set<BookingDraftPhase>(["idle", "collecting", "rebook_eligible", "confirming"]);
   const phase = PHASES.has(r.phase as BookingDraftPhase) ? (r.phase as BookingDraftPhase) : undefined;
-  const QUESTIONS = new Set(["service", "datetime", "confirm"]);
+  const QUESTIONS = new Set(["service", "usual_service", "datetime", "confirm"]);
   const lastAgentQuestion = QUESTIONS.has(r.lastAgentQuestion as string)
     ? (r.lastAgentQuestion as BookingDraft["lastAgentQuestion"])
     : undefined;
@@ -108,6 +110,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
     ...(lastAgentQuestion ? { lastAgentQuestion } : {}),
     ...(pendingProposal !== undefined ? { pendingProposal } : {}),
     ...(r.waitlistOffer === true ? { waitlistOffer: true } : {}),
+    ...(r.usualSuggested === true ? { usualSuggested: true } : {}),
   };
 }
 
@@ -134,10 +137,23 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     "pendingProposal",
     "lastAgentQuestion",
     "waitlistOffer",
+    "usualSuggested",
   ];
   let materialChanged = false;
   for (const key of keys) {
     const value = patch[key];
+    // Estes dois campos têm "null" explícito = limpar (a proposta já foi aceita, recusada ou trocada).
+    if (key === "pendingProposal") {
+      if (value === null) delete next.pendingProposal;
+      else if (value && typeof value === "object" && (value as PendingProposal).service_ids?.length) {
+        next.pendingProposal = value as PendingProposal;
+      }
+      continue;
+    }
+    if (key === "lastAgentQuestion" && value === null) {
+      delete next.lastAgentQuestion;
+      continue;
+    }
     if (value === undefined || value === null || value === "") continue;
     if (key === "service_ids") {
       const ids = (value as string[]).filter((id) => isValidUuid(id));
@@ -154,6 +170,10 @@ export function mergeBookingDraft(prev: BookingDraft, patch: Partial<BookingDraf
     }
     if (key === "waitlistOffer") {
       next.waitlistOffer = value === true;
+      continue;
+    }
+    if (key === "usualSuggested") {
+      if (value === true) next.usualSuggested = true;
       continue;
     }
     const asText = String(value).trim();
@@ -507,6 +527,50 @@ export function composeAskService(params?: { usualName?: string | null; formal?:
   return "Qual serviço deseja?";
 }
 
+/** O serviço de sempre do cliente que volta, ou null quando não há histórico confiável. */
+export type UsualService = { service_ids: string[]; service_name: string };
+
+/**
+ * "O de sempre": combo mais frequente (2+ vezes) → último agendamento → memória (confiança >= 0.5).
+ * Só vale se todos os serviços ainda existem no catálogo; o nome vem do catálogo, nunca do texto do histórico.
+ */
+export function resolveUsualService(params: {
+  favorites: {
+    last: { service_ids: string[] } | null;
+    frequent: Array<{ service_ids: string[]; count: number }>;
+  } | null;
+  memory: { preferred_services?: string[]; preferred_services_conf?: number } | null;
+  catalog: CatalogService[];
+}): UsualService | null {
+  const byId = new Map(params.catalog.map((s) => [s.id, s]));
+  const fromIds = (ids: string[] | undefined): UsualService | null => {
+    const list = (ids ?? []).map((id) => byId.get(id));
+    if (!list.length || list.some((s) => !s)) return null;
+    const services = list as CatalogService[];
+    return { service_ids: services.map((s) => s.id), service_name: services.map((s) => s.name).join(" + ") };
+  };
+  const top = params.favorites?.frequent?.find((f) => f.count >= 2);
+  const fromHistory = fromIds(top?.service_ids) ?? fromIds(params.favorites?.last?.service_ids);
+  if (fromHistory) return fromHistory;
+  const mem = params.memory;
+  if (mem?.preferred_services?.length && (mem.preferred_services_conf ?? 0) >= 0.5) {
+    const byName = new Map(params.catalog.map((s) => [s.name.trim().toLowerCase(), s]));
+    const hit = mem.preferred_services.map((n) => byName.get(String(n).trim().toLowerCase()));
+    if (hit.every(Boolean)) return fromIds((hit as CatalogService[]).map((s) => s.id));
+  }
+  return null;
+}
+
+/** Sugere o serviço de sempre e espera o aceite. Sem a palavra "confirma", para não virar fechamento de agendamento. */
+export function composeSuggestUsualService(params: { usualName: string }): string {
+  return `Vai ser o de sempre, *${params.usualName.trim()}*?`;
+}
+
+/** A última fala do agente foi a sugestão do de sempre? O "sim" só vale para ela, nunca para outra pergunta. */
+export function assistantSuggestedUsualService(text: string): boolean {
+  return /\bvai ser o de sempre,/i.test(text ?? "");
+}
+
 export function composeAmbiguousCorte(params: { simpleName: string; comboName: string }): string {
   return `Seria só o *${params.simpleName}* ou o combo *${params.comboName}*?`;
 }
@@ -692,8 +756,10 @@ export function concreteAlternativeToLock(params: {
       if (params.requestedBarberId && slot.barber_id && slot.barber_id !== params.requestedBarberId) return false;
       return true;
     });
-    if (alts.length !== 1) return null;
-    const alt = alts[0]!;
+    // Com o barbeiro fixo, composeOccupiedSlot oferece UMA hora ("16h com ele está livre. Quer esse?"):
+    // a primeira alternativa. O rascunho tem de guardar essa mesma hora, senão o "sim" repete a hora ocupada.
+    const alt = alts[0];
+    if (!alt) return null;
     return {
       date: params.date,
       time: clock(alt.time),

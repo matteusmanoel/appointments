@@ -46,7 +46,8 @@ async function goToLastStep() {
   fireEvent.click(await screen.findByRole("button", { name: "10:00" }));
   fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
   fireEvent.change(await screen.findByPlaceholderText(/Seu nome|Nome/i), { target: { value: "Cliente Teste" } });
-  fireEvent.change(screen.getByPlaceholderText("(11) 99999-9999"), { target: { value: "11987654321" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+  fireEvent.change(await screen.findByPlaceholderText("(11) 98765-4321"), { target: { value: "11987654321" } });
 }
 
 describe("PublicBooking: erro do passo 4 depois de um 409", () => {
@@ -73,9 +74,10 @@ describe("PublicBooking: erro do passo 4 depois de um 409", () => {
     expect(screen.queryByText(/Falha temporária/)).toBeNull();
     expect(screen.queryByText(/Horário já ocupado para este barbeiro/)).toBeNull();
 
-    // escolhe outro horário e volta ao passo 4: sem erro antigo
+    // escolhe outro horário e volta ao passo 5 (nome → telefone, já preenchidos): sem erro antigo
     fireEvent.click(await screen.findByRole("button", { name: "11:00" }));
     fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Continuar" }));
     await screen.findByRole("button", { name: "Confirmar" });
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });

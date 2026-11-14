@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import type { BillingPlan } from "@/lib/api";
 import { LoadingState } from "@/components/LoadingState";
 import { CheckoutModal } from "@/components/CheckoutModal";
+import { SiteFooter } from "@/components/SiteFooter";
 import { WhatsAppFloatingButton } from "@/components/WhatsAppFloatingButton";
 import { RoiCalculator } from "@/components/landing/RoiCalculator";
 import { StickyCtaBar } from "@/components/landing/StickyCtaBar";
@@ -462,9 +463,9 @@ export default function Landing() {
                   <ul className="space-y-3 text-sm text-white/75">
                     {[
                       "Secretária virtual atende no WhatsApp 24h",
-                      "Lembrete automático antes do horário → cliente não falta",
+                      "Lembrete automático 24h e 2h antes do horário → cliente não falta",
                       "Cliente agenda sozinho, a qualquer hora",
-                      "Quem sumiu recebe uma mensagem de volta",
+                      "O sistema sugere quem sumiu; você aprova a mensagem de volta",
                       "Painel mostra tudo: agenda, clientes, movimento",
                       "Você foca só no corte. O sistema cuida do resto.",
                     ].map((item, i) => (
@@ -646,7 +647,7 @@ export default function Landing() {
                       <span className="text-sm text-white/40">/mês</span>
                     </div>
                     <ul className="flex-1 space-y-2 text-sm text-white/75">
-                      {["Tudo do Essencial", "Secretária no WhatsApp", "Lembrete antes do horário", "Reagendar e cancelar pelo WhatsApp", "1 número incluso"].map((f) => (
+                      {["Tudo do Essencial", "Secretária no WhatsApp", "Lembretes 24h e 2h antes", "Reagendar e cancelar pelo WhatsApp", "1 número incluso"].map((f) => (
                         <li key={f} className="flex items-center gap-2">
                           <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-primary" />{f}
                         </li>
@@ -824,6 +825,7 @@ export default function Landing() {
         </FadeSection>
       </main>
 
+      <SiteFooter />
       <CheckoutModal open={showCheckout} onOpenChange={setShowCheckout} initialPlan={checkoutInitialPlan} />
       <WhatsAppFloatingButton />
       <StickyCtaBar className="md:hidden" onCtaClick={() => openCheckout()} />

@@ -152,9 +152,9 @@ export function normalizeAuthProfile<T extends AuthProfile>(raw: T): T {
 export type BillingPlan = "essential" | "pro" | "premium";
 
 export const billingApi = {
-  createCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan?: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string }) =>
+  createCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan?: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string; attribution?: Record<string, string>; marketing_consent?: boolean; marketing_consent_notice_version?: string; marketing_consent_at?: string }) =>
     api<{ url: string }>("/api/billing/checkout", { method: "POST", body: JSON.stringify(body) }),
-  createEmbeddedCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string }) =>
+  createEmbeddedCheckout: (body: { barbershop_name: string; cnpj?: string; phone: string; email: string; contact_name?: string; plan: BillingPlan; extra_numbers?: number; whatsapp_risk_accepted?: boolean; whatsapp_risk_notice_version?: string; attribution?: Record<string, string>; marketing_consent?: boolean; marketing_consent_notice_version?: string; marketing_consent_at?: string }) =>
     api<{ client_secret: string }>("/api/billing/checkout_embedded", { method: "POST", body: JSON.stringify(body) }),
   getSession: (sessionId: string) =>
     api<{ email: string; barbershop_name?: string; token?: string; message?: string }>(
@@ -688,6 +688,16 @@ export type WhatsAppInboxMessage = {
   delivered_at?: string | null;
 };
 
+export type WhatsappUsage = {
+  used: number;
+  limit: number;
+  softExceeded: boolean;
+  hardExceeded: boolean;
+  billingPlan: string;
+  thresholdPct: number;
+  thresholdExceeded: boolean;
+};
+
 export const whatsappApi = {
   syncContactPhoto: (phone: string) =>
     api<{ photo_url: string }>("/api/integrations/whatsapp/contact-photo/sync", {
@@ -722,7 +732,7 @@ export const whatsappApi = {
       method: "POST",
     }),
   getUsage: () =>
-    api<{ used: number; limit: number; softExceeded: boolean; hardExceeded: boolean; billingPlan: string }>(
+    api<WhatsappUsage>(
       "/api/integrations/whatsapp/usage"
     ),
   start: (phone?: string) =>

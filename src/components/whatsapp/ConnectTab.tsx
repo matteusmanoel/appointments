@@ -8,7 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Check, Loader2, AlertCircle, ShieldAlert, XCircle, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { whatsappApi } from "@/lib/api";
+import { whatsappApi, type WhatsappUsage } from "@/lib/api";
+import { AI_HARD_CAP_BADGE_TEXT, aiUsagePercent } from "@/components/layout/ai-usage-alert";
 import { friendlyConnectionError } from "@/lib/whatsapp-errors";
 import { ConfirmDialog } from "@/components/shared";
 import { LoadingState } from "@/components/LoadingState";
@@ -31,7 +32,7 @@ export type ConnectTabProps = {
     qr?: string;
     pairingCode?: string;
   } | null;
-  usage: { used: number; limit: number; softExceeded: boolean; hardExceeded: boolean } | null;
+  usage: Pick<WhatsappUsage, "used" | "limit" | "softExceeded" | "hardExceeded"> & Partial<Pick<WhatsappUsage, "thresholdPct" | "thresholdExceeded">> | null;
   webhookWarning: string;
   testTo: string;
   setTestTo: (v: string) => void;
@@ -324,14 +325,14 @@ export function ConnectTab({
               {usage != null && usage.limit > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Uso este mês: {usage.used} / {usage.limit} mensagens
-                  {usage.softExceeded && !usage.hardExceeded && (
-                    <span className="block text-amber-600 dark:text-amber-500 mt-1">
-                      Limite soft atingido. Faça upgrade para evitar bloqueio.
+                  {usage.hardExceeded && usage.limit > 0 && (
+                    <span className="block text-destructive mt-1">
+                      {AI_HARD_CAP_BADGE_TEXT}
                     </span>
                   )}
-                  {usage.hardExceeded && (
-                    <span className="block text-destructive mt-1">
-                      Limite atingido. A IA não responderá até o próximo mês ou faça upgrade.
+                  {!usage.hardExceeded && usage.limit > 0 && (usage.thresholdExceeded || usage.softExceeded) && (
+                    <span className="block text-amber-600 dark:text-amber-500 mt-1">
+                      Uso de IA em {aiUsagePercent(usage.used, usage.limit)}% do limite do plano este mês.
                     </span>
                   )}
                 </p>

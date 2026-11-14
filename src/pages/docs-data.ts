@@ -903,7 +903,7 @@ const groups: DocGroup[] = [
         method: "GET",
         path: `${API_BASE}/integrations/whatsapp/usage`,
         title: "Uso de mensagens WhatsApp",
-        description: "Retorna used, limit, softExceeded, hardExceeded e billingPlan do barbershop.",
+        description: "Retorna used, limit, softExceeded, hardExceeded, billingPlan, thresholdPct e thresholdExceeded do tenant autenticado.",
         responses: [
           { status: 200, label: "Sucesso" },
           { status: 401, label: "Não autorizado" },

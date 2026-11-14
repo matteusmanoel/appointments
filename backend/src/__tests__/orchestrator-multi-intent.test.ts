@@ -18,6 +18,8 @@ function route(
     draft?: boolean;
     pending?: { intents: string[]; offered: boolean };
     affirmative?: boolean;
+    /** Nome da pessoa já dito na conversa. Sem ele, "plano" só pergunta o nome (CONTEXT.md, "Plano"). */
+    hasPersonName?: boolean;
   } = {},
 ) {
   const intentSet = understandTurn({
@@ -34,6 +36,7 @@ function route(
     hasActiveBookingDraft: opts.draft ?? false,
     pendingIntents: parsePendingIntents(opts.pending ?? null),
     isAffirmative: opts.affirmative ?? false,
+    hasPersonName: opts.hasPersonName ?? false,
   });
 }
 
@@ -64,10 +67,22 @@ describe("orchestrate — multiple intents in one turn", () => {
   });
 
   it("resumes the offered pending intent on a bare yes after the transaction closed", () => {
-    const r = route("sim", { pending: { intents: ["plan"], offered: true }, affirmative: true });
+    const r = route("sim", {
+      pending: { intents: ["plan"], offered: true },
+      affirmative: true,
+      hasPersonName: true,
+    });
     expect(r.primaryIntent).toBe("plan");
     expect(r.resumedPending).toEqual(["plan"]);
     expect(r.nextPending).toEqual({ intents: [], offered: false });
+  });
+
+  it("a bare yes to the plan offer still only asks the name when the person has none", () => {
+    const r = route("sim", { pending: { intents: ["plan"], offered: true }, affirmative: true });
+    expect(r.primaryIntent).toBe("plan");
+    expect(r.resumedPending).toEqual(["plan"]);
+    expect(r.nextPending).toEqual({ intents: ["plan"], offered: true });
+    expect(r.allowedTools).not.toContain("subscribe_client_to_plan");
   });
 
   it("never lets a pending offer steal a yes that answers the open slot", () => {
@@ -87,9 +102,18 @@ describe("orchestrate — multiple intents in one turn", () => {
   });
 
   it("clears a pending intent the client asks for directly", () => {
-    const r = route("me fala dos planos", { pending: { intents: ["plan"], offered: false } });
+    const r = route("me fala dos planos", {
+      pending: { intents: ["plan"], offered: false },
+      hasPersonName: true,
+    });
     expect(r.primaryIntent).toBe("plan");
     expect(r.nextPending.intents).toEqual([]);
+  });
+
+  it("asking for plans without a name keeps the plan pending until the name arrives", () => {
+    const r = route("me fala dos planos", { pending: { intents: ["plan"], offered: false } });
+    expect(r.primaryIntent).toBe("plan");
+    expect(r.nextPending).toEqual({ intents: ["plan"], offered: true });
   });
 
   it("does not authorize recording when the turn has no recognized intent", () => {

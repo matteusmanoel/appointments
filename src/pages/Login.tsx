@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { CheckoutModal } from "@/components/CheckoutModal";
+import { SiteFooter } from "@/components/SiteFooter";
 import {
   Dialog,
   DialogContent,
@@ -251,6 +252,7 @@ export default function Login() {
       </Dialog>
 
       <CheckoutModal open={showCheckout} onOpenChange={setShowCheckout} initialPlan="pro" />
+      <SiteFooter className="absolute inset-x-0 bottom-0 border-t-0 pb-6 md:pb-6" />
     </div>
   );
 }
