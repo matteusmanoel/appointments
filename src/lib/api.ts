@@ -675,7 +675,8 @@ export type WhatsAppInboxConversation = {
   };
   paused_until?: string | null;
   paused_by?: string | null;
-  needs_human_followup?: boolean;
+  /** Teto de IA nesta conversa no mês atual (ai_hard_cap_notices). */
+  ia_paused_by_limit?: boolean;
 };
 
 export type WhatsAppInboxMessage = {

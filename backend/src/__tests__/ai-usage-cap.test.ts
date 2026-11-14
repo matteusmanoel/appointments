@@ -143,6 +143,35 @@ describe("teto de uso da IA: silêncio com o cliente, registro 1x e alertas ao d
     expect(sbFlag.rows[0]!.needs_human_followup).toBe(false);
   });
 
+  it("se um efeito falha depois do claim, a transação dá ROLLBACK e o próximo turno pode gravar de novo", async () => {
+    const sender = vi.fn(async () => {});
+    const month = new Date("2028-02-10T12:00:00Z");
+    const c = await mkConv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const missingShop = "00000000-0000-0000-0000-000000000000";
+    const failed = await handleHardCapTurn(
+      { barbershopId: missingShop, conversationId: c, used: 1000, limit: 500 },
+      { sender, env, now: month },
+    );
+    warn.mockRestore();
+    expect(failed).toMatchObject({ reply: "", event: "not_applicable" });
+    expect((await pool.query("SELECT 1 FROM public.ai_hard_cap_notices WHERE conversation_id = $1", [c])).rowCount).toBe(0);
+    expect(
+      (await pool.query<{ needs_human_followup: boolean }>("SELECT needs_human_followup FROM public.ai_conversations WHERE id = $1", [c]))
+        .rows[0]!.needs_human_followup,
+    ).toBe(false);
+    expect((await pool.query("SELECT 1 FROM public.ai_handoff_events WHERE conversation_id = $1", [c])).rowCount).toBe(0);
+    expect((await pool.query("SELECT 1 FROM public.agenda_activity WHERE conversation_id = $1 AND summary = $2", [c, IA_PAUSED_BY_LIMIT_REASON])).rowCount).toBe(0);
+
+    const retried = await handleHardCapTurn({ barbershopId: shopId, conversationId: c, used: 1000, limit: 500 }, { sender, env, now: month });
+    expect(retried).toMatchObject({ reply: "", event: "recorded" });
+    expect((await pool.query("SELECT 1 FROM public.ai_hard_cap_notices WHERE conversation_id = $1", [c])).rowCount).toBe(1);
+    expect(
+      (await pool.query<{ needs_human_followup: boolean }>("SELECT needs_human_followup FROM public.ai_conversations WHERE id = $1", [c]))
+        .rows[0]!.needs_human_followup,
+    ).toBe(true);
+  });
+
   it("AI_HARD_CAP_CUSTOMER_MESSAGE, se ainda estiver no ambiente, é ignorada: reply continua vazia", async () => {
     const c = await mkConv();
     const r = await handleHardCapTurn(

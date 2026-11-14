@@ -562,7 +562,7 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
       last_role: "user" | "assistant" | "tool" | null;
       last_content: string | null;
       last_created_at: string | null;
-      needs_human_followup: boolean;
+      ia_paused_by_limit: boolean;
     }>(
       `SELECT
          c.id,
@@ -576,7 +576,11 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
          lm.role::text AS last_role,
          lm.content AS last_content,
          lm.created_at::text AS last_created_at,
-         coalesce(c.needs_human_followup, false) AS needs_human_followup
+         EXISTS (
+           SELECT 1 FROM public.ai_hard_cap_notices h
+            WHERE h.conversation_id = c.id
+              AND h.period = to_char((now() AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM')
+         ) AS ia_paused_by_limit
        FROM public.ai_conversations c
        LEFT JOIN public.ai_conversation_runtime cr ON cr.conversation_id = c.id
        LEFT JOIN public.clients cl
@@ -655,7 +659,7 @@ whatsappRouter.get("/conversations", async (req: Request, res: Response): Promis
           last_message_at: row.last_message_at ?? undefined,
           paused_until: row.paused_until ?? null,
           paused_by: row.paused_by ?? null,
-          needs_human_followup: row.needs_human_followup === true,
+          ia_paused_by_limit: row.ia_paused_by_limit === true,
           client_name,
           client_phone,
           last_message:
