@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Plus, Clock, DollarSign, Percent, Package } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
+import { ErrorState } from "@/components/ErrorState";
 import { servicesApi } from "@/lib/api";
 import {
   formatCurrencyDigits,
@@ -95,6 +96,7 @@ export default function Servicos() {
     data: services = [],
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["services"],
     queryFn: () => servicesApi.list(),
@@ -266,9 +268,11 @@ export default function Servicos() {
         </div>
 
         {error && (
-          <p className="text-sm text-destructive mb-4">
-            Erro ao carregar serviços.
-          </p>
+          <ErrorState
+            className="mb-4"
+            message="Não conseguimos carregar os serviços. Confira a internet e tente de novo."
+            onRetry={() => void refetch()}
+          />
         )}
         {isLoading && (
           <div className="stat-card space-y-4">

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Plus, Clock, Scissors } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
+import { ErrorState } from "@/components/ErrorState";
 import { barbersApi } from "@/lib/api";
 import { formatPhoneBR, parsePhoneBR } from "@/lib/input-masks";
 import {
@@ -114,6 +115,7 @@ export default function Barbeiros() {
     data: barbers = [],
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["barbers"],
     queryFn: () => barbersApi.list(),
@@ -282,9 +284,11 @@ export default function Barbeiros() {
         </div>
 
         {error && (
-          <p className="text-sm text-destructive mb-4">
-            Erro ao carregar barbeiros.
-          </p>
+          <ErrorState
+            className="mb-4"
+            message="Não conseguimos carregar os barbeiros. Confira a internet e tente de novo."
+            onRetry={() => void refetch()}
+          />
         )}
         {isLoading && (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">

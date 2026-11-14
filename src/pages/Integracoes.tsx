@@ -592,7 +592,7 @@ export default function Integracoes() {
       parsePhoneBR={parsePhoneBR}
       hasAcceptedPolicy={waPolicyAccepted}
       barbershopId={profile?.barbershop_id ?? null}
-      connectionTimeoutSeconds={60}
+      connectionTimeoutSeconds={240}
       numberMode={
         numberModeData
           ? {

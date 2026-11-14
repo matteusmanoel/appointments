@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/EmptyState";
+import { ErrorState } from "@/components/ErrorState";
 import { clientsApi, type Client } from "@/lib/api";
 import {
   ConfirmDialog,
@@ -131,6 +132,7 @@ export default function Clientes() {
     data: clients = [],
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["clients", search, reactivationFilter],
     queryFn: () =>
@@ -326,7 +328,11 @@ export default function Clientes() {
         </div>
 
         {error && (
-          <p className="text-sm text-destructive mb-4">Erro ao carregar clientes.</p>
+          <ErrorState
+            className="mb-4"
+            message="Não conseguimos carregar os clientes. Confira a internet e tente de novo."
+            onRetry={() => void refetch()}
+          />
         )}
 
         {isLoading && (

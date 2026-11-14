@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Check, Loader2, AlertCircle, ShieldAlert, XCircle, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { whatsappApi } from "@/lib/api";
+import { friendlyConnectionError } from "@/lib/whatsapp-errors";
+import { ConfirmDialog } from "@/components/shared";
 import { LoadingState } from "@/components/LoadingState";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +75,9 @@ export type ConnectTabProps = {
   connectionTimeoutSeconds?: number;
 };
 
+/** Quanto esperar o QR Code aparecer antes de desistir. */
+const QR_WAIT_MAX_SECONDS = 90;
+
 export function ConnectTab({
   loading,
   connection,
@@ -112,9 +117,12 @@ export function ConnectTab({
 }: ConnectTabProps) {
   const [acceptedPolicy, setAcceptedPolicy] = useState(hasAcceptedPolicy);
   const [acceptedUse, setAcceptedUse] = useState(false);
+  /** Qual app o dono usa no celular: muda só os passos do pareamento (não bloqueia nada). */
+  const [appKind, setAppKind] = useState<"business" | "personal">("business");
   /** Percentual restante (100 → 0) para barra regressiva ao aguardar pareamento */
   const [connectingRemainingPct, setConnectingRemainingPct] = useState(100);
   /** Após fim da barra: exibir o reset ao usuário */
+  const [confirmDisconnectOpen, setConfirmDisconnectOpen] = useState(false);
   const [refetchResult, setRefetchResult] = useState<"success" | "error" | null>(null);
   const [refetchResultMessage, setRefetchResultMessage] = useState<string | null>(null);
   const expiredRef = useRef(onPairingExpired);
@@ -124,38 +132,62 @@ export function ConnectTab({
   const isConnected = !!(connection?.connected || statusData?.connected);
   const isConnecting = !isConnected && (pairingActive || startPending);
 
-  // Limpar resultado do refetch após alguns segundos
+  // Sucesso some sozinho. O erro (ex.: tempo esgotado) fica até o dono tentar de novo.
   useEffect(() => {
-    if (!refetchResult) return;
+    if (refetchResult !== "success") return;
     const t = setTimeout(() => setRefetchResult(null), 8000);
     return () => clearTimeout(t);
   }, [refetchResult]);
 
-  // Barra regressiva. No zero, sem conexão, o pareamento acaba e não recomeça.
+  // Nova tentativa de pareamento: limpa o aviso de tempo esgotado anterior.
+  useEffect(() => {
+    if (isConnecting) {
+      setRefetchResult((r) => (r === "error" ? null : r));
+    }
+  }, [isConnecting]);
+
+  const hasQr = !!statusData?.qr;
+
+  // Barra regressiva: só começa quando o QR Code aparece na tela (antes, o tempo corria sem o dono ver nada).
+  // Se o QR nunca aparecer, desiste depois de QR_WAIT_MAX_SECONDS. No zero, sem conexão, o pareamento acaba e não recomeça.
   useEffect(() => {
     if (!isConnecting) {
       setConnectingRemainingPct(100);
       expiredFiredRef.current = false;
       return;
     }
-    const start = Date.now();
+    const waitStart = Date.now();
+    let qrStart: number | null = hasQr ? waitStart : null;
     const durationMs = connectionTimeoutSeconds * 1000;
     const interval = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const remainingPct = Math.max(0, 100 - (elapsed / durationMs) * 100);
-      setConnectingRemainingPct(remainingPct);
-      if (elapsed >= durationMs && !expiredFiredRef.current) {
+      const now = Date.now();
+      if (hasQr && qrStart === null) qrStart = now;
+      let expired = false;
+      let message = "";
+      if (qrStart === null) {
+        setConnectingRemainingPct(100);
+        if (now - waitStart >= QR_WAIT_MAX_SECONDS * 1000) {
+          expired = true;
+          message = "Não conseguimos gerar o QR Code agora. Clique em Conectar para tentar de novo.";
+        }
+      } else {
+        const elapsed = now - qrStart;
+        setConnectingRemainingPct(Math.max(0, 100 - (elapsed / durationMs) * 100));
+        if (elapsed >= durationMs) {
+          expired = true;
+          message = "O tempo de pareamento acabou. Clique em Conectar para gerar um novo QR Code.";
+        }
+      }
+      if (expired && !expiredFiredRef.current) {
         expiredFiredRef.current = true;
         clearInterval(interval);
         setRefetchResult("error");
-        setRefetchResultMessage(
-          "O tempo de pareamento acabou. Clique em Conectar para gerar um novo QR Code."
-        );
+        setRefetchResultMessage(message);
         expiredRef.current?.();
       }
     }, 150);
     return () => clearInterval(interval);
-  }, [isConnecting, connectionTimeoutSeconds]);
+  }, [isConnecting, connectionTimeoutSeconds, hasQr]);
 
   useEffect(() => {
     if (acceptedPolicy && acceptedUse && barbershopId) {
@@ -305,7 +337,7 @@ export function ConnectTab({
                 </p>
               )}
               {connection?.last_error && (
-                <p className="text-sm text-destructive">{connection.last_error}</p>
+                <p className="text-sm text-destructive">{friendlyConnectionError(connection.last_error)}</p>
               )}
               {webhookWarning && (
                 <p className="text-xs text-amber-600 dark:text-amber-500">{webhookWarning}</p>
@@ -335,7 +367,7 @@ export function ConnectTab({
                 <Button
                   size="sm"
                   variant="destructive"
-                  onClick={onDisconnect}
+                  onClick={() => setConfirmDisconnectOpen(true)}
                   disabled={disconnectPending}
                 >
                   {disconnectPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -363,7 +395,7 @@ export function ConnectTab({
                 Conectando…
               </Badge>
               <span className="text-sm text-muted-foreground">
-                Aguardando pareamento. Escaneie o QR Code com o WhatsApp Business.
+                Aguardando pareamento. Escaneie o QR Code com o {appKind === "business" ? "WhatsApp Business" : "WhatsApp"}.
               </span>
             </div>
           ) : (
@@ -380,20 +412,55 @@ export function ConnectTab({
               {connection?.last_error && (
                 <p className="text-sm text-destructive flex items-center gap-1.5">
                   <AlertCircle className="h-4 w-4 shrink-0" />
-                  {connection.last_error}
+                  {friendlyConnectionError(connection.last_error)}
                 </p>
               )}
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <Input
-                  id="connect-phone"
-                  type="tel"
-                  placeholder="Número (opcional)"
-                  value={formatPhoneBR(whatsappPhone)}
-                  onChange={(e) =>
-                    setWhatsappPhone(parsePhoneBR(e.target.value).slice(0, 11))
-                  }
-                  className="h-9 w-32 sm:w-40"
-                />
+              <fieldset className="space-y-1.5 pt-1" data-testid="wa-app-chooser">
+                <legend className="text-sm font-medium text-foreground">Qual app você usa no celular?</legend>
+                <div className="flex flex-wrap gap-4">
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="wa-app-kind"
+                      value="business"
+                      checked={appKind === "business"}
+                      onChange={() => setAppKind("business")}
+                    />
+                    WhatsApp Business
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="wa-app-kind"
+                      value="personal"
+                      checked={appKind === "personal"}
+                      onChange={() => setAppKind("personal")}
+                    />
+                    WhatsApp comum (pessoal)
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {appKind === "business"
+                    ? "Os passos do QR Code vão aparecer para o WhatsApp Business."
+                    : "Funciona também com o WhatsApp comum. Recomendamos um número exclusivo da barbearia (veja o aviso sobre o WhatsApp)."}
+                </p>
+              </fieldset>
+              <div className="flex flex-wrap items-end gap-2 pt-1">
+                <div className="w-full space-y-1 sm:w-auto">
+                  <Label htmlFor="connect-phone" className="text-xs">
+                    Número do WhatsApp (opcional)
+                  </Label>
+                  <Input
+                    id="connect-phone"
+                    type="tel"
+                    placeholder="(11) 99999-9999"
+                    value={formatPhoneBR(whatsappPhone)}
+                    onChange={(e) =>
+                      setWhatsappPhone(parsePhoneBR(e.target.value).slice(0, 11))
+                    }
+                    className="h-9 w-full sm:w-44"
+                  />
+                </div>
                 <Button
                   onClick={() => onStart(whatsappPhone.trim() || undefined)}
                   disabled={!canConnect}
@@ -401,6 +468,14 @@ export function ConnectTab({
                   {startPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                   Conectar WhatsApp
                 </Button>
+                {!canConnect && !startPending && (
+                  <p className="w-full text-xs text-muted-foreground">
+                    Marque as duas caixas de confirmação acima para continuar.
+                  </p>
+                )}
+                <p className="w-full text-xs text-muted-foreground">
+                  Número (opcional): preencha só se preferir conectar por código em vez de QR Code.
+                </p>
               </div>
             </>
           )}
@@ -494,15 +569,21 @@ export function ConnectTab({
       {isConnecting && (
         <Card className="border-border/60 bg-card/50">
           <CardHeader className="pb-2">
-            <h3 className="text-sm font-semibold text-foreground">Conectar com WhatsApp Business</h3>
+            <h3 className="text-sm font-semibold text-foreground">
+              {appKind === "business" ? "Conectar com WhatsApp Business" : "Conectar com WhatsApp"}
+            </h3>
             <p className="text-xs text-muted-foreground font-normal mt-0.5">
-              Use o app <strong>WhatsApp Business</strong> no celular (não use o WhatsApp pessoal). Siga os passos abaixo:
+              {appKind === "business" ? (
+                <>Use o app <strong>WhatsApp Business</strong> no celular. Siga os passos abaixo:</>
+              ) : (
+                <>Use o app <strong>WhatsApp</strong> no celular, de preferência com um número exclusivo da barbearia. Siga os passos abaixo:</>
+              )}
             </p>
           </CardHeader>
           <CardContent className="grid gap-6 md:grid-cols-2 md:gap-8">
             <div>
               <ol className="list-decimal list-inside space-y-2 text-sm text-foreground">
-                <li>Abra o app <strong>WhatsApp Business</strong> no celular.</li>
+                <li>Abra o app <strong>{appKind === "business" ? "WhatsApp Business" : "WhatsApp"}</strong> no celular.</li>
                 <li>Toque no menu <strong>(⋮)</strong> ou em <strong>Configurações</strong>.</li>
                 <li>Toque em <strong>Aparelhos conectados</strong> ou <strong>Dispositivos vinculados</strong>.</li>
                 <li>Toque em <strong>Conectar um dispositivo</strong>.</li>
@@ -522,7 +603,9 @@ export function ConnectTab({
                   className="w-64 h-64 max-w-full object-contain rounded-xl border border-border bg-background p-2 shadow-sm"
                 />
               ) : (
-                <div className="w-64 h-64 max-w-full bg-muted animate-pulse rounded-xl border border-border" />
+                <div className="w-64 h-64 max-w-full bg-muted animate-pulse rounded-xl border border-border flex items-center justify-center p-4 text-center">
+                  <span className="text-sm text-muted-foreground">Gerando seu QR Code…</span>
+                </div>
               )}
               {statusData?.pairingCode && (
                 <p className="text-sm text-muted-foreground text-center w-full">
@@ -604,6 +687,15 @@ export function ConnectTab({
           </CardContent>
         </Card>
       )}
+      <ConfirmDialog
+        open={confirmDisconnectOpen}
+        onOpenChange={setConfirmDisconnectOpen}
+        title="Desconectar o WhatsApp?"
+        description="A secretária para de responder seus clientes até você ler um novo QR Code."
+        confirmLabel="Desconectar"
+        variant="destructive"
+        onConfirm={() => onDisconnect()}
+      />
     </div>
   );
 }
