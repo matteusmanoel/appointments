@@ -1,30 +1,15 @@
-#!/usr/bin/env python3
-"""Synthesizes every sound effect of the T3 v3 ad from scratch and mixes them
-into a single 48 kHz stereo track aligned to src/timeline.json.
+"""Sound effects of the T3 ad, synthesized from scratch.
 
 No samples are used: every sound is generated from sine waves and seeded white
-noise, so the output is original material owned by the project.
-
-Outputs:
-  public/audio/sfx-mix.wav       full 15 s mix used by the composition
-  public/audio/sfx/<type>.wav    each effect isolated (for re-edits)
-
-Requires: python3 + numpy.
+noise, so the output is original material owned by the project. Each generator
+returns a stereo float array (n, 2) normalized to a peak of 1.0.
 """
 
 from __future__ import annotations
 
-import json
-import wave
-from pathlib import Path
-
 import numpy as np
 
 SR = 48_000
-ROOT = Path(__file__).resolve().parent.parent
-TIMELINE = json.loads((ROOT / "src" / "timeline.json").read_text())
-OUT_DIR = ROOT / "public" / "audio"
-TARGET_TRUE_PEAK_DBTP = -3.0
 
 rng = np.random.default_rng(20261114)
 
@@ -74,6 +59,16 @@ def pan(mono: np.ndarray, position: np.ndarray | float) -> np.ndarray:
     return np.stack([mono * np.cos(angle), mono * np.sin(angle)], axis=1)
 
 
+def metal_ring(duration: float, partials: list[float], decay: float, beat_hz: float) -> np.ndarray:
+    """Inharmonic steel ring; detuned pairs give the shimmering beat of a blade."""
+    t = seconds(duration)
+    ring = np.zeros_like(t)
+    for i, f in enumerate(partials):
+        amp = 1.0 / (1 + i * 0.6)
+        ring += amp * (np.sin(2 * np.pi * f * t) + np.sin(2 * np.pi * (f + beat_hz) * t + i))
+    return ring * np.exp(-t * decay)
+
+
 # ---------------------------------------------------------------- generators
 
 
@@ -88,10 +83,6 @@ def whoosh(duration: float = 0.42, f0: float = 300, f1: float = 5200, peak_at: f
     return pan(mono, np.linspace(-0.55, 0.55, n))
 
 
-def whoosh_short() -> np.ndarray:
-    return whoosh(duration=0.2, f0=900, f1=7000, peak_at=0.7)
-
-
 def impact(duration: float = 0.75, weight: float = 1.0) -> np.ndarray:
     t = seconds(duration)
     freq = 42 + 120 * np.exp(-t * 28)
@@ -102,25 +93,6 @@ def impact(duration: float = 0.75, weight: float = 1.0) -> np.ndarray:
     mix = sub * 1.0 + normalize(crack) * 0.38 * weight + normalize(click) * 0.32 + normalize(tail) * 0.22
     mono = np.tanh(2.2 * mix) / np.tanh(2.2)
     return pan(fade_edges(normalize(mono), 0.3, 30), 0.0)
-
-
-def impact_soft() -> np.ndarray:
-    t = seconds(0.45)
-    freq = 55 + 90 * np.exp(-t * 35)
-    sub = np.sin(2 * np.pi * np.cumsum(freq) / SR) * np.exp(-t * 11)
-    thud = svf(noise(0.45), 900.0, q=0.8, mode="low") * np.exp(-t * 45)
-    mono = np.tanh(1.6 * (sub + normalize(thud) * 0.3))
-    return pan(fade_edges(normalize(mono), 0.3, 25), 0.0)
-
-
-def snap() -> np.ndarray:
-    """Punchy hit for each kinetic word: short body + bright transient."""
-    t = seconds(0.32)
-    freq = 70 + 190 * np.exp(-t * 40)
-    body = np.sin(2 * np.pi * np.cumsum(freq) / SR) * np.exp(-t * 16)
-    snap_noise = svf(noise(0.32), 3500.0, q=0.9, mode="band") * np.exp(-t * 70)
-    mono = np.tanh(2.0 * (body + normalize(snap_noise) * 0.55))
-    return pan(fade_edges(normalize(mono), 0.2, 20), 0.0)
 
 
 def tick() -> np.ndarray:
@@ -181,70 +153,57 @@ def shimmer() -> np.ndarray:
     return pan(fade_edges(mono, 0.5, 30), np.sin(2 * np.pi * 3 * t) * 0.4)
 
 
+def katana_draw() -> np.ndarray:
+    """Blade leaving the scabbard: rising resonant scrape ending in a steel 'shing'."""
+    draw = 0.33
+    t = seconds(draw)
+    u = t / draw
+    scrape = svf(noise(draw), 2400 * (7200 / 2400) ** u, q=5.0, mode="band")
+    grit = 0.55 + 0.45 * np.sign(np.sin(2 * np.pi * 38 * t))
+    glide = sum(
+        np.sin(2 * np.pi * np.cumsum(f * (1 + 0.06 * u)) / SR) / (i + 1)
+        for i, f in enumerate([1870.0, 2990.0, 4410.0, 6230.0])
+    )
+    body = (normalize(scrape) * grit * 0.8 + normalize(glide) * 0.35) * u**1.3
+    ring = metal_ring(1.3, [2350.0, 3720.0, 5030.0, 6810.0, 8200.0], decay=3.2, beat_hz=3.5)
+    out = np.zeros(len(t) + len(ring))
+    out[: len(t)] += normalize(body)
+    out[len(t) - int(0.02 * SR) : len(t) - int(0.02 * SR) + len(ring)] += normalize(ring) * 0.75
+    mono = fade_edges(normalize(out), 3, 60)
+    return pan(mono, np.concatenate([np.linspace(-0.4, 0.2, len(t)), np.full(len(ring), 0.2)]))
+
+
+def katana_slash() -> np.ndarray:
+    """Cut through the air and the hit: fast swish, transient, low thump, long ring."""
+    duration = 1.4
+    t = seconds(duration)
+    swish_len = int(0.16 * SR)
+    u = np.linspace(0, 1, swish_len)
+    swish = svf(noise(0.16), 900 * (7000 / 900) ** u, q=1.3, mode="band")
+    swish *= np.where(u < 0.75, (u / 0.75) ** 2, ((1 - u) / 0.25) ** 0.8)
+    hit_at = int(0.12 * SR)
+    th = t[: len(t) - hit_at]
+    thump = np.sin(2 * np.pi * np.cumsum(48 + 90 * np.exp(-th * 30)) / SR) * np.exp(-th * 7)
+    click = svf(noise(0.05), 5000.0, q=0.7, mode="high") * np.exp(-seconds(0.05) * 160)
+    ring = metal_ring(duration - 0.12, [2100.0, 3300.0, 4700.0, 6600.0, 9100.0], decay=3.6, beat_hz=5.0)
+
+    out = np.zeros(len(t))
+    out[:swish_len] += normalize(swish) * 0.9
+    out[hit_at : hit_at + len(thump)] += np.tanh(2.0 * thump) * 0.9
+    out[hit_at : hit_at + len(click)] += normalize(click) * 0.7
+    out[hit_at : hit_at + len(ring)] += normalize(ring) * 0.55
+    mono = fade_edges(normalize(out), 1, 80)
+    return pan(mono, np.concatenate([np.linspace(-0.7, 0.7, swish_len), np.full(len(t) - swish_len, 0.0)]))
+
+
 GENERATORS = {
     "whoosh": whoosh,
-    "whoosh_short": whoosh_short,
     "impact": impact,
-    "impact_soft": impact_soft,
-    "snap": snap,
     "tick": tick,
     "pop": pop,
     "beep_confirm": beep_confirm,
     "riser": riser,
     "shimmer": shimmer,
+    "katana_draw": katana_draw,
+    "katana_slash": katana_slash,
 }
-
-
-# ---------------------------------------------------------------- mix + io
-
-
-def true_peak_dbtp(stereo: np.ndarray, oversample: int = 4) -> float:
-    peaks = []
-    for ch in range(stereo.shape[1]):
-        x = stereo[:, ch]
-        spectrum = np.fft.rfft(x)
-        upsampled = np.fft.irfft(spectrum, n=len(x) * oversample) * oversample
-        peaks.append(np.max(np.abs(upsampled)))
-    return 20 * np.log10(max(peaks))
-
-
-def write_wav(path: Path, stereo: np.ndarray) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    dither = (rng.uniform(-0.5, 0.5, stereo.shape) + rng.uniform(-0.5, 0.5, stereo.shape)) / 32768
-    pcm = np.clip((stereo + dither) * 32767, -32768, 32767).astype("<i2")
-    with wave.open(str(path), "wb") as wav:
-        wav.setnchannels(2)
-        wav.setsampwidth(2)
-        wav.setframerate(SR)
-        wav.writeframes(pcm.tobytes())
-
-
-def main() -> None:
-    fps = TIMELINE["fps"]
-    total = int(TIMELINE["durationInFrames"] / fps * SR)
-    beats = TIMELINE["beats"]
-    mix = np.zeros((total, 2))
-
-    cache: dict[str, np.ndarray] = {}
-    for cue in TIMELINE["sfx"]:
-        kind = cue["type"]
-        if kind not in cache:
-            cache[kind] = GENERATORS[kind]()
-        sound = cache[kind] * 10 ** (cue.get("gainDb", 0) / 20)
-        frame = beats[cue["at"]] + cue.get("offset", 0)
-        start = max(0, round(frame / fps * SR))
-        end = min(total, start + len(sound))
-        mix[start:end] += sound[: end - start]
-
-    for kind, sound in cache.items():
-        single = sound * 10 ** ((TARGET_TRUE_PEAK_DBTP - true_peak_dbtp(sound)) / 20)
-        write_wav(OUT_DIR / "sfx" / f"{kind}.wav", single)
-
-    gain_db = TARGET_TRUE_PEAK_DBTP - true_peak_dbtp(mix)
-    mix *= 10 ** (gain_db / 20)
-    write_wav(OUT_DIR / "sfx-mix.wav", mix)
-    print(f"sfx-mix.wav: {total / SR:.2f}s, {len(TIMELINE['sfx'])} cues, true peak {true_peak_dbtp(mix):.2f} dBTP")
-
-
-if __name__ == "__main__":
-    main()

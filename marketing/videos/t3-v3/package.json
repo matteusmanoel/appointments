@@ -26,7 +26,7 @@
   },
   "scripts": {
     "dev": "remotion studio",
-    "sfx": "python3 scripts/generate_sfx.py",
+    "audio": "python3 scripts/generate_audio.py",
     "render": "bash scripts/render.sh",
     "build": "remotion bundle",
     "upgrade": "remotion upgrade",

@@ -56,7 +56,7 @@ export const T3V3: React.FC<T3V3Props> = ({ showSafeArea, muted }) => {
         </Series.Sequence>
       </Series>
 
-      {muted ? null : <Audio name="SFX mix" src={staticFile("audio/sfx-mix.wav")} />}
+      {muted ? null : <Audio name="Trilha + SFX" src={staticFile("audio/mix.wav")} />}
       {showSafeArea ? <SafeAreaGuide /> : null}
     </AbsoluteFill>
   );
