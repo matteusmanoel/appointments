@@ -327,12 +327,20 @@ export function ConnectTab({
                   Uso este mês: {usage.used} / {usage.limit} mensagens
                   {usage.hardExceeded && usage.limit > 0 && (
                     <span className="block text-destructive mt-1">
-                      {AI_HARD_CAP_BADGE_TEXT}
+                      {AI_HARD_CAP_BADGE_TEXT}{" "}
+                      <a href="/app/planos" className="font-medium underline underline-offset-2">
+                        Faça upgrade
+                      </a>
+                      .
                     </span>
                   )}
                   {!usage.hardExceeded && usage.limit > 0 && (usage.thresholdExceeded || usage.softExceeded) && (
                     <span className="block text-amber-600 dark:text-amber-500 mt-1">
-                      Uso de IA em {aiUsagePercent(usage.used, usage.limit)}% do limite do plano este mês.
+                      Uso de IA em {aiUsagePercent(usage.used, usage.limit)}% do limite do plano este mês.{" "}
+                      <a href="/app/planos" className="font-medium underline underline-offset-2">
+                        Faça upgrade
+                      </a>{" "}
+                      para evitar bloqueio.
                     </span>
                   )}
                 </p>
