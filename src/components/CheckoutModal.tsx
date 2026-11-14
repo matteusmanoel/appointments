@@ -347,11 +347,6 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                         setEmail(e.target.value);
                         setFieldError("");
                       }}
-                      onBlur={(e) => {
-                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
-                        if (next?.closest("button")) return;
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
                       aria-invalid={!!fieldError}
                       className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
                     />
@@ -382,11 +377,6 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                         setPhone(formatPhoneAsTyped(e.target.value));
                         setFieldError("");
                       }}
-                      onBlur={(e) => {
-                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
-                        if (next?.closest("button")) return;
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      }}
                       aria-invalid={!!fieldError}
                       className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
                     />
@@ -414,11 +404,6 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                       onChange={(e) => {
                         setBarbershopName(e.target.value);
                         setFieldError("");
-                      }}
-                      onBlur={(e) => {
-                        const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
-                        if (next?.closest("button")) return;
-                        requestAnimationFrame(() => inputRef.current?.focus());
                       }}
                       aria-invalid={!!fieldError}
                       className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
@@ -536,16 +521,18 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   className="flex items-start gap-2.5"
                   data-testid="whatsapp-risk-notice"
                 >
-                  <Checkbox
-                    id="whatsapp_risk"
-                    checked={riskAccepted}
-                    onCheckedChange={(v) => {
-                      setRiskAccepted(v === true);
-                      setFieldError("");
-                    }}
-                    aria-describedby="whatsapp_risk_text"
-                    className="mt-0.5 h-4 w-4 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
-                  />
+                  <label className="-ml-1 inline-flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center">
+                    <Checkbox
+                      id="whatsapp_risk"
+                      checked={riskAccepted}
+                      onCheckedChange={(v) => {
+                        setRiskAccepted(v === true);
+                        setFieldError("");
+                      }}
+                      aria-describedby="whatsapp_risk_text"
+                      className="h-4 w-4 border-white/30 data-[state=checked]:bg-primary data-[state=checked]:text-white"
+                    />
+                  </label>
                   <p id="whatsapp_risk_text" className="text-xs font-normal leading-snug text-white/70">
                     <label htmlFor="whatsapp_risk" className="cursor-pointer">{WHATSAPP_RISK_CHECKBOX_BEFORE}</label>
                     <a
@@ -560,7 +547,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   </p>
                 </div>
                 {fieldError === WHATSAPP_RISK_REQUIRED_MESSAGE && (
-                  <p className="sr-only" role="alert">{WHATSAPP_RISK_REQUIRED_MESSAGE}</p>
+                  <p className="text-xs text-red-400" role="alert">
+                    {WHATSAPP_RISK_REQUIRED_MESSAGE}
+                  </p>
                 )}
                 {error && (
                   <p className="text-sm text-red-400" role="alert">{error}</p>
