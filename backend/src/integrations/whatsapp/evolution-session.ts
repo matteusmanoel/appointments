@@ -1,6 +1,7 @@
 import { evolutionInstanceNameFor } from "./provider-config.js";
 import { pool } from "../../db.js";
 import { config } from "../../config.js";
+import { webhookErrorText } from "./webhook-auth.js";
 import * as evo from "./evolution-client.js";
 import { clearPairing, fetchPairing, peekPairing } from "./evolution-pairing.js";
 import type {
@@ -49,7 +50,7 @@ async function ensureWebhookAndSettings(instanceName: string): Promise<{ webhook
   try {
     await evo.setInstanceWebhook(instanceName, url);
   } catch (e) {
-    return { webhook_set: false, webhook_warning: e instanceof Error ? e.message : String(e) };
+    return { webhook_set: false, webhook_warning: webhookErrorText(e) };
   }
   try {
     await evo.setInstanceSettings(instanceName);

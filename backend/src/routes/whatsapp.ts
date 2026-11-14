@@ -24,6 +24,7 @@ import { getUsageAndLimit } from "../ai/usage-limits.js";
 import { requireWhatsAppConnectAllowed } from "../lib/billing-gates.js";
 import { knowledgeRouter } from "./knowledge.js";
 import { brPhoneMatchKeys, brPhonesMatch, canonicalizeBrPhoneDigits } from "../lib/phone-match.js";
+import { webhookErrorText } from "../integrations/whatsapp/webhook-auth.js";
 import {
   defaultWhatsAppProvider,
   ensureWhatsAppSession,
@@ -1095,8 +1096,8 @@ whatsappRouter.post("/uazapi/start", requireWhatsAppConnectAllowed, async (req: 
       await setWebhook({ token, url: webhookUrl });
       webhookSet = true;
     } catch (webhookErr) {
-      const webhookErrMsg = webhookErr instanceof Error ? webhookErr.message : String(webhookErr);
-      console.warn("whatsapp uazapi/start: setWebhook failed (continuing without webhook):", webhookErr);
+      const webhookErrMsg = webhookErrorText(webhookErr);
+      console.warn("whatsapp uazapi/start: setWebhook failed (continuing without webhook):", webhookErrMsg);
       await pool.query(
         `UPDATE public.barbershop_whatsapp_connections
          SET last_error = $1, updated_at = now() WHERE barbershop_id = $2 AND provider = 'uazapi'`,
@@ -1217,8 +1218,8 @@ whatsappRouter.post("/uazapi/link-existing", requireWhatsAppConnectAllowed, asyn
       await setWebhook({ token, url: webhookUrl });
       webhookSet = true;
     } catch (webhookErr) {
-      const webhookErrMsg = webhookErr instanceof Error ? webhookErr.message : String(webhookErr);
-      console.warn("whatsapp uazapi/link-existing: setWebhook failed:", webhookErr);
+      const webhookErrMsg = webhookErrorText(webhookErr);
+      console.warn("whatsapp uazapi/link-existing: setWebhook failed:", webhookErrMsg);
       await pool.query(
         `UPDATE public.barbershop_whatsapp_connections
          SET last_error = $1, updated_at = now() WHERE barbershop_id = $2 AND provider = 'uazapi'`,

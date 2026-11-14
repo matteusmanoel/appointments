@@ -20,7 +20,7 @@ import { decrypt } from "../src/integrations/encryption.js";
 import { setWebhook } from "../src/integrations/uazapi/client.js";
 import { setInstanceWebhook, buildInstanceWebhookBody } from "../src/integrations/whatsapp/evolution-client.js";
 import { evolutionWebhookUrl } from "../src/integrations/whatsapp/evolution-session.js";
-import { getWebhookSecret, withWebhookToken } from "../src/integrations/whatsapp/webhook-auth.js";
+import { getWebhookSecret, maskWebhookSecret, previewWebhookPayloadForLog, webhookErrorText, withWebhookToken } from "../src/integrations/whatsapp/webhook-auth.js";
 
 const args = process.argv.slice(2);
 const flag = (n: string) => args.includes(n);
@@ -35,7 +35,7 @@ const evolutionInstanceNameFor = (barbershopId: string, existing?: string | null
   existing && existing.trim() ? existing.trim() : `nh-${barbershopId.replace(/-/g, "").slice(0, 16)}`;
 const isOwnInstanceName = (name: string): boolean => name.startsWith(`${instancePrefix}-`) || name.startsWith("nh-");
 
-const mask = (s: string) => (s.length <= 8 ? "****" : `${s.slice(0, 2)}…${s.slice(-2)} (${s.length} chars)`);
+const mask = maskWebhookSecret;
 
 type Row = {
   barbershop_id: string;
@@ -92,8 +92,8 @@ async function main(): Promise<void> {
         }
         const url = evolutionWebhookUrl();
         const body = buildInstanceWebhookBody(url).webhook;
-        const shown = { ...body, headers: body.headers ? { apikey: mask(secret) } : undefined };
-        console.log(`  - ${row.barbershop_id} evolution ${name}: POST /webhook/set/${name} ${JSON.stringify(shown)}`);
+        const shown = previewWebhookPayloadForLog(body as Record<string, unknown>, secret);
+        console.log(`  - ${row.barbershop_id} evolution ${name}: POST /webhook/set/${name} ${shown}`);
         if (apply) await setInstanceWebhook(name, url);
         done++;
       } else {
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
       }
     } catch (e) {
       failed++;
-      console.error(`  ! ${row.barbershop_id} ${row.provider}: ${(e as Error).message}`);
+      console.error(`  ! ${row.barbershop_id} ${row.provider}: ${webhookErrorText(e)}`);
     }
   }
   console.log(`${apply ? "Aplicadas" : "Simuladas"}: ${done}; ignoradas: ${skipped}; falhas: ${failed}.`);
@@ -122,6 +122,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  console.error(e);
+  console.error(webhookErrorText(e));
   process.exit(1);
 });

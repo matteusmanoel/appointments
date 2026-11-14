@@ -1,4 +1,4 @@
-import { getWebhookSecret, withWebhookToken } from "../whatsapp/webhook-auth.js";
+import { getWebhookSecret, redactWebhookSecrets, withWebhookToken } from "../whatsapp/webhook-auth.js";
 
 const optional = (key: string, def: string): string => process.env[key] ?? def;
 
@@ -227,15 +227,18 @@ export async function setWebhook(params: { token: string; url: string }): Promis
     }
     if (res.status !== 405) {
       const text = await res.text();
-      throw new Error(`Uazapi webhook failed (${method} ${path}): ${res.status} ${text}`);
+      throw new Error(redactWebhookSecrets(`Uazapi webhook failed (${method} ${path}): ${res.status} ${text}`));
     }
   }
 
+  // params.url (sem token): a URL autenticada nunca vai para mensagem de erro, log ou resposta.
   throw new Error(
-    "Uazapi retornou 405 (Method Not Allowed) em todos os endpoints de webhook testados. " +
-      "Configure o webhook manualmente no painel da Uazapi (ex.: severo.uazapi.com) para esta instância, " +
-      "apontando para: " +
-      url
+    redactWebhookSecrets(
+      "Uazapi retornou 405 (Method Not Allowed) em todos os endpoints de webhook testados. " +
+        "Configure o webhook manualmente no painel da Uazapi (ex.: severo.uazapi.com) para esta instância, " +
+        "apontando para: " +
+        params.url.replace(/\/$/, "")
+    )
   );
 }
 

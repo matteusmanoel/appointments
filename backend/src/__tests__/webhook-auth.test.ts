@@ -7,7 +7,10 @@ import {
   getAcceptedMetaAppSecrets,
   getAcceptedWebhookSecrets,
   getWebhookSecret,
+  maskWebhookSecret,
+  redactWebhookSecrets,
   verifyMetaSignature,
+  webhookErrorText,
   withWebhookToken,
 } from "../integrations/whatsapp/webhook-auth.js";
 
@@ -193,5 +196,48 @@ describe("GET /api/public/:slug não expõe o id da barbearia", () => {
     } finally {
       await pool.query("DELETE FROM public.barbershops WHERE id = $1", [r.rows[0]!.id]);
     }
+  });
+});
+
+describe("redação do segredo (erros, logs, script)", () => {
+  const SECRET = "super-secret-webhook-value-xyz";
+  const env = { WHATSAPP_WEBHOOK_SECRET: SECRET, WHATSAPP_WEBHOOK_SECRET_PREVIOUS: "previous-secret-aaa" };
+
+  it("maskWebhookSecret não ecoa o valor: só tamanho e SHA-256 curto", () => {
+    const masked = maskWebhookSecret(SECRET);
+    expect(masked).toMatch(new RegExp(`^sha256:[0-9a-f]{6}… \\(${SECRET.length} chars\\)$`));
+    expect(masked).not.toContain(SECRET);
+    expect(masked).not.toContain(SECRET.slice(0, 2));
+    expect(masked).not.toContain(SECRET.slice(-2));
+    expect(maskWebhookSecret("")).toBe("(vazio)");
+  });
+
+  it("redactWebhookSecrets remove token= e o valor do segredo (atual, anterior e encoded)", () => {
+    const url = `https://api.test/w?token=${SECRET}&x=1`;
+    const out = redactWebhookSecrets(
+      `falhou ao configurar apontando para: ${url} secret=${SECRET}`,
+      env
+    );
+    expect(out).not.toContain(SECRET);
+    expect(out).toContain("token=[redacted]");
+    expect(out).toContain("secret=[redacted]");
+    expect(redactWebhookSecrets(`token=${encodeURIComponent("previous-secret-aaa")}`, env)).not.toContain("previous-secret-aaa");
+    expect(redactWebhookSecrets("https://api.test/w?token%3D" + SECRET, env)).not.toContain(SECRET);
+  });
+
+  it("webhookErrorText reda a mensagem; last_error, detail e linha do script ficam limpos", () => {
+    const err = new Error(
+      "Uazapi retornou 405 (Method Not Allowed) em todos os endpoints de webhook testados. " +
+        "Configure o webhook manualmente no painel da Uazapi (ex.: severo.uazapi.com) para esta instância, " +
+        `apontando para: https://api.test/api/webhooks/uazapi?token=${SECRET}`
+    );
+    const detail = webhookErrorText(err, env);
+    const lastError = `Webhook não configurado: ${detail}`.slice(0, 500);
+    const scriptLine = `  ! shop-id uazapi: ${detail}`;
+    for (const s of [detail, lastError, scriptLine]) {
+      expect(s).not.toContain(SECRET);
+      expect(s).not.toMatch(/token=(?!\[redacted\])/);
+    }
+    expect(detail).toContain("apontando para: https://api.test/api/webhooks/uazapi?token=[redacted]");
   });
 });

@@ -13,6 +13,7 @@ import type { InstanceStatusResult } from "../uazapi/client.js";
 import { encrypt } from "../encryption.js";
 import { pool } from "../../db.js";
 import { config } from "../../config.js";
+import { webhookErrorText } from "./webhook-auth.js";
 import type {
   ConnectResult,
   ConnectionRow,
@@ -125,8 +126,8 @@ export class UazapiSession implements WhatsAppSession {
         await setWebhook({ token: this.token, url: webhookUrl });
         webhook_set = true;
       } catch (e) {
-        webhook_warning = e instanceof Error ? e.message : String(e);
-        if (config.uazapiRequireWebhook) throw e;
+        webhook_warning = webhookErrorText(e);
+        if (config.uazapiRequireWebhook) throw new Error(webhook_warning);
       }
     }
     const raw = (await instanceConnect({
