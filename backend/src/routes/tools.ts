@@ -4,6 +4,7 @@ import { z } from "zod";
 import { pool } from "../db.js";
 import { requireToolsKey, getBarbershopId } from "../middleware/auth.js";
 import { validateUuidIds } from "../lib/uuid.js";
+import { isLockTimeout, LOCK_BUSY_MESSAGE, lockBarberDay } from "../lib/booking-lock.js";
 
 async function resolveBarbershopId(req: Request): Promise<string | null> {
   try {
@@ -194,20 +195,23 @@ toolsRouter.post("/create_appointment", async (req: Request, res: Response): Pro
   const commissionAmount = totalPrice * (barberPct / 100);
   const startMins = parseInt(timeNorm.slice(0, 2), 10) * 60 + parseInt(timeNorm.slice(3, 5), 10);
   const endMins = startMins + totalDuration;
-  const conflictCheck = await pool.query(
-    `SELECT 1 FROM public.appointments
-     WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled')
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5`,
-    [barbershopId, barber_id, date, startMins, endMins]
-  );
-  if (conflictCheck.rows.length > 0) {
-    res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
-    return;
-  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Mesmo lock por barbeiro/dia do painel, do link público e do agente; conflito conferido DENTRO do lock.
+    await lockBarberDay(client, barber_id, date);
+    const conflictCheck = await client.query(
+      `SELECT 1 FROM public.appointments
+       WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled', 'no_show')
+       AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4
+       AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5`,
+      [barbershopId, barber_id, date, startMins, endMins]
+    );
+    if (conflictCheck.rows.length > 0) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
+      return;
+    }
     const appResult = await client.query(
       `INSERT INTO public.appointments (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status, notes)
        VALUES ($1, $2, $3, $4, $5::date, $6::time, $7, $8, $9, 'pending', $10)
@@ -226,7 +230,11 @@ toolsRouter.post("/create_appointment", async (req: Request, res: Response): Pro
     await client.query("COMMIT");
     res.status(201).json(appointment);
   } catch (e) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (isLockTimeout(e)) {
+      res.status(409).json({ error: LOCK_BUSY_MESSAGE });
+      return;
+    }
     throw e;
   } finally {
     client.release();

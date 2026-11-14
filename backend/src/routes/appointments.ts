@@ -1,4 +1,4 @@
-import { lockBarberDay } from "../lib/booking-lock.js";
+import { isLockTimeout, LOCK_BUSY_MESSAGE, lockBarberDay } from "../lib/booking-lock.js";
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
@@ -40,7 +40,8 @@ async function checkSlotConflict(
   date: string,
   time: string,
   durationMinutes: number,
-  excludeAppointmentId?: string
+  excludeAppointmentId?: string,
+  db: { query: (text: string, params?: unknown[]) => Promise<{ rows: unknown[] }> } = pool
 ): Promise<boolean> {
   const [h, m] = time.split(":").map(Number);
   const startMins = h * 60 + m;
@@ -63,7 +64,7 @@ async function checkSlotConflict(
     params.push(excludeAppointmentId);
     query += ` AND a.id != $${params.length}`;
   }
-  const r = await pool.query(query, params);
+  const r = await db.query(query, params);
   return r.rows.length > 0;
 }
 
@@ -301,7 +302,11 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
         });
     }).catch(() => {});
   } catch (e) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => undefined);
+    if (isLockTimeout(e)) {
+      res.status(409).json({ error: LOCK_BUSY_MESSAGE });
+      return;
+    }
     throw e;
   } finally {
     client.release();
@@ -340,7 +345,7 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
     return;
   }
   const existing = await pool.query(
-    "SELECT * FROM public.appointments WHERE id = $1 AND barbershop_id = $2",
+    "SELECT *, scheduled_date::text AS scheduled_date_text FROM public.appointments WHERE id = $1 AND barbershop_id = $2",
     [req.params.id, barbershopId]
   );
   if (existing.rows.length === 0) {
@@ -349,6 +354,12 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
   }
   const row = existing.rows[0];
   let durationMinutes = Number(row.duration_minutes);
+  let pendingServices: {
+    snapshots: { service_id: string; name: string; price: number; duration_minutes: number }[];
+    totalPrice: number;
+    totalDuration: number;
+    commissionAmount: number;
+  } | null = null;
   if (parsed.data.service_ids?.length) {
     const serviceRows = await pool.query(
       "SELECT id, name, price, duration_minutes FROM public.services WHERE id = ANY($1::uuid[]) AND barbershop_id = $2",
@@ -379,45 +390,8 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
     const pct = barberRow.rows[0] ? Number(barberRow.rows[0].commission_percentage) || 0 : 0;
     const commissionAmount = totalPrice * (pct / 100);
     durationMinutes = totalDuration;
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query("DELETE FROM public.appointment_services WHERE appointment_id = $1", [req.params.id]);
-      for (let pos = 0; pos < snapshots.length; pos++) {
-        const s = snapshots[pos];
-        await client.query(
-          `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [req.params.id, s.service_id, s.price, s.duration_minutes, s.name || null, pos]
-        );
-      }
-      await client.query(
-        `UPDATE public.appointments SET service_id = $1, duration_minutes = $2, price = $3, commission_amount = $4, updated_at = now() WHERE id = $5 AND barbershop_id = $6`,
-        [parsed.data.service_ids[0], totalDuration, totalPrice, commissionAmount, req.params.id, barbershopId]
-      );
-      await client.query("COMMIT");
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
-  }
-  if (parsed.data.scheduled_date != null || parsed.data.scheduled_time != null) {
-    const date = parsed.data.scheduled_date ?? row.scheduled_date;
-    const time = (parsed.data.scheduled_time ?? String(row.scheduled_time).slice(0, 5)).replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
-    const conflict = await checkSlotConflict(
-      barbershopId,
-      row.barber_id,
-      String(date),
-      time,
-      durationMinutes,
-      req.params.id
-    );
-    if (conflict) {
-      res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
-      return;
-    }
+    // Aplicado mais abaixo, na MESMA transação (e sob o lock do barbeiro/dia) da atualização principal.
+    pendingServices = { snapshots, totalPrice, totalDuration, commissionAmount };
   }
   const updates: string[] = [];
   const values: unknown[] = [];
@@ -474,12 +448,98 @@ appointmentsRouter.patch("/:id", async (req: Request, res: Response): Promise<vo
       values.push(t);
     }
   }
-  if (updates.length > 0) {
+  // Tudo que escreve (serviços + campos) roda numa transação só. Se a alteração pode ocupar horário
+  // (mudou data/hora, mudou a duração via serviços, ou reativou um cancelado/no_show), toma o MESMO lock por
+  // barbeiro/dia do POST e do link público e confere conflito já dentro do lock: sem janela de corrida.
+  const FREE_STATUSES = ["cancelled", "no_show"];
+  const reactivates =
+    parsed.data.status !== undefined && !FREE_STATUSES.includes(parsed.data.status) && FREE_STATUSES.includes(String(row.status));
+  const movesSlot = parsed.data.scheduled_date !== undefined || parsed.data.scheduled_time !== undefined;
+  const resultingStatus = parsed.data.status ?? String(row.status);
+  const needsLock = !FREE_STATUSES.includes(resultingStatus) && (movesSlot || pendingServices !== null || reactivates);
+  if (updates.length > 0 || pendingServices) {
     values.push(req.params.id, barbershopId);
-    await pool.query(
-      `UPDATE public.appointments SET ${updates.join(", ")}, updated_at = now() WHERE id = $${i} AND barbershop_id = $${i + 1}`,
-      values
-    );
+    const idPos = i;
+    const tx = await pool.connect();
+    let committed = false;
+    try {
+      await tx.query("BEGIN");
+      if (needsLock) {
+        const targetDate = String(parsed.data.scheduled_date ?? row.scheduled_date_text);
+        await lockBarberDay(tx, row.barber_id, targetDate);
+        // Relê sob lock: horário/duração/status podem ter mudado desde a leitura inicial.
+        const fresh = await tx.query(
+          "SELECT scheduled_time, duration_minutes FROM public.appointments WHERE id = $1 AND barbershop_id = $2 FOR UPDATE",
+          [req.params.id, barbershopId]
+        );
+        if (fresh.rows.length === 0) {
+          await tx.query("ROLLBACK");
+          committed = true;
+          res.status(404).json({ error: "Appointment not found" });
+          return;
+        }
+        const effDuration = pendingServices ? pendingServices.totalDuration : Number(fresh.rows[0].duration_minutes);
+        const effTime = (parsed.data.scheduled_time ?? String(fresh.rows[0].scheduled_time).slice(0, 5)).replace(
+          /^(\d{2}):(\d{2})(:\d{2})?$/,
+          "$1:$2"
+        );
+        const conflict = await checkSlotConflict(
+          barbershopId,
+          row.barber_id,
+          targetDate,
+          effTime,
+          effDuration,
+          req.params.id,
+          tx
+        );
+        if (conflict) {
+          await tx.query("ROLLBACK");
+          committed = true;
+          res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
+          return;
+        }
+      }
+      if (pendingServices) {
+        await tx.query("DELETE FROM public.appointment_services WHERE appointment_id = $1", [req.params.id]);
+        for (let pos = 0; pos < pendingServices.snapshots.length; pos++) {
+          const sn = pendingServices.snapshots[pos];
+          await tx.query(
+            `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [req.params.id, sn.service_id, sn.price, sn.duration_minutes, sn.name || null, pos]
+          );
+        }
+        await tx.query(
+          `UPDATE public.appointments SET service_id = $1, duration_minutes = $2, price = $3, commission_amount = $4, updated_at = now() WHERE id = $5 AND barbershop_id = $6`,
+          [
+            parsed.data.service_ids![0],
+            pendingServices.totalDuration,
+            pendingServices.totalPrice,
+            pendingServices.commissionAmount,
+            req.params.id,
+            barbershopId,
+          ]
+        );
+      }
+      if (updates.length > 0) {
+        await tx.query(
+          `UPDATE public.appointments SET ${updates.join(", ")}, updated_at = now() WHERE id = $${idPos} AND barbershop_id = $${idPos + 1}`,
+          values
+        );
+      }
+      await tx.query("COMMIT");
+      committed = true;
+    } catch (e) {
+      if (!committed) await tx.query("ROLLBACK").catch(() => undefined);
+      committed = true;
+      if (isLockTimeout(e)) {
+        res.status(409).json({ error: LOCK_BUSY_MESSAGE });
+        return;
+      }
+      throw e;
+    } finally {
+      tx.release();
+    }
   }
   const shouldCancelReminders = parsed.data.status === "cancelled" || parsed.data.status === "no_show";
   const shouldRescheduleReminders =

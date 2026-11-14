@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { validateSlotForPublicReschedule } from "../ai/tools.js";
-import { lockBarberDay } from "../lib/booking-lock.js";
+import { isLockTimeout, LOCK_BUSY_MESSAGE, lockBarberDay } from "../lib/booking-lock.js";
 import {
   barbershopHasAutomation,
   cancelReminderForAppointment,
@@ -177,6 +177,10 @@ publicRouter.post("/appointments/:token/reschedule", async (req: Request, res: R
     await lockConn.query("COMMIT");
   } catch (e) {
     await lockConn.query("ROLLBACK").catch(() => {});
+    if (isLockTimeout(e)) {
+      res.status(409).json({ error: LOCK_BUSY_MESSAGE });
+      return;
+    }
     throw e;
   } finally {
     lockConn.release();
@@ -461,7 +465,11 @@ publicRouter.post("/:slug/appointments", async (req: Request, res: Response): Pr
         });
     }).catch(() => {});
   } catch (e) {
-    await conn.query("ROLLBACK");
+    await conn.query("ROLLBACK").catch(() => undefined);
+    if (isLockTimeout(e)) {
+      res.status(409).json({ error: LOCK_BUSY_MESSAGE });
+      return;
+    }
     throw e;
   } finally {
     conn.release();
