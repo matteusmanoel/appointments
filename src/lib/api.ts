@@ -688,6 +688,16 @@ export type WhatsAppInboxMessage = {
   delivered_at?: string | null;
 };
 
+export type WhatsappUsage = {
+  used: number;
+  limit: number;
+  softExceeded: boolean;
+  hardExceeded: boolean;
+  billingPlan: string;
+  thresholdPct: number;
+  thresholdExceeded: boolean;
+};
+
 export const whatsappApi = {
   syncContactPhoto: (phone: string) =>
     api<{ photo_url: string }>("/api/integrations/whatsapp/contact-photo/sync", {
@@ -722,7 +732,7 @@ export const whatsappApi = {
       method: "POST",
     }),
   getUsage: () =>
-    api<{ used: number; limit: number; softExceeded: boolean; hardExceeded: boolean; billingPlan: string }>(
+    api<WhatsappUsage>(
       "/api/integrations/whatsapp/usage"
     ),
   start: (phone?: string) =>

@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChangePasswordModal } from "@/components/shared";
+import { AiUsageAlertBadge } from "@/components/layout/AiUsageAlertBadge";
 import { shouldRunSetupTour, runSetupTour } from "@/lib/setup-tour";
 
 interface MainLayoutProps {
@@ -93,6 +94,7 @@ export function MainLayout({ children }: MainLayoutProps) {
               <a href="/app/planos" className="font-medium underline underline-offset-2">Ver plano e pagamento</a>
             </div>
           )}
+          <AiUsageAlertBadge />
           {children}
         </div>
       </main>

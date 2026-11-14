@@ -1,10 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  DEFAULT_HARD_CAP_CUSTOMER_MESSAGE,
-  handleHardCapTurn,
-  hardCapCustomerMessage,
-} from "../ai/usage-cap.js";
+import { handleHardCapTurn } from "../ai/usage-cap.js";
 import {
   USAGE_ALERT_KEY_HARD_CAP,
   USAGE_ALERT_KEY_LIMIT,
@@ -15,18 +11,19 @@ import {
 } from "../ai/usage-alert.js";
 import { buildAiUsageAlertTexts } from "../lib/ses.js";
 
-describe("texto ao cliente final no teto", () => {
-  it("padrão neutro quando não configurado; configurável por AI_HARD_CAP_CUSTOMER_MESSAGE (aparado, até 500)", () => {
-    expect(DEFAULT_HARD_CAP_CUSTOMER_MESSAGE).toBe("No momento não consigo responder por aqui. A barbearia vai retornar em breve.");
-    expect(hardCapCustomerMessage({})).toBe(DEFAULT_HARD_CAP_CUSTOMER_MESSAGE);
-    expect(hardCapCustomerMessage({ AI_HARD_CAP_CUSTOMER_MESSAGE: "   " })).toBe(DEFAULT_HARD_CAP_CUSTOMER_MESSAGE);
-    expect(hardCapCustomerMessage({ AI_HARD_CAP_CUSTOMER_MESSAGE: "  Já te respondemos por aqui!  " })).toBe("Já te respondemos por aqui!");
-    expect(hardCapCustomerMessage({ AI_HARD_CAP_CUSTOMER_MESSAGE: "x".repeat(900) })).toHaveLength(500);
+describe("silêncio no teto (sem mensagem ao cliente)", () => {
+  it("não há texto ao cliente nem AI_HARD_CAP_CUSTOMER_MESSAGE no código do teto", () => {
+    const cap = readFileSync(new URL("../ai/usage-cap.ts", import.meta.url), "utf8");
+    expect(cap).not.toContain("AI_HARD_CAP_CUSTOMER_MESSAGE");
+    expect(cap).not.toContain("DEFAULT_HARD_CAP_CUSTOMER_MESSAGE");
+    expect(cap).not.toContain("hardCapCustomerMessage");
+    const src = readFileSync(new URL("../workers/ai-worker.ts", import.meta.url), "utf8");
+    expect(src).not.toContain("AI_HARD_CAP_CUSTOMER_MESSAGE");
   });
 });
 
 describe("texto do e-mail ao dono (margem real e aviso do teto)", () => {
-  it("80%: diz quantas respostas faltam, a margem até o teto e que no teto o cliente deixa de ser atendido pela IA", () => {
+  it("80%: diz quantas respostas faltam, a margem até o teto e que no teto o agente fica em silêncio", () => {
     const t = buildAiUsageAlertTexts({ barbershopName: "Barbearia X", used: 400, limit: 500, thresholdPct: 80 });
     const all = t.paragraphs.join(" ");
     expect(t.subject).toContain("80%");
@@ -34,20 +31,24 @@ describe("texto do e-mail ao dono (margem real e aviso do teto)", () => {
     expect(all).toContain("Faltam 100 respostas para o limite");
     expect(all).toContain("mais 500 de margem");
     expect(all).toContain("teto de 1000");
-    expect(all).toMatch(/cliente final deixa de receber respostas automáticas/);
+    expect(all).toMatch(/fica em silêncio com o cliente/);
+    expect(all).not.toMatch(/aviso curto/);
   });
-  it("100%: a IA segue por mais N até o teto; teto: IA parou e o que o cliente recebe", () => {
+  it("100%: a IA segue por mais N até o teto; teto: IA parou e o agente fica em silêncio", () => {
     const l = buildAiUsageAlertTexts({ barbershopName: "B", used: 500, limit: 500, thresholdPct: 100, kind: "limit" }).paragraphs.join(" ");
     expect(l).toContain("100% do limite");
     expect(l).toContain("mais 500 respostas, até o teto de 1000");
+    expect(l).toMatch(/fica em silêncio com o cliente/);
+    expect(l).not.toMatch(/aviso curto/);
     const c = buildAiUsageAlertTexts({ barbershopName: "B", used: 1000, limit: 500, thresholdPct: 200, kind: "hard_cap" });
     expect(c.subject).toMatch(/parou de responder/);
     expect(c.paragraphs.join(" ")).toContain("1000 de 1000");
-    expect(c.paragraphs.join(" ")).toMatch(/aviso curto/);
+    expect(c.paragraphs.join(" ")).toMatch(/fica em silêncio com o cliente/);
+    expect(c.paragraphs.join(" ")).not.toMatch(/aviso curto/);
   });
 });
 
-describe("teto de uso da IA: aviso ao cliente 1x e alertas ao dono 1x (remetente injetado, sem envio real)", () => {
+describe("teto de uso da IA: silêncio com o cliente, registro 1x e alertas ao dono 1x (remetente injetado, sem envio real)", () => {
   let pool: typeof import("../db.js").pool;
   const stamp = Date.now();
   let shopId = "";
@@ -88,31 +89,34 @@ describe("teto de uso da IA: aviso ao cliente 1x e alertas ao dono 1x (remetente
   });
   beforeEach(() => resetUsageAlertCacheForTests());
 
-  it("no teto, o cliente recebe o aviso UMA vez por conversa e mês; outra conversa e o mês seguinte recebem de novo", async () => {
+  it("no teto, o cliente permanece em silêncio; o evento é gravado UMA vez por conversa e mês", async () => {
     const sender = vi.fn(async () => {});
     const c1 = await mkConv();
     const c2 = await mkConv();
     const p = { barbershopId: shopId, used: 1000, limit: 500 };
 
     const first = await handleHardCapTurn({ ...p, conversationId: c1 }, { sender, env, now });
-    expect(first).toMatchObject({ reply: DEFAULT_HARD_CAP_CUSTOMER_MESSAGE, customerNotice: "to_send", ownerAlert: "sent" });
+    expect(first).toMatchObject({ reply: "", event: "recorded", ownerAlert: "sent" });
     for (let i = 0; i < 3; i++) {
       const again = await handleHardCapTurn({ ...p, used: 1001 + i, conversationId: c1 }, { sender, env, now });
-      expect(again).toMatchObject({ reply: "", customerNotice: "already_sent" });
+      expect(again).toMatchObject({ reply: "", event: "already_recorded" });
     }
-    expect((await handleHardCapTurn({ ...p, conversationId: c2 }, { sender, env, now })).reply).toBe(DEFAULT_HARD_CAP_CUSTOMER_MESSAGE);
+    const other = await handleHardCapTurn({ ...p, conversationId: c2 }, { sender, env, now });
+    expect(other).toMatchObject({ reply: "", event: "recorded" });
     const nextMonth = new Date("2027-06-10T12:00:00Z");
-    expect((await handleHardCapTurn({ ...p, conversationId: c1 }, { sender, env, now: nextMonth })).reply).toBe(DEFAULT_HARD_CAP_CUSTOMER_MESSAGE);
+    const next = await handleHardCapTurn({ ...p, conversationId: c1 }, { sender, env, now: nextMonth });
+    expect(next).toMatchObject({ reply: "", event: "recorded" });
     expect(await noticeRows()).toHaveLength(3); // c1/maio, c2/maio, c1/junho
   });
 
-  it("o texto configurado em AI_HARD_CAP_CUSTOMER_MESSAGE é o que sai", async () => {
+  it("AI_HARD_CAP_CUSTOMER_MESSAGE, se ainda estiver no ambiente, é ignorada: reply continua vazia", async () => {
     const c = await mkConv();
     const r = await handleHardCapTurn(
       { barbershopId: shopId, conversationId: c, used: 1000, limit: 500 },
       { sender: vi.fn(async () => {}), env: { ...env, AI_HARD_CAP_CUSTOMER_MESSAGE: "Texto aprovado." }, now },
     );
-    expect(r.reply).toBe("Texto aprovado.");
+    expect(r.reply).toBe("");
+    expect(r.event).toBe("recorded");
   });
 
   it("o dono recebe o alerta de teto UMA vez no mês (kind hard_cap, chave 200)", async () => {
@@ -144,14 +148,14 @@ describe("teto de uso da IA: aviso ao cliente 1x e alertas ao dono 1x (remetente
     expect(await maybeAlertAiUsageHardCap(params(999), { sender, env, now: month })).toBe("below");
   });
 
-  it("alertas desligados (AI_USAGE_ALERT_ENABLED=false): nada sai, nem e-mail nem aviso ao cliente, e nada é gravado", async () => {
+  it("alertas desligados (AI_USAGE_ALERT_ENABLED=false): nada sai, nem e-mail nem registro, e o cliente permanece em silêncio", async () => {
     const sender = vi.fn(async () => {});
     const off = { AI_USAGE_ALERT_ENABLED: "false" };
     const month = new Date("2027-09-10T12:00:00Z");
     const c = await mkConv();
     const before = (await noticeRows()).length;
     const r = await handleHardCapTurn({ barbershopId: shopId, conversationId: c, used: 1000, limit: 500 }, { sender, env: off, now: month });
-    expect(r).toEqual({ reply: "", ownerAlert: "disabled", customerNotice: "disabled" });
+    expect(r).toEqual({ reply: "", ownerAlert: "disabled", event: "disabled" });
     expect(await maybeAlertAiUsageLimit({ barbershopId: shopId, used: 500, limit: 500 }, { sender, env: off, now: month })).toBe("disabled");
     expect(await maybeAlertAiUsageHardCap({ barbershopId: shopId, used: 1000, limit: 500 }, { sender, env: off, now: month })).toBe("disabled");
     expect(sender).not.toHaveBeenCalled();
@@ -159,13 +163,13 @@ describe("teto de uso da IA: aviso ao cliente 1x e alertas ao dono 1x (remetente
     expect((await alertRows()).filter((x) => x.period === "2027-09")).toHaveLength(0);
   });
 
-  it("plano sem IA (limite 0) e conversa sandbox ficam em silêncio; falha do e-mail não impede o aviso ao cliente", async () => {
+  it("plano sem IA (limite 0) e conversa sandbox ficam em silêncio; falha do e-mail não impede o registro", async () => {
     const sender = vi.fn(async () => {});
     const month = new Date("2027-10-10T12:00:00Z");
     const c = await mkConv();
     expect(await handleHardCapTurn({ barbershopId: shopId, conversationId: c, used: 5, limit: 0 }, { sender, env, now: month })).toMatchObject({
       reply: "",
-      customerNotice: "not_applicable",
+      event: "not_applicable",
     });
     const sb = await mkConv(true);
     expect((await handleHardCapTurn({ barbershopId: shopId, conversationId: sb, used: 1000, limit: 500 }, { sender, env, now: month })).reply).toBe("");
@@ -175,13 +179,13 @@ describe("teto de uso da IA: aviso ao cliente 1x e alertas ao dono 1x (remetente
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const r = await handleHardCapTurn({ barbershopId: shopId, conversationId: c, used: 1000, limit: 500 }, { sender: boom, env, now: new Date("2027-11-10T12:00:00Z") });
     warn.mockRestore();
-    expect(r).toMatchObject({ ownerAlert: "error", customerNotice: "to_send", reply: DEFAULT_HARD_CAP_CUSTOMER_MESSAGE });
+    expect(r).toMatchObject({ ownerAlert: "error", event: "recorded", reply: "" });
   });
 
-  it("o worker usa o tratamento do teto nos dois ramos (nativo e n8n) e não zera mais a resposta no hard_limit", () => {
+  it("o worker usa o tratamento do teto nos dois ramos (nativo e n8n) e a resposta do teto é sempre vazia", () => {
     const src = readFileSync(new URL("../workers/ai-worker.ts", import.meta.url), "utf8");
     expect((src.match(/handleHardCapTurn\(/g) ?? []).length).toBe(2);
     expect(src).toContain("maybeAlertAiUsageLimit(");
-    expect(src).not.toMatch(/state = "hard_limit";\s*reply = "";/);
+    expect(src).toContain("reply = cap.reply");
   });
 });

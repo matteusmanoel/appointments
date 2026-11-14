@@ -502,7 +502,7 @@ async function processOneJob(): Promise<boolean> {
         turnSink.state = n8nGate;
         reply = "";
         if (n8nGate === "hard_limit") {
-          // Teto de uso: aviso curto ao cliente (1x por conversa/mês) e e-mail ao dono; plano sem IA (limite 0) segue em silêncio.
+          // Teto de uso: silêncio com o cliente, registro do evento e e-mail ao dono; plano sem IA (limite 0) segue em silêncio.
           const u = await getUsageAndLimit(barbershopId);
           const cap = await handleHardCapTurn({ barbershopId, conversationId, used: u.used, limit: u.limit });
           reply = cap.reply;
@@ -554,8 +554,7 @@ async function processOneJob(): Promise<boolean> {
       } else if (usage.hardExceeded) {
         console.warn("[ai-worker] hard limit exceeded barbershopId=%s used=%s limit=%s", barbershopId, usage.used, usage.limit);
         turnSink.state = "hard_limit";
-        // Antes a resposta era "" e ninguém era avisado. Agora: e-mail ao dono (1x/mês) e um aviso curto ao cliente final,
-        // 1x por conversa e mês, enviado pelo caminho normal de resposta logo abaixo. Ver ai/usage-cap.ts.
+        // Silêncio com o cliente; e-mail ao dono (1x/mês) e registro em ai_hard_cap_notices. Ver ai/usage-cap.ts.
         const cap = await handleHardCapTurn({ barbershopId, conversationId, used: usage.used, limit: usage.limit });
         reply = cap.reply;
         turnSink.replyText = reply;

@@ -117,7 +117,7 @@ export type AiUsageAlertTexts = { subject: string; title: string; paragraphs: st
 
 /**
  * Texto do aviso de uso da IA (puro, testável). Usa a margem real do plano: o teto é 2x o limite
- * (usage-limits.ts); no teto a IA para de responder e o cliente final só recebe o aviso curto, uma vez por conversa no mês.
+ * (usage-limits.ts); no teto a IA para de responder e o agente fica em silêncio com o cliente.
  */
 export function buildAiUsageAlertTexts(params: Pick<AiUsageAlertEmailParams, "barbershopName" | "used" | "limit" | "thresholdPct" | "kind">): AiUsageAlertTexts {
   const kind = params.kind ?? "threshold";
@@ -125,14 +125,14 @@ export function buildAiUsageAlertTexts(params: Pick<AiUsageAlertEmailParams, "ba
   const toLimit = Math.max(0, params.limit - params.used);
   const toCap = Math.max(0, cap - params.used);
   const name = params.barbershopName;
-  const capWarning = `No teto (${cap} respostas no mês) a IA para de responder: o cliente final deixa de receber respostas automáticas e só recebe um aviso curto de que a barbearia vai retornar. O atendimento automático volta no próximo mês ou ao ampliar o plano.`;
+  const capWarning = `No teto (${cap} respostas no mês) a IA para de responder: o atendimento automático fica em silêncio com o cliente até o próximo ciclo ou até ampliar o plano. Responda manualmente as conversas.`;
   if (kind === "hard_cap") {
     return {
       subject: "A IA parou de responder: teto de uso atingido - NavalhIA",
       title: "Teto de uso da IA atingido",
       paragraphs: [
         `As respostas de IA de ${name} neste mês chegaram ao teto de ${cap} (${params.used} de ${cap}; o limite do plano é ${params.limit}).`,
-        "A IA parou de responder. Cada cliente que escreve agora recebe um aviso curto de que a barbearia vai retornar em breve (uma vez por conversa no mês), e as demais mensagens ficam sem resposta automática. Responda manualmente as conversas.",
+        "A IA parou de responder. O atendimento automático fica em silêncio com o cliente até o próximo ciclo. Responda manualmente as conversas.",
         "O atendimento automático volta no próximo mês. Para voltar antes, amplie o plano.",
       ],
     };
