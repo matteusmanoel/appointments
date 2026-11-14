@@ -20,6 +20,28 @@ export type ReminderVars = {
   alreadyConfirmed?: boolean;
 };
 
+/**
+ * Instrução de opt-out (parecer I-04 / lp-correcoes §16.6). O cliente sai respondendo só «PARAR»/«SAIR»
+ * (ver lib/opt-out.ts: mensagem inteira, não a palavra solta numa frase).
+ * Ficam DE FORA de propósito (não são promoção nem lembrete de horário): remarcação concluída (composeRescheduleDone) e
+ * as cobranças/lembretes de pagamento do plano, que são transacionais e não podem ser bloqueados por opt-out.
+ */
+export const OPT_OUT_MARKETING_LINE = "Para não receber mais mensagens, responda PARAR.";
+export const OPT_OUT_PROMO_LINE = "Para não receber mensagens promocionais, responda PARAR.";
+
+/** O texto já TEM a instrução («responda PARAR»/«envie SAIR»…)? Detecta a instrução, não a palavra solta («vamos parar para um café»). */
+export function hasOptOutInstruction(text: string): boolean {
+  return /\b(responda|responder|envie|enviar|digite|mande|mandar)\s+(?:a\s+palavra\s+)?["“'*_]*\s*(parar|sair)\b/i.test(text);
+}
+
+/** Acrescenta a linha de opt-out ao fim do texto, uma única vez (idempotente se o texto já traz a instrução). */
+export function withOptOutLine(body: string, line: string = OPT_OUT_MARKETING_LINE): string {
+  const text = body.trim();
+  if (!text) return text;
+  if (hasOptOutInstruction(text)) return text;
+  return `${text}\n\n${line}`;
+}
+
 function moneyBr(amount: number): string {
   return amount.toFixed(2).replace(".", ",");
 }
@@ -68,7 +90,7 @@ export function buildReminder24h(v: ReminderVars): string {
       ? "Seu horário está confirmado. Esperamos por você!"
       : "Seu horário está reservado. *Você confirma sua presença ou prefere reagendar?*",
   ];
-  return lines.filter((line): line is string => line !== null).join("\n").trim();
+  return withOptOutLine(lines.filter((line): line is string => line !== null).join("\n").trim(), OPT_OUT_PROMO_LINE);
 }
 
 export function buildReminder2h(v: ReminderVars): string {
@@ -120,9 +142,10 @@ export function buildReminder2hPending(v: ReminderVars): string {
   const lead = first
     ? `${first}, ainda não recebemos sua confirmação.`
     : "Ainda não recebemos sua confirmação.";
-  return (
+  return withOptOutLine(
     `${lead}\n\n` +
-    `*Você vem ${day} às ${clock}?* Confirme agora para mantermos seu horário reservado. Caso não haja confirmação, precisaremos liberá-lo.`
+      `*Você vem ${day} às ${clock}?* Confirme agora para mantermos seu horário reservado. Caso não haja confirmação, precisaremos liberá-lo.`,
+    OPT_OUT_PROMO_LINE,
   );
 }
 
@@ -131,7 +154,10 @@ export function buildReminder2hConfirmed(v: ReminderVars): string {
   const day = relativeDay(v.date, v.todayIso);
   const clock = formatTimePt(v.time);
   const hi = first ? `Tudo certo, ${first}!` : "Tudo certo!";
-  return `${hi} *Seu horário está confirmado.* 💈\n\nNos vemos ${day}, às ${clock}.\nEsperamos por você!`;
+  return withOptOutLine(
+    `${hi} *Seu horário está confirmado.* 💈\n\nNos vemos ${day}, às ${clock}.\nEsperamos por você!`,
+    OPT_OUT_PROMO_LINE,
+  );
 }
 
 export type FollowUp30dVars = {
@@ -141,12 +167,12 @@ export type FollowUp30dVars = {
 
 export function buildFollowUp30d(v: FollowUp30dVars): string {
   const name = v.clientName ? ` ${v.clientName},` : "";
-  return `Oi${name} faz um tempo que a gente não se vê! Que tal marcar um horário? Agenda aqui: ${v.bookingLink} 🙂`.trim();
+  return withOptOutLine(`Oi${name} faz um tempo que a gente não se vê! Que tal marcar um horário? Agenda aqui: ${v.bookingLink} 🙂`);
 }
 
 export function buildFollowUpFirstVisit(v: FollowUp30dVars): string {
   const name = v.clientName ? ` ${v.clientName},` : "";
-  return `Oi${name} faz um tempo que conversamos por aqui. Bora marcar seu primeiro horario? Agenda aqui: ${v.bookingLink} 🙂`.trim();
+  return withOptOutLine(`Oi${name} faz um tempo que conversamos por aqui. Bora marcar seu primeiro horario? Agenda aqui: ${v.bookingLink} 🙂`);
 }
 
 export type PaymentReminderVars = {
@@ -187,7 +213,7 @@ export function buildBirthdayMessage(v: BirthdayMessageVars): string {
   const first = firstName(v.clientName);
   const name = first ? `, ${first}` : "";
   const offer = v.discountText ? ` ${v.discountText}` : "";
-  return `Parabens${name}! 🎉 Desejamos um dia incrivel!${offer} Se quiser, ja garante seu horario aqui: ${v.bookingLink}`.trim();
+  return withOptOutLine(`Parabens${name}! 🎉 Desejamos um dia incrivel!${offer} Se quiser, ja garante seu horario aqui: ${v.bookingLink}`);
 }
 
 export type PlanPaymentMessageVars = {

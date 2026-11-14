@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 import { barbershopTimezone } from "./dispatch-gate.js";
-import { buildBirthdayMessage, buildFollowUp30d } from "./templates.js";
+import { buildBirthdayMessage, buildFollowUp30d, withOptOutLine } from "./templates.js";
 
 export const REACTIVATION_VISIT_MILESTONES = [15, 30, 45, 60] as const;
 export const REACTIVATION_REMOVED_REASON = "Reativação retirada pelo operador";
@@ -252,7 +252,8 @@ export function reactivationMessage(v: {
 }): string {
   if (v.reason === "birthday") {
     const custom = (v.bodyOverride ?? "").trim();
-    if (custom) return custom;
+    // Texto próprio do dono não passa por template: a instrução PARAR é acrescentada no envio (lp-correcoes §16.6, N-02).
+    if (custom) return withOptOutLine(custom);
     return buildBirthdayMessage({ clientName: v.clientName ?? undefined, bookingLink: v.bookingLink });
   }
   return buildFollowUp30d({ clientName: v.clientName ?? undefined, bookingLink: v.bookingLink });

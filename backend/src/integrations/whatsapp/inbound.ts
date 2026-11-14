@@ -14,6 +14,7 @@ import { decideReceiptAcceptance, RECEIPT_FAIL_REPLY, RECEIPT_OK_REPLY } from ".
 import { recordAgendaChange, type AgendaChangeEvent } from "../../agenda/record-agenda-change.js";
 import { addDaysIso } from "../../ai/date-calendar.js";
 import { getWhatsAppOrNull } from "./index.js";
+import { isOptOutMessage, OPT_OUT_ACK_MESSAGE, OPT_OUT_SOURCE_WHATSAPP } from "../../lib/opt-out.js";
 import { scheduleClientPhotoSync } from "../../clients/sync-contact-photo.js";
 import { config } from "../../config.js";
 import { clampInboundQuietSeconds } from "./inbound-turn.js";
@@ -208,28 +209,30 @@ export async function enqueueInboundMessage(params: {
   }
 
   const optOutMatchKeys = brPhoneMatchKeys(canonicalPhone);
-  const optOutPattern =
-    /^(parar|n[aã]o\s*quero\s*receber|cancelar\s*inscri[cç][aã]o|opt\s*out|remover|n[aã]o\s*receber\s*mais|sair\s*da\s*lista)$/i;
-  const trimmed = (text || "").trim().toLowerCase();
-  if (optOutPattern.test(trimmed) || (trimmed.includes("parar") && trimmed.length < 50)) {
-    if (canonicalPhone) {
-      const updated = await pool.query(
-        `UPDATE public.clients SET marketing_opt_out = true, updated_at = now()
-         WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])`,
-        [barbershopId, optOutMatchKeys],
+  // Opt-out só se a mensagem INTEIRA for uma palavra de opt-out (lib/opt-out.ts). «vou parar aí às 18h» NÃO é opt-out.
+  const isOptOut = isOptOutMessage(text);
+  if (isOptOut && canonicalPhone) {
+    const updated = await pool.query(
+      `UPDATE public.clients
+          SET marketing_opt_out = true, marketing_opt_out_at = COALESCE(marketing_opt_out_at, now()),
+              marketing_opt_out_source = COALESCE(marketing_opt_out_source, $3), updated_at = now()
+        WHERE barbershop_id = $1 AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])`,
+      [barbershopId, optOutMatchKeys, OPT_OUT_SOURCE_WHATSAPP],
+    );
+    if (updated.rowCount === 0) {
+      // Número ainda sem cadastro: cria o registro mínimo só para o opt-out valer nos próximos envios.
+      await pool.query(
+        `INSERT INTO public.clients (barbershop_id, name, phone, marketing_opt_out, marketing_opt_out_at, marketing_opt_out_source, whatsapp_contact_name, name_confirmed, updated_at)
+         VALUES ($1, 'Cliente', $2, true, now(), $4, $3, false, now())
+         ON CONFLICT (barbershop_id, phone) DO UPDATE SET
+           marketing_opt_out = true,
+           marketing_opt_out_at = COALESCE(clients.marketing_opt_out_at, now()),
+           marketing_opt_out_source = COALESCE(clients.marketing_opt_out_source, EXCLUDED.marketing_opt_out_source),
+           whatsapp_contact_name = COALESCE(EXCLUDED.whatsapp_contact_name, clients.whatsapp_contact_name),
+           updated_at = now()`,
+        [barbershopId, canonicalPhone, (params.pushName ?? "").trim().slice(0, 120) || null, OPT_OUT_SOURCE_WHATSAPP],
       );
-      if (updated.rowCount === 0) {
-        await pool.query(
-          `INSERT INTO public.clients (barbershop_id, name, phone, marketing_opt_out, whatsapp_contact_name, name_confirmed, updated_at)
-           VALUES ($1, 'Cliente', $2, true, $3, false, now())
-           ON CONFLICT (barbershop_id, phone) DO UPDATE SET
-             marketing_opt_out = true,
-             whatsapp_contact_name = COALESCE(EXCLUDED.whatsapp_contact_name, clients.whatsapp_contact_name),
-             updated_at = now()`,
-          [barbershopId, canonicalPhone, (params.pushName ?? "").trim().slice(0, 120) || null],
-        );
-        scheduleClientPhotoSync(barbershopId, canonicalPhone);
-      }
+      scheduleClientPhotoSync(barbershopId, canonicalPhone);
     }
   }
 
@@ -296,6 +299,12 @@ export async function enqueueInboundMessage(params: {
     [conversationId, text.slice(0, 64 * 1024), providerEventId],
   );
 
+  if (isOptOut && canonicalPhone) {
+    // Confirma ao cliente e NÃO abre turno do agente (a mensagem já ficou registrada na conversa).
+    await sendOptOutAck({ barbershopId, phone: canonicalPhone, logPrefix });
+    return;
+  }
+
   await bumpOrEnqueueJob({
     barbershopId,
     conversationId,
@@ -305,6 +314,17 @@ export async function enqueueInboundMessage(params: {
     eventLabel: params.eventLabel,
     logPrefix,
   });
+}
+
+async function sendOptOutAck(params: { barbershopId: string; phone: string; logPrefix: string }): Promise<void> {
+  try {
+    const session = await getWhatsAppOrNull(params.barbershopId);
+    if (!session) return;
+    await session.sendText(params.phone, OPT_OUT_ACK_MESSAGE);
+  } catch (e) {
+    // O opt-out já está gravado; a confirmação é cortesia e não pode derrubar o inbound.
+    console.warn("[%s] opt-out ack send failed:", params.logPrefix, e instanceof Error ? e.message : e);
+  }
 }
 
 async function bumpOrEnqueueJob(params: {

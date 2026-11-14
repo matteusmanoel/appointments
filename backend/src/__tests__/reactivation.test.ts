@@ -42,7 +42,7 @@ describe("reativação", () => {
         bookingLink: link,
         bodyOverride: "Feliz aniversário, te esperamos essa semana",
       }),
-    ).toBe("Feliz aniversário, te esperamos essa semana");
+    ).toBe("Feliz aniversário, te esperamos essa semana\n\nPara não receber mais mensagens, responda PARAR.");
     expect(
       reactivationMessage({ reason: "birthday", clientName: "Mateus", bookingLink: link, bodyOverride: "  " }),
     ).toBe(buildBirthdayMessage({ clientName: "Mateus", bookingLink: link }));

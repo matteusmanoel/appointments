@@ -29,6 +29,8 @@ describe("reminder templates", () => {
         "💰 R$ 55,00",
         "",
         "Seu horário está reservado. *Você confirma sua presença ou prefere reagendar?*",
+        "",
+        "Para não receber mensagens promocionais, responda PARAR.",
       ].join("\n"),
     );
     expect(body).not.toMatch(/https?:\/\//);
@@ -43,7 +45,7 @@ describe("reminder templates", () => {
   it("2h confirmed only reinforces the visit", () => {
     const body = buildReminder2hConfirmed({ ...base, todayIso: "2026-09-22" });
     expect(body).toBe(
-      "Tudo certo, Mateus! *Seu horário está confirmado.* 💈\n\nNos vemos hoje, às 18h.\nEsperamos por você!",
+      "Tudo certo, Mateus! *Seu horário está confirmado.* 💈\n\nNos vemos hoje, às 18h.\nEsperamos por você!\n\nPara não receber mensagens promocionais, responda PARAR.",
     );
     expect(body).not.toMatch(/confirmação/i);
     expect(body).not.toMatch(/https?:\/\//);
@@ -52,7 +54,7 @@ describe("reminder templates", () => {
   it("2h pending puts a clear decision in front of the client", () => {
     const body = buildReminder2hPending({ ...base, todayIso: "2026-09-22" });
     expect(body).toBe(
-      "Mateus, ainda não recebemos sua confirmação.\n\n*Você vem hoje às 18h?* Confirme agora para mantermos seu horário reservado. Caso não haja confirmação, precisaremos liberá-lo.",
+      "Mateus, ainda não recebemos sua confirmação.\n\n*Você vem hoje às 18h?* Confirme agora para mantermos seu horário reservado. Caso não haja confirmação, precisaremos liberá-lo.\n\nPara não receber mensagens promocionais, responda PARAR.",
     );
     expect(body).not.toMatch(/https?:\/\//);
     expect(body).not.toMatch(/evitar cancelamento/i);
