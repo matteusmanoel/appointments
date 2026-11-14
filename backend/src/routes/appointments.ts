@@ -1,3 +1,4 @@
+import { lockBarberDay } from "../lib/booking-lock.js";
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
@@ -213,20 +214,22 @@ appointmentsRouter.post("/", async (req: Request, res: Response): Promise<void> 
   }
   const commissionAmount = totalPrice * (barberPct / 100);
   const timeNorm = scheduled_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
-  const hasConflict = await checkSlotConflict(
-    barbershopId,
-    barber_id,
-    scheduled_date,
-    timeNorm,
-    totalDuration
-  );
-  if (hasConflict) {
-    res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
-    return;
-  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await lockBarberDay(client, barber_id, scheduled_date);
+    const hasConflict = await checkSlotConflict(
+      barbershopId,
+      barber_id,
+      scheduled_date,
+      timeNorm,
+      totalDuration
+    );
+    if (hasConflict) {
+      await client.query("ROLLBACK");
+      res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
+      return;
+    }
     const appResult = await client.query(
       `INSERT INTO public.appointments (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status, notes)
        VALUES ($1, $2, $3, $4, $5::date, $6::time, $7, $8, $9, 'pending', $10)

@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "../db.js";
 import { validateSlotForPublicReschedule } from "../ai/tools.js";
+import { lockBarberDay } from "../lib/booking-lock.js";
 import {
   barbershopHasAutomation,
   cancelReminderForAppointment,
@@ -153,22 +154,34 @@ publicRouter.post("/appointments/:token/reschedule", async (req: Request, res: R
     res.status(400).json({ error: "Barbeiro não encontrado" });
     return;
   }
-  const validation = await validateSlotForPublicReschedule(barbershopId, {
-    date: scheduled_date,
-    time: timeNorm,
-    duration_minutes: appointment.duration_minutes,
-    barber_id: barberId,
-    excludeAppointmentId: appointment.id,
-  });
-  if (!validation.ok) {
-    res.status(400).json({ error: validation.error });
-    return;
+  const lockConn = await pool.connect();
+  try {
+    await lockConn.query("BEGIN");
+    await lockBarberDay(lockConn, barberId, scheduled_date);
+    const validation = await validateSlotForPublicReschedule(barbershopId, {
+      date: scheduled_date,
+      time: timeNorm,
+      duration_minutes: appointment.duration_minutes,
+      barber_id: barberId,
+      excludeAppointmentId: appointment.id,
+    });
+    if (!validation.ok) {
+      await lockConn.query("ROLLBACK");
+      res.status(validation.error.includes("ocupado") ? 409 : 400).json({ error: validation.error });
+      return;
+    }
+    await lockConn.query(
+      `UPDATE public.appointments SET scheduled_date = $1::date, scheduled_time = $2::time, barber_id = $4, updated_at = now() WHERE id = $3`,
+      [scheduled_date, timeNorm, appointment.id, barberId]
+    );
+    await lockConn.query("COMMIT");
+  } catch (e) {
+    await lockConn.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    lockConn.release();
   }
   await cancelReminderForAppointment(appointment.id);
-  await pool.query(
-    `UPDATE public.appointments SET scheduled_date = $1::date, scheduled_time = $2::time, barber_id = $4, updated_at = now() WHERE id = $3`,
-    [scheduled_date, timeNorm, appointment.id, barberId]
-  );
   void recordAgendaChangeFromAppointment({
     barbershopId,
     appointmentId: appointment.id,
@@ -262,7 +275,7 @@ publicRouter.get("/:slug/barbers", async (req: Request, res: Response): Promise<
     return;
   }
   const r = await pool.query(
-    `SELECT id, name, status
+    `SELECT id, name, status, schedule
      FROM public.barbers WHERE barbershop_id = $1 AND status IN ('active', 'break') ORDER BY name`,
     [barbershopId]
   );
@@ -368,22 +381,23 @@ publicRouter.post("/:slug/appointments", async (req: Request, res: Response): Pr
   const timeNorm = scheduled_time.replace(/^(\d{2}):(\d{2})(:\d{2})?$/, "$1:$2");
   const barberPct = barberRow.rows[0]?.commission_percentage ?? 40;
   const commissionAmount = totalPrice * (barberPct / 100);
-  const startMins = parseInt(timeNorm.slice(0, 2), 10) * 60 + parseInt(timeNorm.slice(3, 5), 10);
-  const endMins = startMins + totalDuration;
-  const conflictCheck = await pool.query(
-    `SELECT 1 FROM public.appointments
-     WHERE barbershop_id = $1 AND barber_id = $2 AND scheduled_date = $3::date AND status NOT IN ('cancelled')
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int + duration_minutes > $4
-     AND (EXTRACT(EPOCH FROM scheduled_time) / 60)::int < $5`,
-    [barbershopId, barber_id, scheduled_date, startMins, endMins]
-  );
-  if (conflictCheck.rows.length > 0) {
-    res.status(409).json({ error: "Horário já ocupado para este barbeiro" });
-    return;
-  }
   const conn = await pool.connect();
   try {
     await conn.query("BEGIN");
+    await lockBarberDay(conn, barber_id, scheduled_date);
+    // Mesmas regras do reagendamento: não permite passado, fora do expediente da barbearia/barbeiro,
+    // dia fechado/intervalo de indisponibilidade nem sobreposição (checado já dentro do lock).
+    const validation = await validateSlotForPublicReschedule(barbershopId, {
+      date: scheduled_date,
+      time: timeNorm,
+      duration_minutes: totalDuration,
+      barber_id,
+    });
+    if (!validation.ok) {
+      await conn.query("ROLLBACK");
+      res.status(validation.error.includes("ocupado") ? 409 : 400).json({ error: validation.error });
+      return;
+    }
     const appResult = await conn.query(
       `INSERT INTO public.appointments (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status, notes)
        VALUES ($1, $2, $3, $4, $5::date, $6::time, $7, $8, $9, 'pending', $10)

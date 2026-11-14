@@ -1094,7 +1094,7 @@ export const publicApi = {
       `/api/public/${encodeURIComponent(slug)}/services`
     ),
   getBarbers: (slug: string) =>
-    api<Array<{ id: string; name: string; status: string }>>(`/api/public/${encodeURIComponent(slug)}/barbers`),
+    api<Array<{ id: string; name: string; status: string; schedule?: Record<string, { start?: string; end?: string } | null> | null }>>(`/api/public/${encodeURIComponent(slug)}/barbers`),
   getAvailability: (slug: string, date: string) =>
     api<Array<{ barber_id: string; scheduled_time: string; duration_minutes: number }>>(
       `/api/public/${encodeURIComponent(slug)}/availability?date=${encodeURIComponent(date)}`

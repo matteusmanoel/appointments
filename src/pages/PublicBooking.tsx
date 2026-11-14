@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { format, addDays } from "date-fns";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { format, addDays, startOfToday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { publicApi } from "@/lib/api";
-import { getTimeSlotsForDay } from "@/lib/slots";
+import { isSlotBookable, isSlotConflictError, isPastDay, getTimeSlotsForDay, type BarberSchedule } from "@/lib/slots";
 import {
   formatPhoneBR,
   formatPhoneDisplay,
@@ -33,37 +33,12 @@ import {
   CalendarDays,
 } from "lucide-react";
 
-function parseTime(t: string): number {
-  const [h, m] = t.split(":").map(Number);
-  return (h ?? 0) * 60 + (m ?? 0);
-}
-
-function formatMins(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
 function getWhatsAppUrl(phone: string | undefined, message?: string): string {
   if (!phone || !phone.trim()) return "#";
   const digits = phone.replace(/\D/g, "");
   const number = digits.startsWith("55") ? digits : `55${digits}`;
   if (!message || !message.trim()) return `https://wa.me/${number}`;
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
-}
-
-function isSlotOccupied(
-  slotTime: string,
-  occupied: Array<{ scheduled_time: string; duration_minutes: number }>,
-): boolean {
-  const slotStart = parseTime(slotTime);
-  const slotEnd = slotStart + 30;
-  for (const o of occupied) {
-    const oStart = parseTime(String(o.scheduled_time).slice(0, 5));
-    const oEnd = oStart + (o.duration_minutes ?? 30);
-    if (slotStart < oEnd && slotEnd > oStart) return true;
-  }
-  return false;
 }
 
 const STEPS = ["Serviço", "Barbeiro", "Data e horário", "Seus dados"];
@@ -89,6 +64,8 @@ export default function PublicBooking() {
   const [clientName, setClientName] = useState("");
   const [clientPhone, setClientPhone] = useState("");
   const [success, setSuccess] = useState(false);
+  const [conflictNotice, setConflictNotice] = useState(false);
+  const queryClient = useQueryClient();
 
   const {
     data: barbershop,
@@ -137,7 +114,25 @@ export default function PublicBooking() {
       }).then((created) => setPublicToken(created?.public_token ?? null));
     },
     onSuccess: () => setSuccess(true),
+    onError: (err) => {
+      // 409: alguém pegou o horário. Atualiza a disponibilidade, limpa a escolha e volta para a etapa de horário.
+      if (isSlotConflictError(err)) {
+        setSelectedTime("");
+        setConflictNotice(true);
+        setStep(3);
+        void queryClient.invalidateQueries({ queryKey: ["public", "availability", slug] });
+      }
+    },
   });
+
+  // O erro do passo 4 não sobrevive a uma troca de passo: depois de um 409 o cliente volta ao passo 3 e,
+  // ao confirmar de novo, não pode ver a mensagem velha.
+  const { reset: resetCreate } = createMutation;
+  useEffect(() => {
+    if (step !== 4) resetCreate();
+  }, [step, resetCreate]);
+  // 409 (horário ocupado) é tratado no passo 3; no passo 4 só aparecem os demais erros.
+  const showCreateError = createMutation.isError && !isSlotConflictError(createMutation.error);
 
   const timeSlots = getTimeSlotsForDay(
     barbershop?.business_hours,
@@ -162,41 +157,34 @@ export default function PublicBooking() {
     if (timeSlots.length === 0) setSelectedTime("");
   }, [timeSlots.length]);
 
-  const availabilityForBarber = barberId
-    ? availability.filter((a) => a.barber_id === barberId)
-    : [];
-  const availableSlots = barberId
-    ? timeSlots.filter((t) => !isSlotOccupied(t, availabilityForBarber))
-    : timeSlots.filter((t) =>
-        barbers.some(
-          (b) =>
-            !isSlotOccupied(
-              t,
-              availability.filter((a) => a.barber_id === b.id),
-            ),
-        ),
-      );
+  // Trocar data, barbeiro ou serviço invalida o horário escolhido (a disponibilidade e a duração mudam).
+  const serviceKey = serviceIds.join(",");
+  useEffect(() => {
+    setSelectedTime("");
+  }, [dateStr, barberId, serviceKey]);
 
-  function resolveBarberForSlot(
-    slotTime: string,
-    durationMinutes: number,
-  ): string | null {
-    const slotStart = parseTime(slotTime);
-    for (const barber of barbers) {
-      const barberOccupied = availability.filter(
-        (a) => a.barber_id === barber.id,
-      );
-      let conflict = false;
-      for (let m = 0; m < durationMinutes; m += 30) {
-        const t = formatMins(slotStart + m);
-        if (isSlotOccupied(t, barberOccupied)) {
-          conflict = true;
-          break;
-        }
-      }
-      if (!conflict) return barber.id;
-    }
-    return null;
+  const selectedDuration = serviceIds.reduce((acc, id) => {
+    const sv = services.find((x) => x.id === id);
+    return acc + (sv?.duration_minutes ?? 30);
+  }, 0) || 30;
+  const bookableFor = (barber: { id: string; schedule?: BarberSchedule }, t: string) =>
+    isSlotBookable({
+      slot: t,
+      date: selectedDate,
+      durationMinutes: selectedDuration,
+      occupied: availability.filter((x) => x.barber_id === barber.id),
+      barberSchedule: barber.schedule,
+    });
+  const availableSlots = barberId
+    ? timeSlots.filter((t) => {
+        const b = barbers.find((x) => x.id === barberId);
+        return b ? bookableFor(b, t) : false;
+      })
+    : timeSlots.filter((t) => barbers.some((b) => bookableFor(b, t)));
+
+  function resolveBarberForSlot(slotTime: string, _durationMinutes: number): string | null {
+    const b = barbers.find((x) => bookableFor(x, slotTime));
+    return b?.id ?? null;
   }
 
   if (!slug) {
@@ -614,6 +602,7 @@ export default function PublicBooking() {
                   variant="outline"
                   size="icon"
                   onClick={() => setSelectedDate((d) => addDays(d, -1))}
+                  disabled={isPastDay(addDays(selectedDate, -1))}
                   aria-label="Dia anterior"
                 >
                   <ChevronLeft className="w-4 h-4" />
@@ -621,6 +610,7 @@ export default function PublicBooking() {
                 <DatePicker
                   value={selectedDate}
                   onChange={(d) => d && setSelectedDate(d)}
+                  minDate={startOfToday()}
                   triggerVariant="verbose"
                   className="flex-1 min-w-0 flex items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
                 />
@@ -633,10 +623,26 @@ export default function PublicBooking() {
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
+              {conflictNotice && (
+                <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                  Esse horário acabou de ser ocupado por outra pessoa. Escolha outro horário abaixo.
+                </p>
+              )}
               {timeSlots.length === 0 ? (
                 <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground py-8 min-h-[200px]">
                   <CalendarIcon className="h-12 w-12" strokeWidth={1.5} />
                   <p className="text-sm">Fechado neste dia.</p>
+                </div>
+              ) : availableSlots.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground py-8 min-h-[200px] text-center">
+                  <CalendarIcon className="h-12 w-12" strokeWidth={1.5} />
+                  <p className="text-sm font-medium text-foreground">Não há horários livres neste dia.</p>
+                  <p className="text-sm">
+                    {barberId ? "Tente outro dia ou escolha outro barbeiro." : "Tente outro dia."}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setSelectedDate((d) => addDays(d, 1))}>
+                    Ver o próximo dia
+                  </Button>
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3 flex-1 content-start min-h-0">
@@ -649,7 +655,10 @@ export default function PublicBooking() {
                           key={t}
                           variant={selectedTime === t ? "default" : "outline"}
                           className="min-h-11 py-3 text-base font-medium"
-                          onClick={() => setSelectedTime(t)}
+                          onClick={() => {
+                            setSelectedTime(t);
+                            setConflictNotice(false);
+                          }}
                         >
                           {t}
                         </Button>
@@ -795,8 +804,8 @@ export default function PublicBooking() {
                 {createMutation.isPending ? "Enviando..." : "Confirmar"}
               </Button>
             </div>
-            {createMutation.isError && (
-              <p className="text-sm text-destructive">
+            {showCreateError && (
+              <p role="alert" className="text-sm text-destructive">
                 {createMutation.error instanceof Error
                   ? createMutation.error.message
                   : "Erro ao agendar."}
