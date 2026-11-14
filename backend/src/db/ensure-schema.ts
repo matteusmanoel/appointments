@@ -377,6 +377,17 @@ export async function ensureCriticalSchema(): Promise<void> {
     .catch(() => {});
 
   await pool
+    .query(
+      `CREATE TABLE IF NOT EXISTS public.ai_hard_cap_notices (
+        conversation_id uuid NOT NULL REFERENCES public.ai_conversations(id) ON DELETE CASCADE,
+        period text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (conversation_id, period)
+      )`
+    )
+    .catch(() => {});
+
+  await pool
     .query(`ALTER TABLE public.barbershop_api_keys ADD COLUMN IF NOT EXISTS key_prefix text`)
     .catch(() => {});
   await pool

@@ -321,6 +321,23 @@ Trocar `API_KEY_LOOKUP_PEPPER` invalida todos os `key_lookup_hash` gravados. Par
 
 Chaves legadas não guardam o prefixo; por isso a varredura bcrypt só roda para chaves de formato legado (sufixo curto), com no máximo 250 linhas por varredura (ordem aleatória quando há mais pendentes), 20 varreduras por minuto por processo e cache negativo de 60 s. Chaves de formato novo que não existem no banco são recusadas sem nenhum bcrypt. Remova o caminho legado quando `SELECT count(*) FROM public.barbershop_api_keys WHERE revoked_at IS NULL AND key_lookup_hash IS NULL` retornar 0.
 
+## 7.3 Uso da IA: avisos ao dono e teto de uso
+
+Limite mensal de respostas da IA por plano (`usage-limits.ts`): Profissional 500, Premium 2.000. O **teto** é 2x o limite (1.000 e 4.000). Plano sem IA (limite 0) fica sempre bloqueado e em silêncio.
+
+| Uso no mês | O que acontece |
+| --- | --- |
+| 80% do limite (`AI_USAGE_ALERT_THRESHOLD_PCT`) | E-mail ao dono (primeiro admin com e-mail), 1x por mês. Diz quantas respostas faltam para o limite, a margem até o teto e que no teto o cliente final deixa de receber respostas da IA. |
+| 100% do limite | E-mail ao dono, 1x por mês. A IA continua até o teto. |
+| Teto (2x o limite) | E-mail ao dono, 1x por mês, e **um aviso curto ao cliente final**, 1x por conversa e por mês, enviado pelo caminho normal de resposta do WhatsApp. As demais mensagens da conversa ficam sem resposta automática até o mês seguinte (ou até ampliar o plano). |
+
+- Tudo isso fica atrás de `AI_USAGE_ALERT_ENABLED` (padrão ligado). Com `false`, nada sai: nem e-mail ao dono nem aviso ao cliente (comportamento antigo, IA muda no teto).
+- Os e-mails exigem `FROM_EMAIL` verificado no SES; sem ele o envio falha, o aviso não é consumido e o próximo turno tenta de novo.
+- Dedupe: e-mails em `ai_usage_alerts` (chaves 80, 100 e 200 em `threshold_pct`); aviso ao cliente em `ai_hard_cap_notices` (conversa + mês). O aviso ao cliente é reservado antes do envio; falha transitória de envio é reenviada pelo worker.
+- Texto ao cliente final: `AI_HARD_CAP_CUSTOMER_MESSAGE` (Terraform `ai_hard_cap_customer_message`, até 500 caracteres). Vazio usa o padrão abaixo.
+
+> **TEXTO PADRÃO AGUARDANDO APROVAÇÃO DO MATEUS:** "No momento não consigo responder por aqui. A barbearia vai retornar em breve."
+
 ## 8. Integração Uazapi (WhatsApp plug-and-play)
 
 ### Credenciais e variáveis
@@ -333,6 +350,7 @@ Configure as seguintes variáveis no backend (`.env` em dev ou parâmetros do st
 | `UAZAPI_ADMIN_TOKEN`        | Sim                      | Token de administrador obtido no painel da Uazapi (criação de instâncias).                                                |
 | `UAZAPI_WEBHOOK_PUBLIC_URL` | Sim                      | URL pública que receberá os eventos (ex.:`https://api.seudominio.com/api/webhooks/uazapi`). Deve ser HTTPS.               |
 | `APP_ENCRYPTION_KEY`        | Sim                      | Chave de pelo menos 32 caracteres para criptografar o token da instância no banco (ex.:`openssl rand -hex 32`).           |
+| `AI_HARD_CAP_CUSTOMER_MESSAGE` | Não                   | Texto ao cliente final no teto de uso da IA (padrão neutro aguardando aprovação). Ver seção 7.3.                         |
 | `API_KEY_LOOKUP_PEPPER`     | Sim (produção)           | Pepper do HMAC do lookup das API keys (32+ caracteres). Ver seção 7.2.                                                    |
 | `N8N_CHAT_TRIGGER_URL`      | Não                      | URL do webhook “When chat message received” do fluxo de IA no n8n. Se não definida, o bot responderá com mensagem padrão. |
 

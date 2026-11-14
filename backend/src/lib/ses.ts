@@ -100,6 +100,8 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export type AiUsageAlertKind = "threshold" | "limit" | "hard_cap";
+
 export type AiUsageAlertEmailParams = {
   to: string;
   barbershopName: string;
@@ -107,28 +109,68 @@ export type AiUsageAlertEmailParams = {
   used: number;
   limit: number;
   thresholdPct: number;
+  /** threshold = aviso em X% (padrão 80); limit = 100% do plano; hard_cap = teto (2x o limite), IA parada. Padrão: threshold. */
+  kind?: AiUsageAlertKind;
 };
 
-/** Aviso ao dono quando as respostas de IA do mês chegam a X% do limite. Ligado por padrão; desliga com AI_USAGE_ALERT_ENABLED=false (ver ai/usage-alert.ts). */
+export type AiUsageAlertTexts = { subject: string; title: string; paragraphs: string[] };
+
+/**
+ * Texto do aviso de uso da IA (puro, testável). Usa a margem real do plano: o teto é 2x o limite
+ * (usage-limits.ts); no teto a IA para de responder e o cliente final só recebe o aviso curto, uma vez por conversa no mês.
+ */
+export function buildAiUsageAlertTexts(params: Pick<AiUsageAlertEmailParams, "barbershopName" | "used" | "limit" | "thresholdPct" | "kind">): AiUsageAlertTexts {
+  const kind = params.kind ?? "threshold";
+  const cap = params.limit * 2;
+  const toLimit = Math.max(0, params.limit - params.used);
+  const toCap = Math.max(0, cap - params.used);
+  const name = params.barbershopName;
+  const capWarning = `No teto (${cap} respostas no mês) a IA para de responder: o cliente final deixa de receber respostas automáticas e só recebe um aviso curto de que a barbearia vai retornar. O atendimento automático volta no próximo mês ou ao ampliar o plano.`;
+  if (kind === "hard_cap") {
+    return {
+      subject: "A IA parou de responder: teto de uso atingido - NavalhIA",
+      title: "Teto de uso da IA atingido",
+      paragraphs: [
+        `As respostas de IA de ${name} neste mês chegaram ao teto de ${cap} (${params.used} de ${cap}; o limite do plano é ${params.limit}).`,
+        "A IA parou de responder. Cada cliente que escreve agora recebe um aviso curto de que a barbearia vai retornar em breve (uma vez por conversa no mês), e as demais mensagens ficam sem resposta automática. Responda manualmente as conversas.",
+        "O atendimento automático volta no próximo mês. Para voltar antes, amplie o plano.",
+      ],
+    };
+  }
+  if (kind === "limit") {
+    return {
+      subject: "Uso da IA em 100% do limite do plano - NavalhIA",
+      title: "Limite do plano atingido",
+      paragraphs: [
+        `As respostas de IA de ${name} neste mês chegaram a 100% do limite do plano (${params.used} de ${params.limit}).`,
+        `A IA continua respondendo por mais ${toCap} respostas, até o teto de ${cap}. ${capWarning}`,
+        "Para ampliar o limite, veja os planos.",
+      ],
+    };
+  }
+  return {
+    subject: `Uso da IA em ${params.thresholdPct}% do limite - NavalhIA`,
+    title: "Uso da IA no limite",
+    paragraphs: [
+      `As respostas de IA de ${name} neste mês chegaram a ${params.thresholdPct}% do limite do plano (${params.used} de ${params.limit}).`,
+      `Faltam ${toLimit} respostas para o limite do plano; depois dele a IA ainda responde por mais ${params.limit} de margem, até o teto de ${cap}. ${capWarning}`,
+      "Para ampliar o limite, veja os planos.",
+    ],
+  };
+}
+
+/** Aviso ao dono sobre o uso mensal da IA (80%, 100% e teto). Ligado por padrão; desliga com AI_USAGE_ALERT_ENABLED=false (ver ai/usage-alert.ts). */
 export async function sendAiUsageAlertEmail(params: AiUsageAlertEmailParams): Promise<void> {
   const from = process.env.FROM_EMAIL;
   // Lança (não retorna em silêncio): o aviso do mês só é consumido quando o envio de fato ocorreu.
   if (!from) throw new Error("FROM_EMAIL ausente: aviso de uso da IA não enviado");
   const settingsUrl = `${ensureNoTrailingSlash(params.appUrl)}/app/configuracoes`;
-  const textBody = `
-Olá,
-
-As respostas de IA de ${params.barbershopName} neste mês chegaram a ${params.thresholdPct}% do limite do plano (${params.used} de ${params.limit}).
-
-Ao ultrapassar o limite, o atendimento automático continua por uma margem e depois pausa até o próximo mês. Para ampliar o limite, veja os planos em ${settingsUrl}.
-`.trim();
+  const t = buildAiUsageAlertTexts(params);
+  const textBody = `Olá,\n\n${t.paragraphs.join("\n\n")}\n\nPlanos: ${settingsUrl}`;
   const htmlBody = buildEmailLayout({
     baseUrl: params.appUrl,
-    title: "Uso da IA no limite",
-    bodyHtml: `
-    <p style="margin: 0 0 12px 0;">Olá,</p>
-    <p style="margin: 0 0 16px 0;">As respostas de IA de <strong>${escapeHtml(params.barbershopName)}</strong> neste mês chegaram a <strong>${params.thresholdPct}%</strong> do limite do plano (${params.used} de ${params.limit}).</p>
-    <p style="margin: 0 0 16px 0;">Ao ultrapassar o limite, o atendimento automático continua por uma margem e depois pausa até o próximo mês.</p>`.trim(),
+    title: t.title,
+    bodyHtml: [`<p style="margin: 0 0 12px 0;">Olá,</p>`, ...t.paragraphs.map((p) => `<p style="margin: 0 0 16px 0;">${escapeHtml(p)}</p>`)].join("\n    "),
     buttonText: "Ver planos",
     buttonUrl: settingsUrl,
   });
@@ -137,7 +179,7 @@ Ao ultrapassar o limite, o atendimento automático continua por uma margem e dep
       Source: from,
       Destination: { ToAddresses: [params.to] },
       Message: {
-        Subject: { Data: `Uso da IA em ${params.thresholdPct}% do limite - NavalhIA` },
+        Subject: { Data: t.subject },
         Body: { Text: { Data: textBody }, Html: { Data: htmlBody } },
       },
     }),

@@ -21,6 +21,9 @@ import {
 import { ApiKeyPepperError, assertApiKeyLookupPepperConfigured, getApiKeyLookupPepper } from "../lib/api-key-pepper.js";
 import { requireToolsKey } from "../middleware/auth.js";
 
+// issueApiKey usa bcrypt com custo 10 (~70 ms cada); com várias suítes rodando juntas o padrão de 5 s estourava.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 describe("API key: prefixo e hash de lookup (puros)", () => {
   it("extrai o prefixo público de bfk_<id>_… e rejeita formato antigo/inválido", () => {
     const prefix = "11111111-2222-4333-8333-444444444444";
@@ -45,7 +48,7 @@ describe("API key: prefixo e hash de lookup (puros)", () => {
 
 describe("API key: entropia do sufixo", () => {
   it("chave nova tem sufixo de 128 bits (32 hex), único e com secretBits=128", async () => {
-    const keys = await Promise.all(Array.from({ length: 25 }, () => issueApiKey()));
+    const keys = await Promise.all(Array.from({ length: 10 }, () => issueApiKey()));
     const suffixes = new Set<string>();
     for (const k of keys) {
       const suffix = parseApiKeySuffix(k.plaintext);
