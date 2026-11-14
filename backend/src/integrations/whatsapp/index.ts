@@ -12,9 +12,17 @@ import type {
   WhatsAppSession,
 } from "./types.js";
 import { WhatsAppNotConnectedError } from "./types.js";
+import { isNoopWhatsAppOutbound, createNoopWhatsAppSession } from "./noop-outbound.js";
 
 export { WhatsAppNotConnectedError } from "./types.js";
 export type { WhatsAppSession, WhatsAppProviderName } from "./types.js";
+export {
+  useNoopWhatsAppOutbound,
+  resetWhatsAppOutbound,
+  listWhatsAppOutboundAttempts,
+  isNoopWhatsAppOutbound,
+  createNoopWhatsAppSession,
+} from "./noop-outbound.js";
 
 const CONNECTION_SELECT = `
   SELECT id, barbershop_id, provider, whatsapp_phone,
@@ -80,12 +88,14 @@ function sessionFromRow(row: ConnectionRow): WhatsAppSession {
  * Resolve the WhatsApp session for a barbershop. Callers never see instanceName/token.
  */
 export async function getWhatsApp(barbershopId: string): Promise<WhatsAppSession> {
+  if (isNoopWhatsAppOutbound()) return createNoopWhatsAppSession();
   const row = await loadConnection(barbershopId);
   if (!row) throw new WhatsAppNotConnectedError();
   return sessionFromRow(row);
 }
 
 export async function getWhatsAppOrNull(barbershopId: string): Promise<WhatsAppSession | null> {
+  if (isNoopWhatsAppOutbound()) return createNoopWhatsAppSession();
   try {
     return await getWhatsApp(barbershopId);
   } catch (e) {
@@ -98,6 +108,7 @@ export async function ensureWhatsAppSession(
   barbershopId: string,
   provider: WhatsAppProviderName = defaultWhatsAppProvider(),
 ): Promise<WhatsAppSession> {
+  if (isNoopWhatsAppOutbound()) return createNoopWhatsAppSession();
   let row = await loadConnection(barbershopId, provider);
   if (row && row.provider === provider) return sessionFromRow(row);
 

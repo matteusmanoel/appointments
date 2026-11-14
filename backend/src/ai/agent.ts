@@ -18,6 +18,8 @@ import type { IntentType } from "./agent/types.js";
 import type { ConversationState as CanonicalConversationState } from "./agent/types.js";
 import { buildAgentContext } from "./agent/context-builder.js";
 import type { AgentTurnTrace } from "./turn-trace.js";
+import { getSimulatedNow, runWithSimulatedNow } from "./simulator/clock.js";
+import type { SimulatorExposureTrace, SimulatorToolTrace, SimulatorTurnTrace } from "./simulator/trace.js";
 import { buildSystemPrompt, normalizeProfile } from "./prompt-builder.js";
 import { retrieveKnowledge, buildKnowledgeBlock } from "./rag.js";
 import { setConversationPaused } from "./runtime-pause.js";
@@ -1961,6 +1963,8 @@ export type AgentResult = {
   debugContext?: string;
   /** Structured slice of this turn. The worker logs it; it does not change the reply. */
   turnTrace?: AgentTurnTrace;
+  /** Detalhe para o simulador CLI (tools+args, filtro ai_exposure, latência). */
+  simulatorTrace?: Partial<SimulatorTurnTrace>;
 };
 
 export type RunAgentOptions = {
@@ -1972,6 +1976,8 @@ export type RunAgentOptions = {
   simulatedNow?: string;
   /** When true, AgentResult.debugContext carries the operational context block seen this turn. */
   includeDebugContext?: boolean;
+  /** Captura args/resultado das tools e o que o filtro ai_exposure alterou (simulador CLI). */
+  captureSimulatorTrace?: boolean;
 };
 
 let selectedBarbershopColumnSupported: boolean | null = null;
@@ -2029,6 +2035,14 @@ export async function runAgent(
   openai: OpenAI,
   options?: RunAgentOptions
 ): Promise<AgentResult> {
+  if (options?.simulatedNow && !getSimulatedNow()) {
+    return runWithSimulatedNow(options.simulatedNow, () =>
+      runAgent(barbershopId, conversationId, clientPhone, openai, options),
+    );
+  }
+  const simulatorStartedAt = Date.now();
+  const simulatorTools: SimulatorToolTrace[] = [];
+  let simulatorExposure: SimulatorExposureTrace | null = null;
   // ── Load all DB context via context-builder ──────────────────────────────
   const _ctx = await buildAgentContext(
     barbershopId,
@@ -2223,7 +2237,26 @@ export async function runAgent(
     catalogRejections: [],
   };
   function withDebug<T extends AgentResult>(result: T): T {
-    const cleaned = { ...result, reply: sanitizeClientFacingReply(result.reply), turnTrace };
+    const cleaned: T = { ...result, reply: sanitizeClientFacingReply(result.reply), turnTrace };
+    if (options?.captureSimulatorTrace) {
+      const usage = cleaned.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+      cleaned.simulatorTrace = {
+        barbershopId: effectiveBarbershopId,
+        conversationId,
+        userMessage: lastUserTextRaw,
+        intent: turnTrace.intent ?? turnTrace.routing ?? null,
+        draft: bookingDraft,
+        tools: simulatorTools.length
+          ? simulatorTools
+          : turnTrace.toolsExecuted.map((t) => ({ name: t.name, ok: t.ok })),
+        finalReply: cleaned.reply,
+        aiExposure: simulatorExposure,
+        latencyMs: Date.now() - simulatorStartedAt,
+        promptTokens: usage.prompt_tokens ?? 0,
+        completionTokens: usage.completion_tokens ?? 0,
+        totalTokens: usage.total_tokens ?? 0,
+      };
+    }
     return debugContext ? { ...cleaned, debugContext } : cleaned;
   }
 
@@ -2990,6 +3023,13 @@ export async function runAgent(
         ],
       },
     });
+    if (options?.captureSimulatorTrace && !composed && containsAiExposure(reply)) {
+      simulatorExposure = {
+        before: reply,
+        after: guarded.reply,
+        changed: reply.trim() !== guarded.reply.trim(),
+      };
+    }
     if (guarded.silencedBy) {
       turnTrace.silencedBy = guarded.silencedBy;
       if (guarded.silencedBy === "repeated_reply" && (composed || establishedFact)) {
@@ -3324,6 +3364,19 @@ export async function runAgent(
       `INSERT INTO public.ai_messages (conversation_id, role, tool_name, tool_payload, content) VALUES ($1, 'tool', $2, $3, $4)`,
       [conversationId, toolName, JSON.stringify(payload), content.slice(0, 8192)]
     );
+    if (options?.captureSimulatorTrace) {
+      let result: unknown = content;
+      try {
+        result = JSON.parse(content);
+      } catch {
+        result = content.slice(0, 2000);
+      }
+      const err =
+        result && typeof result === "object" && "error" in (result as object)
+          ? String((result as { error?: unknown }).error ?? "")
+          : "";
+      simulatorTools.push({ name: toolName, ok: !err, args: payload, result });
+    }
   }
 
   function laterHHmm(...times: Array<string | undefined | null>): string | undefined {

@@ -1,6 +1,7 @@
 import { pool } from "../db.js";
 import { isLockTimeout, lockBarberDay } from "../lib/booking-lock.js";
 import { validateUuidIds, isValidUuid } from "../lib/uuid.js";
+import { getSimulatedNow, wallClockFrom } from "./simulator/clock.js";
 import {
   canonicalizeBrPhoneDigits,
   brPhoneMatchKeys,
@@ -189,6 +190,15 @@ function overlapsWithBuffer(
 async function getNowInBarbershopTz(
   barbershopId: string,
 ): Promise<{ todayStr: string; nowMins: number }> {
+  const simulated = getSimulatedNow();
+  if (simulated) {
+    const tzRow = await pool.query<{ timezone: string | null }>(
+      `SELECT timezone FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+      [barbershopId],
+    );
+    const tz = tzRow.rows[0]?.timezone?.trim() || "America/Sao_Paulo";
+    return wallClockFrom(simulated, tz);
+  }
   const r = await pool.query<{ today_str: string; now_mins: number }>(
     `SELECT
        (NOW() AT TIME ZONE COALESCE(ais.timezone, 'America/Sao_Paulo'))::date::text AS today_str,
