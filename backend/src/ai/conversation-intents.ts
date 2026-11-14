@@ -162,6 +162,19 @@ export function looksLikeHumanHandoff(text: string): boolean {
   );
 }
 
+/** Pergunta se é robô/IA — desvia e segue o atendimento; não é pedido de atendente. */
+export function looksLikeRobotQuestion(text: string): boolean {
+  const t = fold(text);
+  if (!t) return false;
+  if (looksLikeHumanHandoff(text)) return false;
+  return (
+    /\b(voce|vc)\s+(e|eh)\s+(um\s+)?(robo|bot|inteligencia\s+artificial|ia)\b/.test(t) ||
+    /\b(e|eh)\s+um\s+(robo|bot)\b/.test(t) ||
+    /\b(voce|vc)\s+(e|eh)\s+(humano|uma pessoa)\b/.test(t) ||
+    /\besta\s+falando\s+(com\s+)?(um\s+)?(robo|bot)\b/.test(t)
+  );
+}
+
 /**
  * Pedido de agendamento novo. Reagendar, cancelar, consultar e correção de serviço
  * já marcado não entram aqui.
@@ -188,7 +201,9 @@ export function looksLikeNextAvailableIntent(text: string): boolean {
   const t = fold(text);
   if (!t) return false;
   if (parseClientTime(text)) return false;
-  if (looksLikeCancelIntent(text) || looksLikeRescheduleIntent(text) || looksLikeConsultIntent(text)) {
+  // Cancelar/consultar não viram busca de vaga. Reagendar + «o próximo» é o próximo
+  // horário daquele agendamento (serviço, barbeiro, exclude_appointment_id).
+  if (looksLikeCancelIntent(text) || looksLikeConsultIntent(text)) {
     return false;
   }
   if (/\b(meus?|quais?)\s+proximos?\b/.test(t)) return false;
@@ -219,6 +234,7 @@ export function looksLikeZeroIntentUnknown(text: string): boolean {
     looksLikePlanIntent(text) ||
     looksLikeWaitlistIntent(text) ||
     looksLikeHumanHandoff(text) ||
+    looksLikeRobotQuestion(text) ||
     looksLikeSocialGreeting(text) ||
     isShopHoursQuestion(text)
   ) {
