@@ -7,6 +7,7 @@
 import { createRequire } from "node:module";
 import path from "path";
 import { fileURLToPath } from "url";
+import { assertLocalDatabaseUrl } from "../db/local-database-url.js";
 
 try {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,3 +24,6 @@ try {
 
 if (!process.env.DATABASE_URL) process.env.DATABASE_URL = "postgres://localhost:5432/test";
 if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "test-secret";
+
+// Recusa DATABASE_URL remota (o .env real pode apontar para produção) antes de qualquer conexão.
+assertLocalDatabaseUrl();

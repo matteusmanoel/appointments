@@ -19,12 +19,12 @@ Opções:
 | Opção | Descrição |
 | --- | --- |
 | `--tenant`, `-t` | Slug ou UUID da barbearia |
-| `--phone`, `-p` | Telefone **fictício** (padrão `5500000000001`) |
-| `--now` | Relógio simulado (`2026-11-14T18:08:00-03:00` ou `2026-11-14 18:08`, fuso `America/Sao_Paulo`) |
+| `--phone`, `-p` | Telefone **fictício** (padrão `5500000000001`). Nunca reutiliza conversa WhatsApp nem cliente existente: o simulador usa `channel=simulator` e um telefone interno namespaced |
+| `--now` | Relógio simulado (`2026-11-14T18:08:00-03:00` ou `2026-11-14 18:08`). Sem fuso, assume `America/Sao_Paulo`. Se omitido, vale o `now` do arquivo de replay |
 | `--replay`, `-r` | Arquivo JSON ou YAML com a conversa |
 | `--interactive`, `-i` | Lê mensagens do cliente no terminal |
 | `--llm none\|openai` | Padrão `none` (sem chamada de modelo). `openai` só se o turno cair no LLM |
-| `--trace` / `--no-trace` | Grava um trace por turno no Postgres local |
+| `--trace` | Grava um trace por turno no Postgres local. **Padrão: desligado.** |
 
 Exemplo de replay (JSON):
 
@@ -45,8 +45,16 @@ Há um YAML equivalente em `scripts/examples/cavalier-proximo-horario.yaml`. Tur
 
 A migration `supabase/migrations/20261114210000_ai_simulator_turn_traces.sql` cria `public.ai_simulator_turn_traces`. Cada linha guarda: mensagem, intent, rascunho, tool calls (args e resultado), resposta final, o que o filtro `ai_exposure` alterou, latência e tokens.
 
-A escrita é controlada pela flag **`AI_SIMULATOR_TRACE_ENABLED`** (`true`/`1`/`yes`). **Default: desligada.** A API e a produção não devem ligar essa flag. O CLI liga só no próprio processo, a menos que você passe `--no-trace`.
+A escrita é controlada pela flag **`AI_SIMULATOR_TRACE_ENABLED`** (`true`/`1`/`yes`). **Default: desligada.** A API, a produção e o CLI não ligam essa flag, a menos que você passe `--trace`. Telefones e dados de cliente são mascarados na gravação. Linhas com mais de 7 dias são apagadas na próxima escrita (`purgeExpiredSimulatorTurnTraces`).
 
 O terminal imprime o mesmo conteúdo de forma legível (telefone mascarado, ex. `***0001`).
 
-Conversas do simulador usam `is_sandbox = true` e não criam jobs de envio.
+Conversas do simulador usam `channel = simulator`, `is_sandbox = true` e um telefone interno que não colide com cliente real. Não entram na contagem de uso, não tocam conversa/cliente existente, não enfileiram `scheduled_messages`, não disparam sync de foto, não consomem waitlist e não marcam cobrança PIX como enviada.
+
+### Guarda de DATABASE_URL
+
+O CLI e os testes recusam `DATABASE_URL` cujo host não seja local (`localhost`, `127.0.0.1`, `::1` ou socket Unix) **antes de qualquer conexão**, no espírito do LouFlow #66. A mensagem de erro não inclui a URL nem credenciais.
+
+### Migration da tabela de trace
+
+A criação `20261114210000_ai_simulator_turn_traces.sql` **não entra no `migrate:all`**, para não criar a tabela em produção. O follow-up `20261115120000_ai_simulator_turn_traces_harden.sql` permanece no `migrate:all` e é inofensivo: só roda se a tabela já existir, usa `lock_timeout`/`statement_timeout` curtos, remove FKs para tabelas quentes (`barbershops`, `ai_conversations`) e cria o índice de TTL. Testes e o CLI criam a tabela localmente, sem FKs.
