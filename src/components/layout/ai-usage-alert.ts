@@ -1,7 +1,7 @@
 /** Textos e regras do badge de uso de IA no painel admin (sem tela de Usage). */
 
 export const AI_HARD_CAP_BADGE_TEXT =
-  "Limite de IA atingido: o atendimento automático está pausado até o próximo ciclo";
+  "Limite de IA atingido: o atendimento automático parou de responder seus clientes até o próximo ciclo. Responda manualmente ou faça upgrade.";
 
 export type AiUsageAlertLevel = "hard_cap" | "threshold" | null;
 

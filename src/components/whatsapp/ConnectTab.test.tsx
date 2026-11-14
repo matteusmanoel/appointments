@@ -106,7 +106,11 @@ describe("ConnectTab: texto de uso com saída de upgrade", () => {
         })}
       />,
     );
-    expect(screen.getByText(/Limite de IA atingido/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /Limite de IA atingido: o atendimento automático parou de responder seus clientes até o próximo ciclo\. Responda manualmente ou faça upgrade\./,
+      ),
+    ).toBeTruthy();
     const link = screen.getByRole("link", { name: /Faça upgrade/i });
     expect(link.getAttribute("href")).toBe("/app/planos");
   });
