@@ -1,9 +1,10 @@
 import { ThemeProvider } from "next-themes";
+import { RouteError } from "@/components/RouteError";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthError } from "@/lib/api";
+import { shouldRetryQuery } from "@/lib/query-retry";
 import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 import { lazy, Suspense } from "react";
 import { createBrowserRouter, RouterProvider, Outlet, Navigate } from "react-router-dom";
@@ -34,12 +35,11 @@ const WhatsAppInterno = lazy(() => import("./pages/WhatsAppInterno"));
 const Planos = lazy(() => import("./pages/Planos"));
 const Inteligencia = lazy(() => import("./pages/Inteligencia"));
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Não retentar em 401: evita dezenas de requisições falhando no DevTools (redirect já vai para /login).
-      retry: (failureCount, error) =>
-        !(error instanceof AuthError),
+      // Sem retry em 401/4xx; no máximo 2 em rede/5xx (ver lib/query-retry.ts). Antes: retry infinito.
+      retry: shouldRetryQuery,
     },
   },
 });
@@ -59,7 +59,7 @@ const RootLayout = () => (
 );
 
 const appChildren = [
-  { index: true, element: <Navigate to="/app/inteligencia" replace /> },
+  { index: true, element: <Navigate to="/app/dashboard" replace /> },
   { path: "link", element: <Navigate to="/app/configuracoes?open=booking" replace /> },
   { path: "dashboard", element: <Suspense fallback={<LoadingState fullPage />}><Dashboard /></Suspense> },
   { path: "inteligencia", element: <Suspense fallback={<LoadingState fullPage />}><Inteligencia /></Suspense> },
@@ -98,6 +98,7 @@ const router = createBrowserRouter(
   [
     {
       element: <RootLayout />,
+      errorElement: <RouteError />,
       children: [
         { path: "/", element: <Landing /> },
         { path: "/login", element: <Login /> },

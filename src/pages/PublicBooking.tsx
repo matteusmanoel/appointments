@@ -78,6 +78,8 @@ export default function PublicBooking() {
   const [step, setStep] = useState(0);
   const [serviceIds, setServiceIds] = useState<string[]>([]);
   const [barberId, setBarberId] = useState("");
+  const [copiedLink, setCopiedLink] = useState<"reschedule" | "cancel" | "error" | null>(null);
+  const [publicToken, setPublicToken] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const d = new Date();
     if (d.getHours() >= 20) return addDays(d, 1);
@@ -120,11 +122,11 @@ export default function PublicBooking() {
         const s = services.find((x) => x.id === id);
         return acc + (s?.duration_minutes ?? 30);
       }, 0);
-      const barberToUse =
-        barberId ||
-        resolveBarberForSlot(selectedTime, totalDuration) ||
-        barbers[0]?.id;
-      if (!barberToUse) throw new Error("Nenhum barbeiro disponível.");
+      const barberToUse = barberId || resolveBarberForSlot(selectedTime, totalDuration);
+      // Sem barbeiro livre para esse horário: trata como horário ocupado (volta ao passo 3), nunca manda o POST para outro barbeiro.
+      if (!barberToUse) {
+        throw Object.assign(new Error("Esse horário não está mais disponível."), { status: 409 });
+      }
       await publicApi.createAppointment(slug!, {
         service_ids: serviceIds,
         barber_id: barberToUse,
@@ -132,7 +134,7 @@ export default function PublicBooking() {
         scheduled_time: selectedTime,
         client_name: clientName,
         client_phone: clientPhone,
-      });
+      }).then((created) => setPublicToken(created?.public_token ?? null));
     },
     onSuccess: () => setSuccess(true),
   });
@@ -207,13 +209,23 @@ export default function PublicBooking() {
   if (errorShop || (barbershop === undefined && !loadingShop)) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <p className="text-destructive">NavalhIA não encontrada.</p>
+        <p className="text-destructive">Barbearia não encontrada.</p>
       </div>
     );
   }
   if (loadingShop || !barbershop) {
     return <LoadingState fullPage />;
   }
+
+  const copyManageLink = async (kind: "reschedule" | "cancel") => {
+    try {
+      const path = kind === "reschedule" ? "reagendar" : "cancelar";
+      await navigator.clipboard.writeText(`${window.location.origin}/${path}/${publicToken}`);
+      setCopiedLink(kind);
+    } catch {
+      setCopiedLink("error");
+    }
+  };
 
   if (success) {
     const whatsappUrl = getWhatsAppUrl(
@@ -230,7 +242,7 @@ export default function PublicBooking() {
             Agendamento solicitado!
           </h2>
           <p className="text-sm text-muted-foreground mb-4">
-            Você receberá uma confirmação em breve. Status: Pendente.
+            Pedido recebido. Aguardando confirmação da barbearia.
           </p>
           <p className="text-sm text-foreground">
             {format(selectedDate, "EEEE, d 'de' MMMM", { locale: ptBR })} às{" "}
@@ -239,6 +251,43 @@ export default function PublicBooking() {
           <p className="text-sm text-muted-foreground mt-1">
             {barbershop.name}
           </p>
+          {publicToken && (
+            <div className="mt-4 rounded-lg border bg-muted/40 p-3 text-left space-y-2" data-testid="links-gerenciar">
+              <p className="text-sm font-medium text-foreground">Precisa mudar ou cancelar?</p>
+              <p className="text-xs text-muted-foreground">
+                Guarde estes links: cancelamento e reagendamento valem até 2 horas antes do horário.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={`/reagendar/${publicToken}`}>Reagendar</Link>
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <Link to={`/cancelar/${publicToken}`}>Cancelar</Link>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="button"
+                  onClick={() => void copyManageLink("reschedule")}
+                >
+                  Copiar link de reagendar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  type="button"
+                  onClick={() => void copyManageLink("cancel")}
+                >
+                  Copiar link de cancelar
+                </Button>
+              </div>
+              <p role="status" aria-live="polite" className="min-h-4 text-xs text-muted-foreground" data-testid="copy-feedback">
+                {copiedLink === "reschedule" && "Link de reagendar copiado."}
+                {copiedLink === "cancel" && "Link de cancelar copiado."}
+                {copiedLink === "error" && "Não foi possível copiar. Use os botões Reagendar e Cancelar acima e guarde o endereço da página."}
+              </p>
+            </div>
+          )}
           <div className="mt-4 space-y-2">
             {barbershop.phone ? (
               <Button
@@ -251,17 +300,8 @@ export default function PublicBooking() {
                 </a>
               </Button>
             ) : (
-              <>
-                <Button variant="secondary" className="w-full" asChild>
-                  <Link to="/app/configuracoes">
-                    <MessageCircle className="w-4 h-4 mr-2" />
-                    Configurar WhatsApp
-                  </Link>
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  Cadastre o telefone em Configurações para ativar o link.
-                </p>
-              </>
+              // Cliente final não configura nada: sem telefone da barbearia, só o aviso de que ela vai confirmar.
+              <p className="text-sm text-muted-foreground">A barbearia vai confirmar o seu horário.</p>
             )}
           </div>
         </div>
@@ -335,14 +375,7 @@ export default function PublicBooking() {
                     Agendar via WhatsApp
                   </a>
                 </Button>
-              ) : (
-                <Button variant="secondary" asChild>
-                  <Link to="/app/configuracoes">
-                    <MessageCircle className="w-4 h-4 mr-1.5" />
-                    Configurar WhatsApp
-                  </Link>
-                </Button>
-              )}
+              ) : null}
             </span>
           </div>
         </header>

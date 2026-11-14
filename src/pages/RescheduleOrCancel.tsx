@@ -30,6 +30,15 @@ function isSlotOccupied(
   return false;
 }
 
+/** 404/410 (e 400 de token malformado) = o agendamento não existe mais; o resto (rede, 5xx, 429) é falha temporária. */
+function isNotFoundError(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  return status === 404 || status === 410 || status === 400;
+}
+
+/** Mesmo prazo do backend (public.ts RESCHEDULE_CUTOFF_MINUTES). */
+const CUTOFF_MINUTES = 120;
+
 export default function RescheduleOrCancel() {
   const { token } = useParams<{ token: string }>();
   const location = useLocation();
@@ -46,6 +55,7 @@ export default function RescheduleOrCancel() {
     data: appointment,
     isLoading: loadingAppointment,
     error: errorAppointment,
+    refetch: refetchAppointment,
   } = useQuery({
     queryKey: ["public", "appointment", token],
     queryFn: () => publicApi.getAppointmentByToken(token!),
@@ -56,7 +66,7 @@ export default function RescheduleOrCancel() {
   const { data: barbershop } = useQuery({
     queryKey: ["public", "barbershop", slug],
     queryFn: () => publicApi.getBarbershop(slug!),
-    enabled: !!slug && isCancel === false,
+    enabled: !!slug,
   });
   const { data: barbers = [] } = useQuery({
     queryKey: ["public", "barbers", slug],
@@ -90,6 +100,9 @@ export default function RescheduleOrCancel() {
     },
   });
 
+  /** Mensagem clara (pt-BR) vinda da API quando cancelar/reagendar falha — antes a falha era silenciosa. */
+  const actionError = (cancelMutation.error ?? rescheduleMutation.error) as Error | null;
+
   const timeSlots = getTimeSlotsForDay(barbershop?.business_hours, selectedDate);
   const availabilityForBarber = barberId
     ? availability.filter((a) => a.barber_id === barberId)
@@ -114,11 +127,25 @@ export default function RescheduleOrCancel() {
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         {loadingAppointment && <LoadingState />}
         {errorAppointment && (
-          <div className="text-center">
-            <p className="text-destructive">Agendamento não encontrado ou já cancelado.</p>
-            <Button asChild variant="outline" className="mt-4">
-              <Link to="/">Voltar ao início</Link>
-            </Button>
+          <div className="text-center" role="alert">
+            {isNotFoundError(errorAppointment) ? (
+              <p className="text-destructive">Agendamento não encontrado ou já cancelado.</p>
+            ) : (
+              // Rede ruim ou erro do servidor não pode parecer «agendamento cancelado».
+              <p className="text-destructive" data-testid="erro-carregar">
+                Não conseguimos carregar o seu agendamento agora. Tente de novo.
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {!isNotFoundError(errorAppointment) && (
+                <Button type="button" onClick={() => void refetchAppointment()}>
+                  Tentar de novo
+                </Button>
+              )}
+              <Button asChild variant="outline">
+                <Link to="/">Ir para a página inicial</Link>
+              </Button>
+            </div>
           </div>
         )}
       </div>
@@ -144,7 +171,7 @@ export default function RescheduleOrCancel() {
             </Button>
           )}
           <Button asChild variant="outline">
-            <Link to="/">Voltar ao início</Link>
+            <Link to={appointment.slug ? `/b/${appointment.slug}` : "/"}>Voltar ao agendamento</Link>
           </Button>
         </div>
       </div>
@@ -152,6 +179,9 @@ export default function RescheduleOrCancel() {
   }
 
   const bookingLink = appointment.slug ? `/b/${appointment.slug}` : "/";
+  const startMs = new Date(`${String(appointment.scheduled_date).slice(0, 10)}T${appointment.scheduled_time.slice(0, 5)}:00`).getTime();
+  const tooLate = Number.isFinite(startMs) && startMs - Date.now() < CUTOFF_MINUTES * 60_000;
+  const shopPhone = (barbershop?.phone ?? "").replace(/\D/g, "");
 
   return (
     <div className="min-h-screen bg-background p-4">
@@ -176,6 +206,44 @@ export default function RescheduleOrCancel() {
             às {appointment.scheduled_time}
           </p>
         </div>
+
+        <p className="text-xs text-muted-foreground" data-testid="regra-2h">
+          Cancelamento e reagendamento são possíveis até {CUTOFF_MINUTES / 60} horas antes do horário marcado.
+        </p>
+
+        {tooLate && (
+          <div role="alert" className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm space-y-2">
+            <p>Faltam menos de {CUTOFF_MINUTES / 60} horas para o horário: não dá mais para {isCancel ? "cancelar" : "reagendar"} por aqui.</p>
+            {shopPhone && (
+              <Button asChild size="sm" variant="outline">
+                <a href={`https://wa.me/${shopPhone}`} target="_blank" rel="noreferrer">Falar com a barbearia no WhatsApp</a>
+              </Button>
+            )}
+          </div>
+        )}
+
+        {actionError && (
+          <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive space-y-2" data-testid="erro-acao">
+            <p>{actionError.message || "Não foi possível concluir. Tente novamente."}</p>
+            {shopPhone && (
+              <Button asChild size="sm" variant="outline">
+                <a href={`https://wa.me/${shopPhone}`} target="_blank" rel="noreferrer">Falar com a barbearia no WhatsApp</a>
+              </Button>
+            )}
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground" data-testid="trocar-acao">
+          {isCancel ? (
+            <>
+              Prefere mudar o horário? <Link className="underline" to={`/reagendar/${token}`}>Reagendar em vez de cancelar</Link>.
+            </>
+          ) : (
+            <>
+              Quer cancelar? <Link className="underline" to={`/cancelar/${token}`}>Cancelar este agendamento</Link>.
+            </>
+          )}
+        </p>
 
         {isCancel ? (
           <div className="space-y-4">
@@ -203,7 +271,7 @@ export default function RescheduleOrCancel() {
                   <Button
                     variant="destructive"
                     onClick={() => cancelMutation.mutate()}
-                    disabled={cancelMutation.isPending}
+                    disabled={cancelMutation.isPending || tooLate}
                   >
                     {cancelMutation.isPending ? "Cancelando…" : "Confirmar cancelamento"}
                   </Button>
@@ -270,7 +338,7 @@ export default function RescheduleOrCancel() {
             <Button
               className="w-full"
               onClick={() => rescheduleMutation.mutate()}
-              disabled={!selectedTime || rescheduleMutation.isPending}
+              disabled={!selectedTime || rescheduleMutation.isPending || tooLate}
             >
               {rescheduleMutation.isPending ? "Reagendando…" : "Confirmar reagendamento"}
             </Button>
