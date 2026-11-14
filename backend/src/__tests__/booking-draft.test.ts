@@ -124,6 +124,14 @@ describe("resolveServiceFromText", () => {
     expect(resolveServiceFromText("quero o combo", catalog).match?.id).toBe(COMBO.id);
     expect(resolveServiceFromText("corte + barba com o Lucas", catalog).match?.id).toBe(COMBO.id);
   });
+
+  it("só o corte (com artigo) after simples-ou-combo is the simple cut, not ambiguous", () => {
+    for (const text of ["Só o corte mesmo", "só o corte", "apenas o corte", "somente o corte"]) {
+      const r = resolveServiceFromText(text, catalog);
+      expect(r.match?.id, text).toBe(CORTE.id);
+      expect(r.ambiguous, text).toBeUndefined();
+    }
+  });
 });
 
 describe("composeOccupiedSlot", () => {

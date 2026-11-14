@@ -1,6 +1,6 @@
 import { pool } from "../db.js";
 import { isValidUuid } from "../lib/uuid.js";
-import { formatTimePt } from "./date-calendar.js";
+import { addDaysIso, formatDateBr, formatTimePt, weekdayShortPtFromIso } from "./date-calendar.js";
 import type { UnavailableReason } from "./slot-fit.js";
 
 export type BookingDraftStatus = "collecting" | "offered" | "awaiting_name" | "closed";
@@ -340,7 +340,7 @@ export function resolveServiceFromText(
   ) {
     return { match: combo };
   }
-  if (/\b(so|apenas|somente)\s+corte\b|\bcorte\s+masculino\b/.test(t)) {
+  if (/\b(so|apenas|somente)\s+(o\s+)?corte\b|\bcorte\s+masculino\b/.test(t)) {
     return simple ? { match: simple } : {};
   }
   if (/\bcorte\b/.test(t) && combo && simple) {
@@ -848,3 +848,45 @@ export async function saveBookingDraft(conversationId: string, draft: BookingDra
     console.warn("[booking-draft] save failed:", e instanceof Error ? e.message : e);
   }
 }
+
+/** Texto combinado com o Mateus para o fim do expediente sem vaga hoje. */
+export const CLOSING_TODAY_THEN_TOMORROW =
+  "Já estamos encerrando por hoje, mas podemos encontrar um horário pra você amanhã";
+
+function formatHourListPt(timesHHmm: string[]): string {
+  const parts = timesHHmm.map((t) => `às ${formatTimePt(t)}`);
+  if (parts.length <= 1) return parts[0] ?? "";
+  if (parts.length === 2) return `${parts[0]} ou ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")} ou ${parts[parts.length - 1]}`;
+}
+
+export function dayWordForOffer(dateIso: string, todayIso: string): string {
+  if (dateIso === todayIso) return "hoje";
+  if (dateIso === addDaysIso(todayIso, 1)) return "amanhã";
+  const short = weekdayShortPtFromIso(dateIso);
+  const br = formatDateBr(dateIso);
+  const ddmm = br.length >= 5 ? br.slice(0, 5) : br;
+  const prep = /s[aá]bado|domingo/i.test(short) ? "no" : "na";
+  return `${prep} ${short} ${ddmm}`;
+}
+
+/**
+ * 2–3 horários concretos. Quando hoje já encerrou, usa a fala combinada e oferece o próximo dia com vaga.
+ */
+export function composeNextAvailableOffer(params: {
+  timesHHmm: string[];
+  dateIso: string;
+  todayIso: string;
+  rolledFromToday?: boolean;
+}): string {
+  const hours = formatHourListPt(params.timesHHmm.slice(0, 3));
+  if (!hours) return "";
+  if (params.rolledFromToday) {
+    if (params.dateIso === addDaysIso(params.todayIso, 1)) {
+      return `${CLOSING_TODAY_THEN_TOMORROW}[[MSG]]Tenho ${hours}. Qual fica melhor?`;
+    }
+    return `Já estamos encerrando por hoje, mas posso te atender ${dayWordForOffer(params.dateIso, params.todayIso)} ${hours}. Qual fica melhor?`;
+  }
+  return `Consigo te atender ${dayWordForOffer(params.dateIso, params.todayIso)} ${hours}. Qual prefere?`;
+}
+

@@ -268,7 +268,11 @@ export function orchestrate(input: OrchestratorInput): OrchestratorRouting {
     intentSet.service != null ||
     Boolean(intentSet.dateTime?.time || intentSet.dateTime?.date) ||
     Boolean(input.usualServiceAccepted);
-  if (effectivePrimary === "unknown" && turnAddsSlot && hasServiceSignal && hasClock) {
+  if (
+    effectivePrimary === "unknown" &&
+    hasServiceSignal &&
+    (turnAddsSlot && hasClock || Boolean(intentSet.wantsNextSlot))
+  ) {
     effectivePrimary = "schedule";
     intents = ["schedule"];
   }
@@ -541,11 +545,18 @@ export function buildTurnPlan(
     turnDirective !== ASK_CORTE_OR_COMBO &&
     turnDirective !== ASK_SERVICE
   ) {
-    tools.delete("check_availability");
-    tools.delete("get_next_slots");
-    tools.delete("create_appointment");
-    tools.delete("reschedule_appointment");
-    turnDirective = ASK_HOUR;
+    if (input.intentSet.wantsNextSlot) {
+      tools.add("get_next_slots");
+      tools.add("check_availability");
+      tools.delete("create_appointment");
+      tools.delete("reschedule_appointment");
+    } else {
+      tools.delete("check_availability");
+      tools.delete("get_next_slots");
+      tools.delete("create_appointment");
+      tools.delete("reschedule_appointment");
+      turnDirective = ASK_HOUR;
+    }
   }
   if (input.replyingToPlanCharge && !movingAgenda) {
     for (const tool of AGENDA_TOOLS) tools.delete(tool);

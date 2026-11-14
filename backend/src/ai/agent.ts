@@ -66,6 +66,7 @@ import {
   looksLikeSocialGreeting,
   looksLikeWaitlistIntent,
   looksLikeNewBookingIntent,
+  looksLikeNextAvailableIntent,
   looksLikeZeroIntentUnknown,
   offeredAltBarberFromText,
   offeredFitClockIfAccepted,
@@ -81,6 +82,7 @@ import {
   assistantSuggestedUsualService,
   resolveUsualService,
   composeAmbiguousCorte,
+  composeNextAvailableOffer,
   draftIsCloseable,
   emptyBookingDraft,
   inferServiceKeyword,
@@ -3618,6 +3620,122 @@ export async function runAgent(
 
   if (routing.turnDirective === PLAN_CHARGE_ACK) {
     return finishTurn(PLAN_CHARGE_ACK, true);
+  }
+
+  if (
+    looksLikeNextAvailableIntent(lastUserTextRaw) &&
+    !parseClientTime(lastUserTextRaw) &&
+    !looksLikeCancelIntent(lastUserTextRaw) &&
+    !looksLikeRescheduleIntent(lastUserTextRaw) &&
+    !looksLikeConsultIntent(lastUserTextRaw)
+  ) {
+    if (!(bookingDraft.service_ids?.length)) {
+      const recentUserTexts = [
+        lastUserTextRaw,
+        ...lastN
+          .filter((m) => m.role === "user")
+          .map((m) => String(m.content ?? ""))
+          .reverse(),
+      ];
+      for (const text of recentUserTexts) {
+        const resolved = resolveServiceFromText(text, catalogServices);
+        if (resolved.match) {
+          bookingDraft = mergeBookingDraft(bookingDraft, {
+            service_ids: [resolved.match.id],
+            service_name: resolved.match.name,
+            total_price:
+              typeof resolved.match.price === "number" && Number.isFinite(resolved.match.price)
+                ? resolved.match.price
+                : undefined,
+          });
+          break;
+        }
+      }
+    }
+    if (!(bookingDraft.service_ids?.length)) {
+      return finishTurn(ASK_CORTE_OR_COMBO, true);
+    }
+    const requestedDate =
+      bookingDraft.date && String(bookingDraft.date).slice(0, 10) >= dateOnlyStr
+        ? String(bookingDraft.date).slice(0, 10)
+        : dateOnlyStr;
+    const readSlots = async (date: string) => {
+      const payload = {
+        date,
+        service_ids: bookingDraft.service_ids,
+        limit: 8,
+        ...(bookingDraft.barber_id ? { barber_id: bookingDraft.barber_id } : {}),
+        ...(date === dateOnlyStr ? { after_time: currentTimeHHmm } : {}),
+      };
+      const listed = await aiTools.getNextSlots(effectiveBarbershopId, payload);
+      await persistTool("get_next_slots", payload, JSON.stringify(listed).slice(0, 4096));
+      const err = listed && typeof listed === "object" && "error" in (listed as object)
+        ? String((listed as { error?: unknown }).error ?? "")
+        : "";
+      turnTrace.toolsExecuted.push({ name: "get_next_slots", ok: !err });
+      if (err) return { error: err, slots: [] as string[] };
+      const raw =
+        listed && typeof listed === "object" && Array.isArray((listed as { slots?: unknown }).slots)
+          ? (listed as { slots: Array<{ time?: string }> }).slots
+          : [];
+      const times: string[] = [];
+      const seen = new Set<string>();
+      for (const slot of raw) {
+        const time = typeof slot?.time === "string" ? slot.time.slice(0, 5) : "";
+        if (!/^\d{2}:\d{2}$/.test(time) || seen.has(time)) continue;
+        seen.add(time);
+        times.push(time);
+        if (times.length >= 3) break;
+      }
+      return { error: "", slots: times };
+    };
+    const first = await readSlots(requestedDate);
+    let offerDate = requestedDate;
+    let times = first.slots;
+    let rolledFromToday = false;
+    if (!first.error && times.length === 0) {
+      const start = requestedDate === dateOnlyStr ? dateOnlyStr : requestedDate;
+      for (let i = 1; i <= 7; i++) {
+        const next = addDaysIso(start, i);
+        const found = await readSlots(next);
+        if (found.error) continue;
+        if (found.slots.length) {
+          offerDate = next;
+          times = found.slots;
+          rolledFromToday = requestedDate === dateOnlyStr;
+          break;
+        }
+      }
+    }
+    if (!first.error || times.length) {
+      if (times.length) {
+        bookingDraft = mergeBookingDraft(bookingDraft, {
+          date: offerDate,
+          status: "collecting",
+          lastAgentQuestion: "datetime",
+          time: undefined,
+        });
+        await saveBookingDraft(conversationId, bookingDraft);
+        const reply = composeNextAvailableOffer({
+          timesHHmm: times,
+          dateIso: offerDate,
+          todayIso: dateOnlyStr,
+          rolledFromToday,
+        });
+        if (reply) return finishTurn(reply, true);
+      } else if (requestedDate === dateOnlyStr) {
+        bookingDraft = mergeBookingDraft(bookingDraft, { lastAgentQuestion: "datetime" });
+        await saveBookingDraft(conversationId, bookingDraft);
+        return finishTurn(
+          "Já estamos encerrando por hoje, mas me diz um outro dia que eu procuro um horário pra você.",
+          true,
+        );
+      } else {
+        bookingDraft = mergeBookingDraft(bookingDraft, { lastAgentQuestion: "datetime" });
+        await saveBookingDraft(conversationId, bookingDraft);
+        return finishTurn("Não encontrei vaga nesse dia. Qual outro dia te atende?", true);
+      }
+    }
   }
 
   if (
