@@ -3536,6 +3536,8 @@ export async function runAgent(
     !parseClientTime(lastUserTextRaw) &&
     !draftIsCloseable(bookingDraft) &&
     upcomingAppointments.length > 0 &&
+    // Um "sim" que aceita a oferta pendente (ex.: plano, logo após agendar) não é "tudo certo com o horário".
+    !resumingPending &&
     !looksLikeCancelIntent(lastUserTextRaw) &&
     !looksLikeRescheduleIntent(lastUserTextRaw)
   ) {

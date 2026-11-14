@@ -568,6 +568,27 @@ describe("concrete alternative stays on the draft", () => {
     expect(withAppointment.time).toBe("17:00");
   });
 
+  it("locks the first free hour of the held barber, the one composeOccupiedSlot offers", () => {
+    const alternatives = [
+      { time: "16:00", barber_id: LUCAS, barber_name: "Lucas Lima" },
+      { time: "14:00", barber_id: LUCAS, barber_name: "Lucas Lima" },
+      { time: "16:30", barber_id: LUCAS, barber_name: "Lucas Lima" },
+    ];
+    const offer = concreteAlternativeToLock({
+      date: "2026-10-03",
+      reason: "occupied",
+      requestedTime: "15:00",
+      requestedBarberId: LUCAS,
+      requestedBarberName: "Lucas Lima",
+      holdRequestedBarber: true,
+      alternatives,
+    });
+    expect(offer?.time).toBe("16:00");
+    expect(offer?.barber_id).toBe(LUCAS);
+    // O texto fala a mesma hora que o rascunho passa a guardar.
+    expect(composeOccupiedSlot({ barberName: "Lucas Lima", timeHHmm: "15:00", alternatives, holdRequestedBarber: true })).toContain("16h");
+  });
+
   it("keeps the current barber when another is free at the same hour", () => {
     expect(
       concreteAlternativeToLock({
