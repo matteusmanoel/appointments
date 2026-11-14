@@ -88,6 +88,42 @@ describe("reaper de ai_jobs presos em processing", () => {
     expect(act.rows.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("tentativas esgotadas vão para dead-letter mesmo com assinatura bloqueada (IA pausada por cobrança)", async () => {
+    // O reaper não deve consultar assinatura: jobs esgotados têm de virar dead + handoff humano
+    // mesmo quando o atendimento automático está pausado por billing. Este teste trava o contrato.
+    await pool.query(
+      `UPDATE public.barbershops
+          SET stripe_subscription_id = 'sub_test_reaper_blocked',
+              subscription_status = 'canceled',
+              subscription_current_period_end = now() - interval '1 day',
+              subscription_status_changed_at = now() - interval '30 days'
+        WHERE id = $1`,
+      [fx.barbershopId]
+    );
+    try {
+      const exhausted = await mkJob({ attempts: 5, lockedAgoSec: 900 });
+      const res = await reapStuckAiJobs({ timeoutSeconds: 600, maxAttempts: 5 });
+      expect(res.dead).toBeGreaterThanOrEqual(1);
+      expect(res.errors).toBe(0);
+      expect((await get(exhausted)).status).toBe("dead");
+      expect((await pool.query("SELECT needs_human_followup FROM public.ai_conversations WHERE id = $1", [conversationId])).rows[0].needs_human_followup).toBe(true);
+      const ev = await pool.query("SELECT triggered_by, event_type FROM public.ai_handoff_events WHERE conversation_id = $1", [conversationId]);
+      expect(ev.rows).toEqual([{ triggered_by: "job_failure", event_type: "pending_review" }]);
+      const act = await pool.query("SELECT 1 FROM public.agenda_activity WHERE barbershop_id = $1 AND type = 'agent_stuck'", [fx.barbershopId]);
+      expect(act.rows.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await pool.query(
+        `UPDATE public.barbershops
+            SET stripe_subscription_id = NULL,
+                subscription_status = NULL,
+                subscription_current_period_end = NULL,
+                subscription_status_changed_at = NULL
+          WHERE id = $1`,
+        [fx.barbershopId]
+      );
+    }
+  });
+
   it("lock nulo em processing usa updated_at como referência", async () => {
     const id = await mkJob({ attempts: 1, lockedAgoSec: null });
     await pool.query("UPDATE public.ai_jobs SET updated_at = now() - interval '1 hour' WHERE id = $1", [id]);
