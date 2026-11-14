@@ -61,6 +61,7 @@ import {
 } from "@/components/ui/tooltip";
 import { clientsApi, whatsappApi, type ClientMemory } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { conversationNeedsHardCapFollowup, IA_PAUSED_BY_LIMIT_LABEL } from "@/lib/hard-cap-followup";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { IncidentReportModal, mergeIncidentPatch } from "./IncidentReportModal";
@@ -1149,6 +1150,9 @@ export function InboxView({ isActive, whatsappConnected }: InboxViewProps) {
                               ) : (
                                 <Badge variant="outline">IA</Badge>
                               )}
+                              {conversationNeedsHardCapFollowup(c) && (
+                                <Badge variant="destructive">{IA_PAUSED_BY_LIMIT_LABEL}</Badge>
+                              )}
                             </div>
                             {c.last_message_at && (
                               <span className="text-[10px] text-muted-foreground">
@@ -1221,6 +1225,11 @@ export function InboxView({ isActive, whatsappConnected }: InboxViewProps) {
                     {formatTimeHm(selectedPausedUntil)}
                   </span>{" "}
                   (auto-retoma)
+                </p>
+              )}
+              {conversationNeedsHardCapFollowup(selectedConversation) && (
+                <p className="mt-0.5">
+                  <Badge variant="destructive">{IA_PAUSED_BY_LIMIT_LABEL}</Badge>
                 </p>
               )}
             </div>
