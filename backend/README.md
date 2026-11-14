@@ -54,4 +54,10 @@ Conversas do simulador usam `is_sandbox = true` e não criam jobs de envio.
 
 ## Preenchimento determinístico (fluxos básicos)
 
-Nos fluxos de agendar, reagendar, cancelar e responder a um lembrete, o código decide serviço, barbeiro, data, horário, quais tools chamar e quando confirmar. Sem relógio nomeado, o turno não cai no loop de LLM: oferece 2–3 horários ou usa uma fala segura. Os goldens desses fluxos também rodam pelo simulador CLI (`src/__tests__/slot-filling-simulator.test.ts`).
+Nos fluxos de agendar, reagendar, cancelar e responder a um lembrete, o código decide serviço, barbeiro, data, horário, quais tools chamar e quando confirmar. Horário já nomeado, com barbeiro desconhecido ou sem preferência, entra no fluxo determinístico (`check_availability` e, se ocupado, 2–3 alternativas) — sem o loop de tools do modelo.
+
+Quando as regras não extraem os slots, o LLM só interpreta a fala em slots estruturados (serviço, barbeiro, data, horário, intent), com schema validado. Isso fica atrás da flag **`AI_AGENT_SLOT_INTERPRET`** (`true`/`1`/`yes`), **default desligada**. O simulador liga essa interpretação só com `--llm openai`. Nos testes, use `--llm none` e um intérprete fake determinístico (`createFakeSlotInterpreter`).
+
+A linguagem sai de uma fala-modelo. O LLM pode reescrever o template com tom simpático, mas a saída passa pelo filtro `ai_exposure` e por uma checagem de que os horários e serviços citados são os do template; se não passar, usa o template puro. Flag **`AI_AGENT_LANGUAGE_REWRITE`**, **default desligada** (template puro, sem custo extra).
+
+Sem relógio nomeado, o turno não cai no loop de LLM: oferece 2–3 horários ou usa uma fala segura. Os goldens desses fluxos também rodam pelo simulador CLI (`src/__tests__/slot-filling-simulator.test.ts`).

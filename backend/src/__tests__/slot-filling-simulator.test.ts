@@ -5,6 +5,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { pool } from "../db.js";
 import { runSimulator } from "../ai/simulator/session.js";
+import { createFakeSlotInterpreter } from "../ai/agent/slot-interpreter.js";
 import { resetWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { setSimulatorTraceEnabled } from "../ai/simulator/trace.js";
 import { buildReminder24h } from "../outbound/templates.js";
@@ -142,6 +143,7 @@ describe("fluxos básicos pelo simulador", () => {
   let cancelFx: ShopFx;
   let remindFx: ShopFx;
   let reschedFx: ShopFx;
+  let extraFx: ShopFx;
 
   beforeAll(async () => {
     if (!(await dbAvailable())) {
@@ -151,7 +153,12 @@ describe("fluxos básicos pelo simulador", () => {
     cancelFx = await seedShop("cancel");
     remindFx = await seedShop("remind");
     reschedFx = await seedShop("resched");
-    shops.push(scheduleFx, cancelFx, remindFx, reschedFx);
+    extraFx = await seedShop("extra");
+    await pool.query(
+      `INSERT INTO public.barbers (barbershop_id, name, status) VALUES ($1, 'Eduardo', 'active')`,
+      [extraFx.barbershopId],
+    );
+    shops.push(scheduleFx, cancelFx, remindFx, reschedFx, extraFx);
   });
 
   afterEach(() => {
@@ -263,5 +270,200 @@ describe("fluxos básicos pelo simulador", () => {
       appointmentId,
     ]);
     expect(status.rows[0]?.status).toBe("pending");
+  });
+
+  it("intérprete fake preenche slots quando as regras não extraem, sem loop de tools", async () => {
+    const fake = createFakeSlotInterpreter((input) => ({
+      intent: "schedule",
+      service: "Corte",
+      barber: "any",
+      date: "2026-11-17",
+      time: "14:00",
+    }));
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000111",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Fecha o visual do combinado na folha quatorze" }],
+      llm: "none",
+      slotInterpreter: fake,
+      trace: false,
+      print: () => {},
+    });
+    const turn = result.turns[0]!;
+    expect(turn.reply).toMatch(/Posso confirmar\?/);
+    expect(turn.reply).toMatch(/14h|14:00|às 14/);
+    expect(turn.trace.tools.some((t) => t.name === "check_availability" && t.ok)).toBe(true);
+    expect(turn.trace.tools.every((t) => t.name !== "create_appointment")).toBe(true);
+    expect(turn.trace.totalTokens).toBe(0);
+  });
+
+  it("horário nomeado sem barbeiro entra em check_availability determinístico", async () => {
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000112",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Quero um corte amanhã às 15h" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    const turn = result.turns[0]!;
+    expect(turn.reply).toMatch(/Posso confirmar\?/);
+    expect(turn.trace.tools.some((t) => t.name === "check_availability" && t.ok)).toBe(true);
+    expect(turn.trace.totalTokens).toBe(0);
+  });
+
+  it("horário ocupado oferece 2–3 alternativas, sem loop de LLM", async () => {
+    const barbers = await pool.query<{ id: string }>(
+      `SELECT id FROM public.barbers WHERE barbershop_id = $1`,
+      [extraFx.barbershopId],
+    );
+    const client = await pool.query<{ id: string }>(
+      `INSERT INTO public.clients (barbershop_id, name, phone, name_confirmed) VALUES ($1, 'Ocupado', '5500000000113', true) RETURNING id`,
+      [extraFx.barbershopId],
+    );
+    for (const row of barbers.rows) {
+      const appt = await pool.query<{ id: string }>(
+        `INSERT INTO public.appointments
+           (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
+         VALUES ($1, $2, $3, $4, $5::date, '15:00', 30, 40, 16, 'pending') RETURNING id`,
+        [extraFx.barbershopId, client.rows[0]!.id, row.id, extraFx.serviceId, "2026-11-17"],
+      );
+      await pool.query(
+        `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
+         VALUES ($1, $2, 40, 30, 'Corte', 0)`,
+        [appt.rows[0]!.id, extraFx.serviceId],
+      );
+    }
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000114",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Quero um corte amanhã às 15h" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    const turn = result.turns[0]!;
+    expect(turn.trace.totalTokens).toBe(0);
+    expect(turn.trace.tools.some((t) => t.name === "check_availability" && t.ok)).toBe(true);
+    const clocks = [...turn.reply.matchAll(/às\s+(\d{1,2})h(?:(\d{2}))?/gi)].map((m) => {
+      const h = Number(m[1]);
+      const min = m[2] ? Number(m[2]) : 0;
+      return h * 60 + min;
+    });
+    expect(clocks.length).toBeGreaterThanOrEqual(2);
+    expect(clocks.every((mins) => mins !== 15 * 60)).toBe(true);
+    expect(turn.reply).not.toMatch(/Posso confirmar\?/);
+  });
+
+  it("«depois do almoço» oferece horários a partir das 13h", async () => {
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000115",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Quero um corte amanhã depois do almoço" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    const turn = result.turns[0]!;
+    expect(turn.trace.totalTokens).toBe(0);
+    expect(turn.trace.tools.some((t) => t.name === "get_next_slots" && t.ok)).toBe(true);
+    const args = turn.trace.tools.find((t) => t.name === "get_next_slots")?.args as { after_time?: string } | undefined;
+    expect(args?.after_time).toBe("13:00");
+    const clocks = [...turn.reply.matchAll(/às\s+(\d{1,2})h(?:(\d{2}))?/gi)].map((m) => {
+      const h = Number(m[1]);
+      const min = m[2] ? Number(m[2]) : 0;
+      return h * 60 + min;
+    });
+    expect(clocks.length).toBeGreaterThanOrEqual(2);
+    expect(clocks.every((mins) => mins >= 13 * 60)).toBe(true);
+  });
+
+  it("«mais cedo» trava o primeiro horário oferecido", async () => {
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000116",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [
+        { role: "user", text: "Quero um corte amanhã" },
+        { role: "user", text: "mais cedo" },
+      ],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(result.turns[0]!.reply).toMatch(/Qual prefere\?/);
+    expect(result.turns[1]!.reply).toMatch(/Posso confirmar\?/);
+    expect(result.turns[1]!.trace.totalTokens).toBe(0);
+    expect((result.turns[1]!.trace.draft as { time?: string | null } | null)?.time).toBeTruthy();
+  });
+
+  it("«você é robô?» no meio do agendamento desvia e segue com o card", async () => {
+    const phone = "5500000000117";
+    await pool.query(
+      `INSERT INTO public.clients (barbershop_id, name, phone, name_confirmed) VALUES ($1, 'Mateus', $2, true)
+       ON CONFLICT (barbershop_id, phone) DO UPDATE SET name = 'Mateus', name_confirmed = true`,
+      [extraFx.barbershopId, phone],
+    );
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone,
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [
+        { role: "user", text: "Quero um corte amanhã às 16h" },
+        { role: "user", text: "você é robô?" },
+      ],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(result.turns[0]!.reply).toMatch(/Posso confirmar\?/);
+    const reply = result.turns[1]!.reply;
+    expect(reply).toMatch(/Estou aqui pra te ajudar com o horário\./);
+    expect(reply).toMatch(/Posso confirmar\?/);
+    expect(reply).not.toMatch(/sou (um )?robô|inteligência artificial|sou (uma )?ia/i);
+    expect(result.turns[1]!.trace.totalTokens).toBe(0);
+  });
+
+  it("reescrita da fala-modelo, quando ligada, cai no template se inventar horário", async () => {
+    const templateRun = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000118",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Quero um corte amanhã" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    const template = templateRun.turns[0]!.reply;
+    const friendly = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000119",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Quero um corte amanhã" }],
+      llm: "none",
+      languageRewrite: true,
+      languageRewriter: async (src) => `Claro! ${src}`,
+      trace: false,
+      print: () => {},
+    });
+    expect(friendly.turns[0]!.reply).toMatch(/^Claro! /);
+    expect(friendly.turns[0]!.reply).toContain(template.replace(/^Claro! /, ""));
+    const rejected = await runSimulator({
+      tenant: extraFx.slug,
+      phone: "5500000000120",
+      now: "2026-11-16T10:00:00-03:00",
+      turns: [{ role: "user", text: "Quero um corte amanhã" }],
+      llm: "none",
+      languageRewrite: true,
+      languageRewriter: async () => "Tenho horário às 11h e também pigmentação, pode ser?",
+      trace: false,
+      print: () => {},
+    });
+    expect(rejected.turns[0]!.reply).toBe(template);
+    expect(rejected.turns[0]!.reply).not.toMatch(/às 11h/i);
   });
 });

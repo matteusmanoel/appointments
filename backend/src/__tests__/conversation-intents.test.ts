@@ -23,6 +23,8 @@ import {
   offeredFitClockIfAccepted,
   clockForNamedBarber,
   looksLikeAfterTimeIntent,
+  looksLikeAfterLunchIntent,
+  AFTER_LUNCH_FLOOR_HHMM,
   looksLikeNewBookingIntent,
   looksLikeNextAvailableIntent,
   looksLikeRobotQuestion,
@@ -322,6 +324,23 @@ describe("looksLikeAfterTimeIntent (Round 4 regression)", () => {
   it("treats a split 'às 18' + 'Ou após' bubble as a floor", () => {
     expect(looksLikeAfterTimeIntent("O lucas pode me atender hoje as 18?\nOu após")).toBe(true);
     expect(looksLikeAfterTimeIntent("quero às 18h")).toBe(false);
+  });
+
+  it("trata «depois do almoço» como piso 13:00, sem cravar relógio", () => {
+    expect(looksLikeAfterLunchIntent("Quero um corte amanhã depois do almoço")).toBe(true);
+    expect(looksLikeAfterTimeIntent("depois do almoço")).toBe(true);
+    expect(looksLikeAfterTimeIntent("após o almoço")).toBe(true);
+    expect(looksLikeAfterLunchIntent("depois de amanhã")).toBe(false);
+    const { patch, afterIntent } = draftPatchFromTurn({
+      text: "Quero corte amanhã depois do almoço",
+      todayIso: "2026-11-16",
+      services: [{ id: "s1", name: "Corte", price: 40 }],
+      barbers: [],
+    });
+    expect(afterIntent).toBe(true);
+    expect(patch.after_time).toBe(AFTER_LUNCH_FLOOR_HHMM);
+    expect(patch.time).toBeUndefined();
+    expect(patch.date).toBe("2026-11-17");
   });
 });
 

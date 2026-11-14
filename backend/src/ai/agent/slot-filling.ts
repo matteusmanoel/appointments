@@ -1,9 +1,9 @@
 /**
  * Preenchimento determinístico dos fluxos básicos.
  * O código decide serviço, barbeiro, data, horário, tools e quando confirmar.
- * O LLM, neste corte, não escolhe tool: só entra se o fluxo não for básico
- * (ou, no futuro, para interpretar fala em slots quando as regras não bastarem
- * e para escrever a linguagem a partir de uma fala-modelo).
+ * O LLM não escolhe tool nestes fluxos. Quando as regras não extraem os slots,
+ * o intérprete (flag / fake nos testes) só devolve slots estruturados; o código
+ * segue decidindo tools e confirmação. A linguagem sai de uma fala-modelo.
  */
 import type { IntentType } from "./types.js";
 
@@ -38,7 +38,7 @@ export type SlotFillInput = {
 
 /**
  * Extrai slots só com regras (regex/catalogo ficam no understandTurn / draftPatchFromTurn).
- * Quando as regras não bastarem, o próximo corte pode pedir um parse ao LLM — não neste arquivo.
+ * Quando as regras não bastarem, `slot-interpreter.ts` devolve slots validados.
  */
 export function extractSlotsFromIntent(input: {
   service?: string | null;

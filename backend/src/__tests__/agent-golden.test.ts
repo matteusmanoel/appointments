@@ -299,27 +299,17 @@ const SCENARIOS: GoldenScenario[] = [
         // "Corte masculino" explícito: "cortar" sozinho é ambíguo (corte simples x combo) e o turno só pergunta isso,
         // sem liberar check_availability. Aqui o contrato é o barbeiro fora do catálogo.
         user: "Quero um corte masculino amanhã às 15h com o Gabriel",
-        llm: (fx) => [
-          {
-            tool: "check_availability",
-            args: {
-              date: fx.tomorrowIso,
-              time: "15:00",
-              barber_id: "00000000-0000-4000-8000-00000000abcd",
-              service_ids: [fx.services.corte],
-            },
-          },
-          { content: "Não temos o Gabriel por aqui. Posso ver com o Lucas ou o Eduardo?" },
-        ],
+        llm: () => [],
         contracts: () => [
           { kind: "intent_primary", equals: "schedule" },
           { kind: "barber_disclosure", name: "Gabriel" },
           { kind: "routing_applied_includes", value: "barber_disclosure" },
-          { kind: "catalog_rejections", equals: [{ tool: "check_availability", field: "barber_id" }] },
-          // O barbeiro inventado é descartado e o turno só confere a agenda; o substituto (outro barbeiro do
-          // catálogo) é apenas OFERECIDO ("Posso confirmar?"), nada é gravado sem o aceite.
+          { kind: "catalog_rejections", equals: [] },
           { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "openai_rounds", equals: 0 },
           { kind: "draft_status", equals: "offered" },
+          { kind: "reply_includes", value: "Não temos o Gabriel" },
+          { kind: "reply_includes", value: "Posso confirmar?" },
           { kind: "state", equals: null },
         ],
       },
@@ -357,23 +347,14 @@ const SCENARIOS: GoldenScenario[] = [
     turns: [
       {
         user: "Preciso remarcar, pode ser amanhã às 10h?",
-        llm: (fx) => [
-          { tool: "cancel_appointment", args: { appointment_id: fx.upcomingAppointmentId } },
-          { content: "Vou ver esse horário pra você." },
-        ],
+        llm: () => [],
         contracts: (fx) => [
           { kind: "intent_primary", equals: "reschedule" },
           { kind: "intents_exclude", value: "cancel" },
           { kind: "routing_primary", equals: "reschedule" },
-          { kind: "routing_applied_includes", value: "tool_not_in_plan" },
-          { kind: "routing_applied_includes", value: "check_before_draft" },
-          {
-            kind: "tools_executed",
-            equals: [
-              { name: "cancel_appointment", ok: false },
-              { name: "check_availability", ok: true },
-            ],
-          },
+          { kind: "tools_executed_includes", value: { name: "check_availability", ok: true } },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
+          { kind: "openai_rounds", equals: 0 },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
           { kind: "state", equals: null },
         ],
@@ -695,6 +676,131 @@ const SCENARIOS: GoldenScenario[] = [
           { kind: "state", equals: "appointment_cancelled" },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "cancelled" },
           { kind: "reply_includes", value: "cancelado" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "schedule_named_hour_any_barber",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero um corte masculino amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "intent_primary", equals: "schedule" },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "reply_includes", value: "Posso confirmar?" },
+          { kind: "reply_excludes", value: "Não temos" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    id: "schedule_named_hour_occupied_offers_alts",
+    client: { name: "Mateus" },
+    prepare: async (fx) => {
+      const { pool } = await import("../db.js");
+      for (const barberId of [fx.barbers.lucas, fx.barbers.eduardo]) {
+        const appt = await pool.query<{ id: string }>(
+          `INSERT INTO public.appointments
+             (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
+           VALUES ($1, $2, $3, $4, $5::date, '15:00', 30, 35, 14, 'pending') RETURNING id`,
+          [fx.barbershopId, fx.clientId, barberId, fx.services.corte, fx.tomorrowIso],
+        );
+        await pool.query(
+          `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
+           VALUES ($1, $2, 35, 30, 'Corte masculino', 0)`,
+          [appt.rows[0]!.id, fx.services.corte],
+        );
+      }
+    },
+    turns: [
+      {
+        user: "Quero um corte masculino amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "check_availability", ok: true } },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
+          { kind: "reply_includes", value: "Qual" },
+          { kind: "reply_excludes", value: "às 9h" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    id: "schedule_after_lunch",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero um corte masculino amanhã depois do almoço",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "reply_includes", value: "Qual" },
+          { kind: "reply_excludes", value: "às 9h" },
+          { kind: "reply_excludes", value: "às 10h" },
+          { kind: "reply_excludes", value: "às 11h" },
+          { kind: "reply_excludes", value: "às 12h" },
+          { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    id: "mais_cedo_locks_first_offered",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero um corte masculino amanhã",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "reply_includes", value: "Qual prefere?" },
+          { kind: "draft_status", equals: "collecting" },
+        ],
+      },
+      {
+        user: "mais cedo",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "reply_includes", value: "Posso confirmar?" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "robot_mid_booking",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero um corte masculino amanhã às 15h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "reply_includes", value: "Posso confirmar?" },
+        ],
+      },
+      {
+        user: "você é robô?",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "reply_includes", value: "Estou aqui pra te ajudar com o horário." },
+          { kind: "reply_includes", value: "Posso confirmar?" },
+          { kind: "reply_excludes", value: "sou um robô" },
+          { kind: "reply_excludes", value: "inteligência artificial" },
+          { kind: "draft_status", equals: "offered" },
         ],
       },
     ],

@@ -14,6 +14,8 @@ import { useNoopWhatsAppOutbound } from "../../integrations/whatsapp/noop-outbou
 import { parseSimulatedNow } from "./clock.js";
 import { parseReplayFile, type ReplayScript, type ReplayTurn } from "./replay-file.js";
 import { stubOpenAI, loadLiveOpenAI } from "./openai-stub.js";
+import type { SlotInterpreter } from "../agent/slot-interpreter.js";
+import type { LanguageRewriter } from "../agent/language-rewrite.js";
 import {
   formatSimulatorTurn,
   isSimulatorTraceEnabled,
@@ -35,6 +37,11 @@ export type SimulatorOptions = {
   trace?: boolean;
   persistAssistantMessages?: boolean;
   print?: (line: string) => void;
+  /** Testes: intérprete fake determinístico (--llm none). */
+  slotInterpreter?: SlotInterpreter;
+  slotInterpret?: boolean;
+  languageRewrite?: boolean;
+  languageRewriter?: LanguageRewriter;
 };
 
 export type SimulatorTurnResult = {
@@ -123,6 +130,10 @@ export async function runSimulatorTurn(params: {
   now?: string;
   openai: OpenAI;
   persistAssistantMessages?: boolean;
+  slotInterpreter?: SlotInterpreter;
+  slotInterpret?: boolean;
+  languageRewrite?: boolean;
+  languageRewriter?: LanguageRewriter;
 }): Promise<SimulatorTurnTrace> {
   const started = Date.now();
   await insertMessage(params.conversationId, "user", params.userText);
@@ -131,6 +142,10 @@ export async function runSimulatorTurn(params: {
     persistAssistantMessages: params.persistAssistantMessages !== false,
     simulatedNow: params.now,
     captureSimulatorTrace: true,
+    slotInterpreter: params.slotInterpreter,
+    slotInterpret: params.slotInterpret,
+    languageRewrite: params.languageRewrite,
+    languageRewriter: params.languageRewriter,
   });
   const captured = result.simulatorTrace;
   const draft = await loadBookingDraft(params.conversationId);
@@ -189,6 +204,10 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
       now: nowRaw,
       openai,
       persistAssistantMessages: options.persistAssistantMessages,
+      slotInterpreter: options.slotInterpreter,
+      slotInterpret: options.slotInterpret ?? options.llm === "openai",
+      languageRewrite: options.languageRewrite,
+      languageRewriter: options.languageRewriter,
     });
     const printed = formatSimulatorTurn(trace, phoneMasked);
     print(printed);
