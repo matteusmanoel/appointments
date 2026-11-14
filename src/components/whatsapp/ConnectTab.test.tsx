@@ -63,6 +63,21 @@ describe("ConnectTab: escolha do app e campo de número (A12)", () => {
   });
 });
 
+describe("ConnectTab: estado ao vivo da Evolution", () => {
+  it("não mostra Conectado quando o banco diz conectado e a Evolution já caiu", () => {
+    render(
+      <ConnectTab
+        {...props({
+          connection: { connected: true, status: "connected" },
+          statusData: { status: "disconnected", connected: false },
+        })}
+      />,
+    );
+    expect(screen.getByText("Desconectado")).toBeTruthy();
+    expect(screen.queryByText("Conectado")).toBeNull();
+  });
+});
+
 describe("ConnectTab: contagem regressiva só depois que o QR aparece", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

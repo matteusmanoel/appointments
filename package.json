@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "docker:rebuild": "docker-compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.evolution.yml up -d --build api worker-ai worker-scheduled"
+    "docker:up": "docker-compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.evolution.yml up -d",
+    "docker:rebuild": "docker-compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.evolution.yml up -d --build api worker-ai worker-scheduled navalhia-evolution-postgres navalhia-evolution-redis navalhia-evolution-api"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -528,10 +528,10 @@ export default function Integracoes() {
     });
   };
 
-  const whatsappConnected = !!(
-    whatsappConnection?.connected ||
-    whatsappStatusQuery.data?.connected
-  );
+  const liveWhatsapp = whatsappStatusQuery.data;
+  const whatsappConnected = liveWhatsapp
+    ? liveWhatsapp.connected === true || liveWhatsapp.status === "connected"
+    : !!whatsappConnection?.connected;
 
   if (!canUseWhatsAppAndNotifications) {
     return (
