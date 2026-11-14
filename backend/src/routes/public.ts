@@ -10,6 +10,8 @@ import {
   scheduleReminderForAppointment,
 } from "../outbound/scheduled-messages.js";
 import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
+import { clientIp, envInt, rateLimitMiddleware } from "../lib/rate-limit.js";
+import { parsePublicPhone } from "../lib/phone-validate.js";
 
 const RESCHEDULE_CUTOFF_MINUTES = 120;
 
@@ -22,6 +24,73 @@ async function getBarbershopIdBySlug(slug: string): Promise<string | null> {
 }
 
 export const publicRouter = Router();
+
+// Token malformado nunca chega ao banco (antes: erro 22P02 não tratado → requisição pendurada).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+publicRouter.param("token", (_req, res, next, value) => {
+  if (!UUID_RE.test(String(value))) {
+    res.status(404).json({ error: "Agendamento não encontrado ou já cancelado" });
+    return;
+  }
+  next();
+});
+
+// Rate limit dos endpoints públicos (sem serviço pago; ver lib/rate-limit.ts). Limites ajustáveis por env.
+const sec = (name: string, defSec: number) => envInt(name, defSec) * 1000;
+
+/** Agendar: por IP e por telefone (+ barbearia). */
+const bookingRateLimit = rateLimitMiddleware((req) => {
+  const specs = [
+    {
+      bucket: `pub:book:ip:${clientIp(req)}`,
+      max: envInt("PUBLIC_BOOKING_IP_MAX", 20),
+      windowMs: sec("PUBLIC_BOOKING_IP_WINDOW_SEC", 600),
+    },
+  ];
+  const phone = parsePublicPhone((req.body as { client_phone?: unknown } | undefined)?.client_phone);
+  if (phone.ok) {
+    specs.push({
+      bucket: `pub:book:phone:${String(req.params.slug).toLowerCase()}:${phone.bucketKey}`,
+      max: envInt("PUBLIC_BOOKING_PHONE_MAX", 5),
+      windowMs: sec("PUBLIC_BOOKING_PHONE_WINDOW_SEC", 3600),
+    });
+  }
+  return specs;
+});
+
+/** Cancelar/reagendar (e consultar) por token: por IP, por token e pelo telefone do cliente dono do agendamento. */
+const manageRateLimit = rateLimitMiddleware(async (req) => {
+  const token = String(req.params.token ?? "");
+  const isView = req.method === "GET";
+  const specs = [
+    {
+      bucket: `pub:manage:ip:${clientIp(req)}`,
+      max: envInt(isView ? "PUBLIC_VIEW_IP_MAX" : "PUBLIC_MANAGE_IP_MAX", isView ? 60 : 30),
+      windowMs: sec("PUBLIC_MANAGE_IP_WINDOW_SEC", 600),
+    },
+  ];
+  if (!isView) {
+    specs.push({
+      bucket: `pub:manage:token:${token}`,
+      max: envInt("PUBLIC_MANAGE_TOKEN_MAX", 10),
+      windowMs: sec("PUBLIC_MANAGE_TOKEN_WINDOW_SEC", 600),
+    });
+    const r = await pool.query<{ phone: string; barbershop_id: string }>(
+      `SELECT c.phone, a.barbershop_id FROM public.appointments a JOIN public.clients c ON c.id = a.client_id WHERE a.public_token = $1`,
+      [token]
+    );
+    const rawPhone = r.rows[0]?.phone;
+    if (rawPhone) {
+      const p = parsePublicPhone(rawPhone);
+      specs.push({
+        bucket: `pub:manage:phone:${r.rows[0].barbershop_id}:${p.ok ? p.bucketKey : `raw:${rawPhone.replace(/\D/g, "")}`}`,
+        max: envInt("PUBLIC_MANAGE_PHONE_MAX", 10),
+        windowMs: sec("PUBLIC_MANAGE_PHONE_WINDOW_SEC", 3600),
+      });
+    }
+  }
+  return specs;
+});
 
 const rescheduleBody = z.object({
   scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -71,7 +140,7 @@ async function getAppointmentByToken(token: string): Promise<{
   };
 }
 
-publicRouter.get("/appointments/:token", async (req: Request, res: Response): Promise<void> => {
+publicRouter.get("/appointments/:token", manageRateLimit, async (req: Request, res: Response): Promise<void> => {
   const appointment = await getAppointmentByToken(req.params.token);
   if (!appointment) {
     res.status(404).json({ error: "Agendamento não encontrado ou já cancelado" });
@@ -91,7 +160,7 @@ async function getAppointmentStartUtc(appointmentId: string): Promise<Date | nul
   return r.rows[0]?.start_utc ?? null;
 }
 
-publicRouter.post("/appointments/:token/cancel", async (req: Request, res: Response): Promise<void> => {
+publicRouter.post("/appointments/:token/cancel", manageRateLimit, async (req: Request, res: Response): Promise<void> => {
   const appointment = await getAppointmentByToken(req.params.token);
   if (!appointment) {
     res.status(404).json({ error: "Agendamento não encontrado ou já cancelado" });
@@ -123,7 +192,7 @@ publicRouter.post("/appointments/:token/cancel", async (req: Request, res: Respo
   res.status(200).json({ ok: true, message: "Agendamento cancelado" });
 });
 
-publicRouter.post("/appointments/:token/reschedule", async (req: Request, res: Response): Promise<void> => {
+publicRouter.post("/appointments/:token/reschedule", manageRateLimit, async (req: Request, res: Response): Promise<void> => {
   const appointment = await getAppointmentByToken(req.params.token);
   if (!appointment) {
     res.status(404).json({ error: "Agendamento não encontrado ou já cancelado" });
@@ -319,11 +388,14 @@ const createAppointmentBody = z.object({
   scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   scheduled_time: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/),
   client_name: z.string().min(1),
-  client_phone: z.string().min(1),
+  client_phone: z.string().superRefine((v, ctx) => {
+    const p = parsePublicPhone(v);
+    if (!p.ok) ctx.addIssue({ code: z.ZodIssueCode.custom, message: p.reason });
+  }),
   notes: z.string().optional(),
 }).refine((d) => (d.service_ids?.length ?? 0) >= 1 || !!d.service_id, { message: "service_id or service_ids required" });
 
-publicRouter.post("/:slug/appointments", async (req: Request, res: Response): Promise<void> => {
+publicRouter.post("/:slug/appointments", bookingRateLimit, async (req: Request, res: Response): Promise<void> => {
   const barbershopId = await getBarbershopIdBySlug(req.params.slug);
   if (!barbershopId) {
     res.status(404).json({ error: "NavalhIA não encontrada" });
@@ -340,7 +412,7 @@ publicRouter.post("/:slug/appointments", async (req: Request, res: Response): Pr
     res.status(400).json({ error: "service_id or service_ids (min 1) required" });
     return;
   }
-  const normalizedPhone = client_phone.replace(/\D/g, "") || client_phone;
+  const normalizedPhone = client_phone.replace(/\D/g, "");
 
   const clientResult = await pool.query(
     `INSERT INTO public.clients (barbershop_id, name, phone, notes)
