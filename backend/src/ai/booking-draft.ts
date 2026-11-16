@@ -1,6 +1,7 @@
 import { pool } from "../db.js";
 import { isValidUuid } from "../lib/uuid.js";
 import { addDaysIso, formatDateBr, formatTimePt, weekdayShortPtFromIso } from "./date-calendar.js";
+import { parseConfirmCard, type ConfirmCard } from "./agent/confirmation-card.js";
 import type { UnavailableReason } from "./slot-fit.js";
 
 export type BookingDraftStatus = "collecting" | "offered" | "awaiting_name" | "closed";
@@ -36,6 +37,8 @@ export type BookingDraft = {
   usualSuggested?: boolean;
   /** 2–3 horários concretos oferecidos neste pedido; «o mais cedo» escolhe o primeiro, não refaz a busca. */
   offeredTimes?: string[];
+  /** Card de confirmação/cancelamento/lembrete ainda no ar, com TTL. */
+  confirmCard?: ConfirmCard | null;
 };
 
 /** Falha da tool de horários: fala segura, sem expor automação nem se passar por humano. */
@@ -124,6 +127,12 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
             .filter((t) => /^\d{2}:\d{2}$/.test(t)),
         }
       : {}),
+    ...(r.confirmCard === null
+      ? {}
+      : (() => {
+          const card = parseConfirmCard(r.confirmCard);
+          return card ? { confirmCard: card } : {};
+        })()),
   };
 }
 
@@ -160,6 +169,7 @@ export function mergeBookingDraft(
     "waitlistOffer",
     "usualSuggested",
     "offeredTimes",
+    "confirmCard",
   ];
   let materialChanged = false;
   for (const key of keys) {
@@ -192,6 +202,14 @@ export function mergeBookingDraft(
     }
     if (key === "lastAgentQuestion" && value === null) {
       delete next.lastAgentQuestion;
+      continue;
+    }
+    if (key === "confirmCard") {
+      if (value === null) delete next.confirmCard;
+      else {
+        const card = parseConfirmCard(value);
+        if (card) next.confirmCard = card;
+      }
       continue;
     }
     if (value === undefined || value === null || value === "") continue;
@@ -233,6 +251,11 @@ export function mergeBookingDraft(
     next.status = patch.status;
   } else if (materialChanged) {
     next.status = "collecting";
+  }
+  if (next.status === "closed") {
+    delete next.confirmCard;
+  } else if (materialChanged && !("confirmCard" in patch)) {
+    delete next.confirmCard;
   }
   return next;
 }

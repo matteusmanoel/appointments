@@ -1,6 +1,7 @@
 import { pool } from "../db.js";
 import { isLockTimeout, lockBarberDay } from "../lib/booking-lock.js";
 import { validateUuidIds, isValidUuid } from "../lib/uuid.js";
+import { getSimulatedNow, wallClockFrom } from "./simulator/clock.js";
 import {
   canonicalizeBrPhoneDigits,
   brPhoneMatchKeys,
@@ -14,6 +15,7 @@ import {
 import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
 import { scheduleClientPhotoSync } from "../clients/sync-contact-photo.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { isNoopWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { dateToolMeta, weekdayKeyFromIso } from "./date-calendar.js";
 import { appendClientNote } from "./memory/client-memory.js";
 import {
@@ -189,6 +191,15 @@ function overlapsWithBuffer(
 async function getNowInBarbershopTz(
   barbershopId: string,
 ): Promise<{ todayStr: string; nowMins: number }> {
+  const simulated = getSimulatedNow();
+  if (simulated) {
+    const tzRow = await pool.query<{ timezone: string | null }>(
+      `SELECT timezone FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
+      [barbershopId],
+    );
+    const tz = tzRow.rows[0]?.timezone?.trim() || "America/Sao_Paulo";
+    return wallClockFrom(simulated, tz);
+  }
   const r = await pool.query<{ today_str: string; now_mins: number }>(
     `SELECT
        (NOW() AT TIME ZONE COALESCE(ais.timezone, 'America/Sao_Paulo'))::date::text AS today_str,
@@ -745,7 +756,8 @@ export async function validateSlotForPublicReschedule(
     [params.date, timeNorm, tz],
   );
   const startUtc = startUtcRow.rows[0]?.start_utc;
-  if (!startUtc || startUtc.getTime() <= Date.now()) {
+  const nowMs = getSimulatedNow()?.getTime() ?? Date.now();
+  if (!startUtc || startUtc.getTime() <= nowMs) {
     return { ok: false, error: "Horário não pode ser no passado" };
   }
 
@@ -1930,7 +1942,13 @@ export async function rescheduleAppointmentByAgent(
     };
   const { barber_id: currentBarberId, duration_minutes: duration, status: previousStatus } =
     appRow.rows[0];
-  const nextStatus = previousStatus === "cancelled" ? "pending" : previousStatus;
+  if (previousStatus === "cancelled") {
+    return {
+      error: "Agendamento já cancelado; não é possível remarcar.",
+      code: "CANCELLED" as const,
+    };
+  }
+  const nextStatus = previousStatus;
   const barberId = params.barber_id ?? currentBarberId;
 
   const bufferMins = await getBookingBufferMinutes(barbershopId);
@@ -2364,6 +2382,16 @@ export async function sendPixPlanCharge(
   const clientPhone = (params.client_phone || sub.client_phone).replace(/\D/g, "");
   const amount = openCharge ? Number(openCharge.amount) : Number(sub.price);
   const city = (shop.address ?? "").split(",").pop()?.trim() || "Brasil";
+
+  if (isNoopWhatsAppOutbound()) {
+    return {
+      ok: true,
+      skipped_send: true,
+      amount,
+      charged_month: openCharge?.due_date ?? null,
+      message: "Simulador: cobrança PIX não foi marcada como enviada nem despachada.",
+    };
+  }
 
   const session = await getWhatsAppOrNull(barbershopId);
   let sentNative = false;
