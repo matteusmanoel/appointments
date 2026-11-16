@@ -1,7 +1,7 @@
 /**
  * Cenários golden do agente (Layer 2). Importados pelo teste e pelo simulate:compare.
  */
-import { pool } from "../../db.js";
+import { pool } from "../../../db.js";
 import type { GoldenScenario } from "./runner.js";
 
 export const SCENARIOS: GoldenScenario[] = [

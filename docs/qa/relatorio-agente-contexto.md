@@ -14,7 +14,7 @@ Postgres usado aqui: local em `127.0.0.1`. A guarda do simulador e dos testes s�
 | Histórico | `appointments` com status `completed` | O «de sempre» quando a contagem na janela de 6 meses ganha da memória |
 | Sessão entre conversas | `client_ai_memory.session_context` (novo) | Rascunho, card, intenções pendentes e última intenção, por cliente e barbearia |
 
-O rascunho da conversa se perdia quando o simulador abria outra thread (`sim:{telefone}:cN`). A conversa nova hidrata `session_context` só quando o próprio `booking_draft` ainda é nulo. Card vencido entra junto, e o TTL continua valendo.
+O rascunho da conversa se perdia quando o simulador abria outra thread (`sim:{telefone}:cN`). A conversa nova hidrata `session_context` só quando o próprio `booking_draft` ainda é nulo. Rascunho e intenções pendentes valem 24 h a partir do `updatedAt`. O card guarda o TTL de 30 min. Slot que já passou não volta como card. Card ainda vivo, numa conversa nova, vira contexto: o «sim» não executa e o agente reapresenta o card. A última intenção continua valendo quando o turno novo não é um «sim».
 
 ## Casos
 
@@ -29,6 +29,8 @@ Suíte: `backend/src/__tests__/agent-context-conversations.test.ts`. Cada caso o
 | 5 | Dois horários futuros: cancela o das 15h e, na conversa seguinte, remarca o das 11h | passou |
 | 6 | Várias visitas concluídas mudam o serviço de costume (3 barbas e 1 corte → sugere Barba) | passou |
 | 7 | «sim» 40 min depois, em conversa nova, não executa o card: ele expirou | passou |
+| 7b | «sim» 10 min depois, em conversa nova, reapresenta o card e só o «sim» seguinte marca | passou |
+| 7c | Slot das 15h ocupado por outro cliente: a conversa nova não revive o card nesse horário | passou |
 | 8 | Dois clientes no mesmo tenant, e o mesmo telefone em outro tenant, sem vazamento | passou |
 | 9 | Fora do horário: «Já estamos encerrando por hoje, mas podemos encontrar um horário pra você amanhã», sem trocar «amanhã» pelo nome do dia | passou |
 | 10 | «você é robô?» no meio do fluxo: «Estou aqui pra te ajudar com o horário» e o fluxo segue | passou |
@@ -41,8 +43,8 @@ Golden novo `recurring_client_suggests_usual_without_clock` («Quero agendar», 
 
 | Arquivo | Motivo |
 | --- | --- |
-| `supabase/migrations/20261116170000_client_session_context.sql` e `backend/src/db/ensure-schema.ts` | Coluna `client_ai_memory.session_context` |
-| `backend/src/ai/agent/client-session-context.ts` | Grava e hidrata rascunho, card e intenções. Isolado por `client_id` + `barbershop_id` |
+| `supabase/migrations/20261116170000_client_session_context.sql` | Coluna `session_context`, idempotente, com `lock_timeout` 2s e `statement_timeout` 5s. O boot não dá `ALTER` nessa tabela |
+| `backend/src/ai/agent/client-session-context.ts` | Grava e hidrata rascunho, card e intenções. O telefone usa `brPhoneMatchKeys`, com `ORDER BY` canônico, comprimento e id. Isolado por `client_id` + `barbershop_id` |
 | `backend/src/ai/agent/context-builder.ts` | A conversa nova puxa a sessão do cliente. Favoritos usam a data simulada, não o `CURRENT_DATE` do servidor |
 | `backend/src/ai/agent.ts` | Antes de aplicar o turno, esvazia rascunho já fechado (o pedido novo não era descartado). Caminhos rápidos de criar/remarcar aguardam a memória, com a hora do agendamento (a faixa vinha da data e ficava errada). Horário nomeado livre numa remarcação usa `composeRescheduleAsk` («Quer que eu mude para…»). O «sim» chama `reschedule_appointment` no mesmo id. Oferta com barbeiro conhecido cita o primeiro nome. Se o dia pedido tem menos de 2 horários, a busca segue até achar um dia com 2 ou 3; «amanhã» só entra quando o dia pedido é hoje e não tinha nenhum horário |
 | `backend/src/ai/agent/orchestrator.ts` | «Quero agendar» sem relógio, com serviço de costume, pergunta o de sempre em vez de cair em corte ou combo |
@@ -51,8 +53,20 @@ Golden novo `recurring_client_suggests_usual_without_clock` («Quero agendar», 
 | `backend/src/ai/tools.ts` | `getClientFavoriteServices` aceita a data de referência |
 | `backend/src/ai/simulator/session.ts` e `replay-file.ts` | Evento `new_conversation` e `now` por turno, para o cliente voltar horas ou dias depois |
 | `backend/src/ai/simulator/openai-stub.ts` | O stub de embeddings devolve vetor zerado. O chat continua recusando chamada real |
-| `supabase/migrations/20261115120000_ai_simulator_turn_traces_harden.sql` | O `COMMENT` entrou no bloco que já desiste quando a tabela não existe. O `migrate:all` não quebra: a criação dessa tabela continua fora do `migrate:all` |
+| `supabase/migrations/20261115120000_ai_simulator_turn_traces_harden.sql` | Voltou ao texto já mergeado em `develop`. Mudança nessa migration não entra neste PR |
 | `backend/src/__tests__/whatsapp-ai-routes.test.ts` | Sem `OPENAI_API_KEY`, `/ai-simulate` tem que responder 503 `OpenAI not configured`. Com a chave, continua exigindo 200. Não foi escondido nem transformado em sucesso falso |
+| `backend/src/ai/simulator/compare.ts` e `agent-simulator-compare.ts` | `--max-tokens` e `--max-runs` inválidos saem com código 1. O teto é checado antes de cada chamada de chat e de embedding; a chamada seguinte não sai se a última já não cabe. Embeddings entram na soma e no custo |
+| `backend/src/ai/simulator/golden/` | Os cenários e o runner saíram de `__tests__`. O compare não importa mais teste |
+| `backend/src/routes/clients.ts` e `client-memory.ts` | As respostas de memória listam as colunas. `session_context` não volta na API |
+
+## Revisão do PR
+
+Os quatro pontos da revisão de backend, sem merge:
+
+1. O lookup do cliente usa `brPhoneMatchKeys`. Um WhatsApp de 11 dígitos casa com o cadastro de 11 e com o de 10 do mesmo DDD. A chave de 10 dígitos não casa com outro DDD no mesmo tenant. O `ORDER BY` prefere o telefone canônico, depois o mais longo, depois o id.
+2. Rascunho e `pendingIntents` expiram em 24 h. O card segue com 30 min. Slot passado ou ocupado não volta como card vivo. Na conversa nova, o card dentro do TTL é reapresentado; o «sim» direto não marca. `lastIntent` segue em uso quando o turno não é afirmação.
+3. `ensure-schema.ts` não altera `client_ai_memory` no boot. A migration `20261116170000` é idempotente e usa `lock_timeout='2s'` e `statement_timeout='5s'`. A migration `20261115120000`, já mergeada, voltou ao texto de `develop`.
+4. Valores inválidos de `--max-tokens` e `--max-runs` falham com mensagem clara e código diferente de zero. O teto vale para chat e embeddings, antes da chamada, e os embeddings entram no custo.
 
 ## O que ficou de fora
 
@@ -105,9 +119,9 @@ npm run whatsapp:rotate -- --remote
 
 | Comando | Resultado |
 | --- | --- |
-| `npx vitest run` no backend, com `DATABASE_URL` em `127.0.0.1` | 104 arquivos, 948 testes, passou |
-| `npx tsc --noEmit` no backend | passou |
-| `npm test` na raiz (front) | 30 arquivos, 192 testes, passou |
+| `npx vitest run` no backend, com `DATABASE_URL` em `127.0.0.1` | 105 arquivos, 961 testes, passou |
+| `npx tsc --noEmit` no backend | passou, de novo nesta revisão |
+| `npm test` na raiz (front) | 30 arquivos, 192 testes, passou. O front não mudou |
 | `npm run build` na raiz | passou |
 
 O CI do GitHub continua sem runner por billing. A evidência é a execução local acima.

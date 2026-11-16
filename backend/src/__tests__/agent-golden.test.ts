@@ -1,7 +1,7 @@
 /**
  * Golden scenarios (Layer 2). Each Turn runs runAgent() against a real Postgres
  * fixture with a scripted OpenAI; contracts assert on turnTrace/state only.
- * Runner: ./golden/runner.ts.
+ * Runner: src/ai/simulator/golden/runner.ts.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -11,9 +11,9 @@ import {
   deleteGoldenFixture,
   runGoldenTurn,
   type GoldenFixture,
-} from "./golden/runner.js";
+} from "../ai/simulator/golden/runner.js";
 
-import { SCENARIOS } from "./golden/scenarios.js";
+import { SCENARIOS } from "../ai/simulator/golden/scenarios.js";
 
 
 for (const scenario of SCENARIOS) {

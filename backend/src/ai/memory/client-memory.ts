@@ -59,6 +59,43 @@ export interface ClientMemoryRow {
   updated_at: Date;
 }
 
+/** Colunas da memória expostas na API. `session_context` fica de fora: é estado do agente. */
+export const CLIENT_MEMORY_PUBLIC_COLUMNS = [
+  "id",
+  "client_id",
+  "barbershop_id",
+  "preferred_services",
+  "preferred_services_conf",
+  "preferred_barber_id",
+  "preferred_barber_conf",
+  "preferred_days",
+  "preferred_days_conf",
+  "preferred_time_start",
+  "preferred_time_end",
+  "preferred_time_conf",
+  "last_completed_services",
+  "last_completed_at",
+  "communication_style",
+  "communication_style_conf",
+  "reactivation_status",
+  "payment_pending",
+  "payment_pending_amount",
+  "last_no_show_at",
+  "no_show_count",
+  "notes_safe",
+  "overall_confidence",
+  "created_at",
+  "updated_at",
+] as const;
+
+export function clientMemorySelect(alias = "m"): string {
+  return CLIENT_MEMORY_PUBLIC_COLUMNS.map((column) => `${alias}.${column}`).join(", ");
+}
+
+export function clientMemoryReturning(): string {
+  return CLIENT_MEMORY_PUBLIC_COLUMNS.join(", ");
+}
+
 export interface MemoryPatch {
   preferred_services?: string[];
   preferred_services_conf?: number;
@@ -118,7 +155,7 @@ export async function getClientMemory(
   try {
     const digits = clientPhone.replace(/\D/g, "");
     const r = await pool.query<ClientMemoryRow & { preferred_barber_name: string | null }>(
-      `SELECT m.*,
+      `SELECT ${clientMemorySelect("m")},
               b.name AS preferred_barber_name
        FROM public.client_ai_memory m
        JOIN public.clients c ON c.id = m.client_id
@@ -131,7 +168,6 @@ export async function getClientMemory(
     );
     if (!r.rows[0]) return null;
     const row = r.rows[0];
-    delete (row as { session_context?: unknown }).session_context;
     // Normalize arrays from DB (may come as postgres arrays or JSON)
     return {
       ...row,

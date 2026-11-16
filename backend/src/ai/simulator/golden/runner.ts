@@ -5,12 +5,12 @@
  * pending intents, DB rows) — never the reply text.
  */
 import type OpenAI from "openai";
-import { pool } from "../../db.js";
-import { ensureCriticalSchema } from "../../db/ensure-schema.js";
-import { runAgent, type AgentResult } from "../../ai/agent.js";
-import { loadBookingDraft, type BookingDraft } from "../../ai/booking-draft.js";
-import { loadPendingIntents, type PendingIntents } from "../../ai/agent/pending-intents.js";
-import type { TurnTraceTool, TurnTraceCatalogRejection } from "../../ai/turn-trace.js";
+import { pool } from "../../../db.js";
+import { ensureCriticalSchema } from "../../../db/ensure-schema.js";
+import { runAgent, type AgentResult } from "../../agent.js";
+import { loadBookingDraft, type BookingDraft } from "../../booking-draft.js";
+import { loadPendingIntents, type PendingIntents } from "../../agent/pending-intents.js";
+import type { TurnTraceTool, TurnTraceCatalogRejection } from "../../turn-trace.js";
 
 const SLUG_PREFIX = "test-golden-";
 const TIMEZONE = "America/Sao_Paulo";

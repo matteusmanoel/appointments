@@ -3189,6 +3189,7 @@ export async function runAgent(
 
   async function stampConfirmCard(kind: ConfirmCardKind, appointmentId?: string): Promise<void> {
     bookingDraft = mergeBookingDraft(bookingDraft, {
+      confirmCardReplay: false,
       confirmCard: {
         kind,
         issuedAt: agentNow().toISOString(),
@@ -3196,6 +3197,95 @@ export async function runAgent(
       },
     });
     await saveBookingDraft(conversationId, bookingDraft);
+  }
+
+  function slotClockStillAhead(): boolean {
+    const date = bookingDraft.date;
+    const time = bookingDraft.time?.slice(0, 5);
+    if (!date || !time) return false;
+    if (date > dateOnlyStr) return true;
+    if (date < dateOnlyStr) return false;
+    return time > currentTimeHHmm.slice(0, 5);
+  }
+
+  async function dropHydratedCard(): Promise<void> {
+    bookingDraft = mergeBookingDraft(bookingDraft, { confirmCard: null, confirmCardReplay: false });
+    await saveBookingDraft(conversationId, bookingDraft);
+  }
+
+  /** Card herdado de outra conversa: só volta se o horário ainda é futuro e está livre. */
+  async function presentHydratedCard(): Promise<string | null> {
+    const card = bookingDraft.confirmCard;
+    if (!card || !bookingDraft.confirmCardReplay || !liveConfirmCard(card.kind)) return null;
+    if (card.kind === "cancel") {
+      const target = upcomingAppointments.find((a) => a.id === card.appointmentId);
+      if (!target) {
+        await dropHydratedCard();
+        return null;
+      }
+      return composeCancelConfirmAsk({
+        serviceName: target.service_names,
+        when: formatResumoWhen(String(target.date).slice(0, 10), String(target.time).slice(0, 5), dateOnlyStr),
+        barberName: target.barber_name,
+      });
+    }
+    if (card.kind !== "create" && card.kind !== "reschedule") {
+      await dropHydratedCard();
+      return null;
+    }
+    const date = bookingDraft.date;
+    const time = bookingDraft.time?.slice(0, 5);
+    const barberId = bookingDraft.barber_id;
+    const serviceIds = bookingDraft.service_ids ?? [];
+    if (!slotClockStillAhead() || !date || !time || !barberId || serviceIds.length === 0) {
+      await dropHydratedCard();
+      return null;
+    }
+    try {
+      const checked = await aiTools.checkAvailability(effectiveBarbershopId, {
+        date,
+        time,
+        barber_id: barberId,
+        service_ids: serviceIds,
+        ...(card.kind === "reschedule" && bookingDraft.appointment_id
+          ? { exclude_appointment_id: bookingDraft.appointment_id }
+          : {}),
+      });
+      const snap = snapshotCheckAvailability(checked, barberId);
+      if (!snap?.available) {
+        await dropHydratedCard();
+        return null;
+      }
+    } catch {
+      await dropHydratedCard();
+      return null;
+    }
+    const firstName = bookingName ? firstNameFromClientName(bookingName) : undefined;
+    if (card.kind === "reschedule") {
+      const current =
+        upcomingAppointments.find((a) => a.id === (card.appointmentId || bookingDraft.appointment_id)) ??
+        upcomingAppointments[0];
+      if (!current) {
+        await dropHydratedCard();
+        return null;
+      }
+      return composeRescheduleAsk({
+        firstName,
+        serviceName: current.service_names || bookingDraft.service_name || "seu horário",
+        when: formatResumoWhen(String(current.date).slice(0, 10), String(current.time).slice(0, 5), dateOnlyStr),
+        barberName: current.barber_name,
+        nextWhen: formatResumoWhen(date, time, dateOnlyStr),
+      });
+    }
+    return composeAvailableSlotConfirm({
+      serviceName: bookingDraft.service_name || "Horário",
+      barberName: bookingDraft.barber_name || "o barbeiro",
+      dateIso: date,
+      timeHHmm: time,
+      totalPrice: bookingDraft.total_price ?? 0,
+      todayIso: dateOnlyStr,
+      firstName,
+    });
   }
 
   function resolveActiveMoving(id?: string | null): (typeof upcomingAppointments)[number] | undefined {
@@ -4271,6 +4361,13 @@ export async function runAgent(
     !assistantAskedName &&
     conversationState !== "reminder_rsvp_pending"
   ) {
+    if (bookingDraft.confirmCardReplay && liveConfirmCard()) {
+      const replayed = await presentHydratedCard();
+      if (replayed) return finishTurn(replayed, true);
+      const offered = await tryOfferNextHours();
+      if (offered) return finishTurn(withRobotPrefix(offered), true);
+      return finishTurn("Esse horário não está mais disponível. Me diz outro que te atenda.", true);
+    }
     return finishTurn("Me diz se você quer agendar, remarcar ou cancelar.", true);
   }
 
@@ -4339,7 +4436,8 @@ export async function runAgent(
     isAffirmativeOnly &&
     lastBookingConfirmCard &&
     liveConfirmCard("create", "reschedule") &&
-    !confirmCardExpired;
+    !confirmCardExpired &&
+    !bookingDraft.confirmCardReplay;
   const acceptingOpenDraft =
     draftIsCloseable(bookingDraft) && Boolean(bookingName) && (simClosesOffer || nameClosesOffer);
   const movingToWrite = resolveActiveMoving(bookingDraft.appointment_id);
@@ -5064,7 +5162,11 @@ export async function runAgent(
               };
             }
             const bookingConfirmedThisTurn =
-              (isAffirmativeOnly && lastBookingConfirmCard && liveConfirmCard("create") && !confirmCardExpired) ||
+              (isAffirmativeOnly &&
+                lastBookingConfirmCard &&
+                liveConfirmCard("create") &&
+                !confirmCardExpired &&
+                !bookingDraft.confirmCardReplay) ||
               (Boolean(nameFromUserForBooking) && assistantAskedName && !confirmCardExpired);
             const createName = [args.client_name, bookingName, clientName]
               .map((n) => (typeof n === "string" ? n.trim() : ""))
@@ -5655,6 +5757,7 @@ export async function runAgent(
         alreadyConfirmed &&
         lastBookingConfirmCard &&
         liveConfirmCard("reschedule", "create") &&
+        !bookingDraft.confirmCardReplay &&
         lastCheckThisTurn.time.slice(0, 5) === acceptedClock &&
         Boolean(resolveActiveMoving(movingAppointmentId)) &&
         draftIsCloseable(bookingDraft);

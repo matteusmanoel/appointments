@@ -39,6 +39,11 @@ export type BookingDraft = {
   offeredTimes?: string[];
   /** Card de confirmação/cancelamento/lembrete ainda no ar, com TTL. */
   confirmCard?: ConfirmCard | null;
+  /**
+   * Card copiado de outra conversa. O «sim» não executa: o agente reapresenta
+   * o card se o horário ainda for futuro e estiver livre.
+   */
+  confirmCardReplay?: boolean;
 };
 
 /** Falha da tool de horários: fala segura, sem expor automação nem se passar por humano. */
@@ -133,6 +138,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
           const card = parseConfirmCard(r.confirmCard);
           return card ? { confirmCard: card } : {};
         })()),
+    ...(r.confirmCardReplay === true ? { confirmCardReplay: true } : {}),
   };
 }
 
@@ -170,6 +176,7 @@ export function mergeBookingDraft(
     "usualSuggested",
     "offeredTimes",
     "confirmCard",
+    "confirmCardReplay",
   ];
   let materialChanged = false;
   for (const key of keys) {
@@ -210,6 +217,11 @@ export function mergeBookingDraft(
         const card = parseConfirmCard(value);
         if (card) next.confirmCard = card;
       }
+      continue;
+    }
+    if (key === "confirmCardReplay") {
+      if (value === true) next.confirmCardReplay = true;
+      else if (value === false) delete next.confirmCardReplay;
       continue;
     }
     if (value === undefined || value === null || value === "") continue;

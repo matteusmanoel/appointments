@@ -56,8 +56,15 @@ async function main() {
   }
   const tenant = arg(args, ["--tenant", "-t"]);
   const skipExamples = has(args, ["--skip-examples"]);
-  if (!tenant && !skipExamples && !has(args, ["--skip-goldens"])) {
-    // examples need tenant; allow goldens-only without it if --skip-examples
+  let maxRuns: number;
+  let maxTokens: number;
+  try {
+    maxRuns = parseCompareLimit(arg(args, ["--max-runs"]) ?? DEFAULT_MAX_RUNS, "--max-runs", COMPARE_MAX_RUNS_CAP);
+    maxTokens = parseCompareLimit(arg(args, ["--max-tokens"]) ?? DEFAULT_MAX_TOKENS, "--max-tokens", COMPARE_MAX_TOKEN_CAP);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`${msg}\n`);
+    process.exit(1);
   }
   if (!tenant && !skipExamples) {
     process.stderr.write("Faltou --tenant (necessário para os roteiros de examples).\n\n" + usage() + "\n");
@@ -68,8 +75,8 @@ async function main() {
       tenant: tenant || undefined,
       outPath: arg(args, ["--out", "-o"]),
       model: arg(args, ["--model"]) ?? DEFAULT_COMPARE_MODEL,
-      maxRuns: parseCompareLimit(arg(args, ["--max-runs"]) ?? DEFAULT_MAX_RUNS, "--max-runs", COMPARE_MAX_RUNS_CAP),
-      maxTokens: parseCompareLimit(arg(args, ["--max-tokens"]) ?? DEFAULT_MAX_TOKENS, "--max-tokens", COMPARE_MAX_TOKEN_CAP),
+      maxRuns,
+      maxTokens,
       only: arg(args, ["--only"]),
       examples: skipExamples ? false : undefined,
       goldens: has(args, ["--skip-goldens"]) ? false : undefined,

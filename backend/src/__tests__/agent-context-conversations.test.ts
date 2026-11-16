@@ -572,6 +572,57 @@ describe("contexto do cliente entre turnos e conversas", () => {
     expect(await listAppts(chat)).toHaveLength(0);
   }, 60_000);
 
+  it("7b. card dentro do TTL, em conversa nova, reapresenta e não aceita o sim direto", async () => {
+    const fx = await shop("c7b");
+    const chat = await openChat(fx, "5511900001072", DAY);
+    const card = await say(chat, "quero corte amanhã às 15h com o Lucas");
+    expect(flatten(card)).toMatch(/Posso confirmar\?/i);
+    expect(await listAppts(chat)).toHaveLength(0);
+
+    await fresh(chat, "2026-11-16T10:10:00-03:00");
+    const again = await say(chat, "sim");
+    expect(flatten(again)).toMatch(/Posso confirmar\?/i);
+    expect(flatten(again)).toMatch(/15h/);
+    expect(chat.tools.at(-1) ?? []).not.toContain("create_appointment");
+    expect(await listAppts(chat)).toHaveLength(0);
+
+    let reply = again;
+    for (let i = 0; i < 6 && (await listAppts(chat)).length === 0; i++) {
+      const next = react(reply);
+      if (!next) throw new Error(`não reapresentou o card: ${flatten(reply)}`);
+      reply = await say(chat, next);
+    }
+    const booked = await listAppts(chat);
+    expect(booked).toHaveLength(1);
+    expect(booked[0]?.time).toBe("15:00");
+    expect(booked[0]?.date).toBe("2026-11-17");
+  }, 60_000);
+
+  it("7c. card de slot ocupado não volta vivo na conversa nova", async () => {
+    const fx = await shop("c7c");
+    const chat = await openChat(fx, "5511900001073", DAY);
+    const card = await say(chat, "quero corte amanhã às 15h com o Lucas");
+    expect(flatten(card)).toMatch(/Posso confirmar\?/i);
+
+    const other = await pool.query<{ id: string }>(
+      `INSERT INTO public.clients (barbershop_id, name, phone) VALUES ($1, 'Outro', '5511900001999') RETURNING id`,
+      [fx.barbershopId],
+    );
+    await pool.query(
+      `INSERT INTO public.appointments
+         (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
+       VALUES ($1, $2, $3, $4, '2026-11-17'::date, '15:00'::time, 30, 40, 10, 'pending')`,
+      [fx.barbershopId, other.rows[0]!.id, fx.lucasId, fx.corteId],
+    );
+
+    await fresh(chat, "2026-11-16T10:10:00-03:00");
+    const again = await say(chat, "sim");
+    const flat = flatten(again);
+    expect(chat.tools.at(-1) ?? []).not.toContain("create_appointment");
+    expect(await listAppts(chat)).toHaveLength(0);
+    if (/posso confirmar\?/i.test(flat)) expect(flat).not.toMatch(/15h/);
+  }, 60_000);
+
   it("8. dois clientes no mesmo tenant e o mesmo telefone em outro tenant não vazam", async () => {
     const shopA = await shop("c8a");
     const shopB = await shop("c8b");

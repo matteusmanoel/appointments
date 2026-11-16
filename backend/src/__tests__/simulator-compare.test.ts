@@ -3,13 +3,23 @@
  * Requer Postgres 127.0.0.1:55432.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type OpenAI from "openai";
 import { pool } from "../db.js";
 import { assertLocalDatabaseUrl } from "../db/local-database-url.js";
-import { COMPARE_MAX_RUNS_CAP, COMPARE_MAX_TOKEN_CAP, parseCompareLimit, runCompare } from "../ai/simulator/compare.js";
+import {
+  COMPARE_MAX_RUNS_CAP,
+  COMPARE_MAX_TOKEN_CAP,
+  attachUsageMeter,
+  createCompareMeter,
+  parseCompareLimit,
+  runCompare,
+} from "../ai/simulator/compare.js";
 import { assertMiniModel, estimateCostUsd, formatUsd } from "../ai/simulator/compare-pricing.js";
 import { resetWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { setSimulatorTraceEnabled } from "../ai/simulator/trace.js";
@@ -33,11 +43,18 @@ async function dbAvailable(): Promise<boolean> {
   }
 }
 
-function fakeOpenAI(opts?: { prompt?: number; completion?: number; content?: string }): OpenAI {
+function fakeOpenAI(opts?: {
+  prompt?: number;
+  completion?: number;
+  content?: string;
+  embeddingTokens?: number;
+}): OpenAI & { calls: () => number; embCalls: () => number } {
   const prompt = opts?.prompt ?? 20;
   const completion = opts?.completion ?? 8;
   const content = opts?.content ?? "Posso te ajudar com o horário.";
+  const embeddingTokens = opts?.embeddingTokens ?? 0;
   let calls = 0;
+  let embCalls = 0;
   const client = {
     chat: {
       completions: {
@@ -51,9 +68,44 @@ function fakeOpenAI(opts?: { prompt?: number; completion?: number; content?: str
         },
       },
     },
+    ...(embeddingTokens > 0
+      ? {
+          embeddings: {
+            create: async () => {
+              embCalls += 1;
+              return {
+                data: [{ embedding: Array.from({ length: 1536 }, () => 0) }],
+                usage: { prompt_tokens: embeddingTokens, total_tokens: embeddingTokens },
+              };
+            },
+          },
+        }
+      : {}),
     calls: () => calls,
+    embCalls: () => embCalls,
   };
-  return client as unknown as OpenAI;
+  return client as unknown as OpenAI & { calls: () => number; embCalls: () => number };
+}
+
+function runCompareCli(args: string[]): Promise<{ code: number; stderr: string; stdout: string }> {
+  const backendRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
+  const tsx = createRequire(import.meta.url).resolve("tsx");
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", tsx, "src/scripts/agent-simulator-compare.ts", ...args], {
+      cwd: backendRoot,
+      env: { ...process.env, DATABASE_SSL: "false" },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
 }
 
 async function seedShop() {
@@ -193,7 +245,7 @@ describe("simulate:compare", () => {
   });
 
   it("aborta se o teto de tokens for ultrapassado", async () => {
-    const fake = fakeOpenAI({ prompt: 80, completion: 40 });
+    const fake = fakeOpenAI({ prompt: 80, completion: 40, embeddingTokens: 30 });
     const report = await runCompare({
       tenant: slug,
       examples: ["cliente-indeciso.yaml"],
@@ -204,10 +256,77 @@ describe("simulate:compare", () => {
       maxRuns: 1,
       print: () => {},
     });
-    // o modo none não gasta tokens; o openai pode gastar. Se o none já passou e o openai estourou, aborted fica setado.
-    // Com teto 5, qualquer uso do modelo (ou o próprio none se reportar 0) — aceitamos aborted ou tokens estourados no acumulado.
-    const used = report.promptTokens + report.completionTokens;
-    if (used > 5) expect(report.aborted).toMatch(/Teto de tokens/);
-    else expect(report.aborted ?? used <= 5).toBeTruthy();
+    expect(report.aborted).toMatch(/Teto de tokens/);
+    expect(report.promptTokens + report.completionTokens).toBeGreaterThan(5);
+    expect(fake.embCalls()).toBe(1);
   });
+
+  it("soma embeddings no teto e no custo", async () => {
+    const fake = fakeOpenAI({ prompt: 20, completion: 8, embeddingTokens: 123 });
+    const report = await runCompare({
+      tenant: slug,
+      examples: ["cliente-indeciso.yaml"],
+      goldens: false,
+      openai: fake,
+      requireApiKey: false,
+      maxRuns: 1,
+      print: () => {},
+    });
+    expect(fake.embCalls()).toBeGreaterThan(0);
+    expect(report.promptTokens).toBe(fake.calls() * 20 + fake.embCalls() * 123);
+    expect(report.completionTokens).toBe(fake.calls() * 8);
+    expect(report.costUsd).toBeCloseTo(
+      estimateCostUsd({
+        model: "gpt-4o-mini",
+        promptTokens: report.promptTokens,
+        completionTokens: report.completionTokens,
+      }),
+      8,
+    );
+    const chatOnly = estimateCostUsd({
+      model: "gpt-4o-mini",
+      promptTokens: fake.calls() * 20,
+      completionTokens: fake.calls() * 8,
+    });
+    expect(report.costUsd).toBeGreaterThan(chatOnly);
+  });
+
+  it("não dispara a chamada seguinte se ela puder estourar o teto", async () => {
+    let calls = 0;
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            calls += 1;
+            return {
+              choices: [{ message: { content: "ok" } }],
+              usage: { prompt_tokens: 30, completion_tokens: 10 },
+            };
+          },
+        },
+      },
+    } as unknown as OpenAI;
+    const meter = createCompareMeter(50);
+    attachUsageMeter(client, meter);
+    await client.chat.completions.create({ model: "gpt-4o-mini", messages: [] });
+    expect(calls).toBe(1);
+    expect(meter.promptTokens + meter.completionTokens).toBe(40);
+    await expect(client.chat.completions.create({ model: "gpt-4o-mini", messages: [] })).rejects.toThrow(/Teto de tokens/);
+    expect(calls).toBe(1);
+  });
+
+  it("argumento inválido no CLI sai com código diferente de zero", async () => {
+    const tokens = await runCompareCli(["--max-tokens", "abc", "--skip-examples", "--skip-goldens"]);
+    expect(tokens.code).not.toBe(0);
+    expect(tokens.stderr).toMatch(/--max-tokens/);
+    const zero = await runCompareCli(["--max-tokens", "0", "--skip-examples", "--skip-goldens"]);
+    expect(zero.code).not.toBe(0);
+    expect(zero.stderr).toMatch(/--max-tokens/);
+    const runs = await runCompareCli(["--max-runs", "-1", "--skip-examples", "--skip-goldens"]);
+    expect(runs.code).not.toBe(0);
+    expect(runs.stderr).toMatch(/--max-runs/);
+    const text = await runCompareCli(["--max-runs", "abc", "--tenant", slug, "--skip-goldens"]);
+    expect(text.code).not.toBe(0);
+    expect(text.stderr).toMatch(/--max-runs/);
+  }, 60_000);
 });

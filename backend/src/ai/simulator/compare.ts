@@ -18,8 +18,8 @@ import {
   deleteGoldenFixture,
   type GoldenFixture,
   type TurnOutcome,
-} from "../../__tests__/golden/runner.js";
-import { SCENARIOS } from "../../__tests__/golden/scenarios.js";
+} from "./golden/runner.js";
+import { SCENARIOS } from "./golden/scenarios.js";
 import { ensureSimulatorConversation, runSimulator, type SimulatorRunResult } from "./session.js";
 import { simulatorClientPhone } from "./namespace.js";
 import { loadLiveOpenAI } from "./openai-stub.js";
@@ -108,6 +108,85 @@ export class TokenBudgetExceeded extends Error {
     super(message);
     this.name = "TokenBudgetExceeded";
   }
+}
+
+export type CompareMeter = {
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly over: boolean;
+  beforeCall: () => void;
+  add: (prompt: number, completion: number) => void;
+};
+
+/**
+ * O tamanho da próxima chamada não é conhecido. Se a última já ocupou o que
+ * falta do teto, a próxima não sai. Embeddings e chat entram no mesmo medidor.
+ */
+export function createCompareMeter(maxTokens: number): CompareMeter {
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let lastCallTokens = 0;
+  let over = false;
+  const used = () => promptTokens + completionTokens;
+  const message = () =>
+    `Teto de tokens excedido (${used().toLocaleString("pt-BR")} > ${maxTokens.toLocaleString("pt-BR")}).`;
+  return {
+    get promptTokens() {
+      return promptTokens;
+    },
+    get completionTokens() {
+      return completionTokens;
+    },
+    get over() {
+      return over;
+    },
+    beforeCall() {
+      if (used() >= maxTokens || (lastCallTokens > 0 && used() + lastCallTokens > maxTokens)) {
+        over = true;
+        throw new TokenBudgetExceeded(message());
+      }
+    },
+    add(prompt: number, completion: number) {
+      const p = Number.isFinite(prompt) ? Math.max(0, prompt) : 0;
+      const c = Number.isFinite(completion) ? Math.max(0, completion) : 0;
+      promptTokens += p;
+      completionTokens += c;
+      if (p + c > 0) lastCallTokens = p + c;
+      if (used() > maxTokens) over = true;
+    },
+  };
+}
+
+type UsageCarrier = { usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
+
+/** Conta chat e embeddings antes de cada chamada. O cliente injetado também entra. */
+export function attachUsageMeter(client: OpenAI, meter: CompareMeter): OpenAI {
+  const completions = client.chat?.completions;
+  if (completions?.create) {
+    const create = completions.create.bind(completions);
+    completions.create = (async (body: never, options?: never) => {
+      meter.beforeCall();
+      const res = await create(body, options);
+      const usage = (res as UsageCarrier).usage;
+      meter.add(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0);
+      return res;
+    }) as typeof completions.create;
+  }
+  const embeddings = (
+    client as unknown as {
+      embeddings?: { create?: (...args: unknown[]) => Promise<UsageCarrier> };
+    }
+  ).embeddings;
+  if (embeddings?.create) {
+    const create = embeddings.create.bind(embeddings);
+    embeddings.create = async (...args: unknown[]) => {
+      meter.beforeCall();
+      const res = await create(...args);
+      meter.add(res?.usage?.prompt_tokens ?? res?.usage?.total_tokens ?? 0, res?.usage?.completion_tokens ?? 0);
+      return res;
+    };
+  }
+  return client;
 }
 
 function looksLikeFallback(text: string): boolean {
@@ -358,40 +437,15 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
   }
 
   const rows: CompareRow[] = [];
-  let promptTokens = 0;
-  let completionTokens = 0;
   let aborted: string | undefined;
-
-  const budgetMessage = () =>
-    `Teto de tokens excedido (${(promptTokens + completionTokens).toLocaleString("pt-BR")} > ${maxTokens.toLocaleString("pt-BR")}).`;
-  const addUsage = (p: number, c: number) => {
-    promptTokens += p;
-    completionTokens += c;
-    if (promptTokens + completionTokens > maxTokens) {
-      throw new TokenBudgetExceeded(budgetMessage());
+  const meter = createCompareMeter(maxTokens);
+  let metered = false;
+  const meteredClient = async (): Promise<OpenAI> => {
+    if (!metered) {
+      openai = attachUsageMeter(openai ?? (await loadLiveOpenAI()), meter);
+      metered = true;
     }
-  };
-  const assertBudget = () => {
-    if (promptTokens + completionTokens >= maxTokens) {
-      throw new TokenBudgetExceeded(budgetMessage());
-    }
-  };
-  const countEmbeddings = (client: OpenAI): OpenAI => {
-    const embeddings = (client as unknown as { embeddings?: { create?: (...args: unknown[]) => Promise<{ usage?: { total_tokens?: number; prompt_tokens?: number } }> } }).embeddings;
-    if (!embeddings?.create) return client;
-    const create = embeddings.create.bind(embeddings);
-    return {
-      ...client,
-      embeddings: {
-        ...embeddings,
-        create: async (...args: unknown[]) => {
-          assertBudget();
-          const res = await create(...args);
-          addUsage(res?.usage?.total_tokens ?? res?.usage?.prompt_tokens ?? 0, 0);
-          return res;
-        },
-      },
-    } as OpenAI;
+    return openai!;
   };
 
   const prevInterp = process.env.AI_AGENT_SLOT_INTERPRET;
@@ -406,7 +460,12 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
   }) => {
     const { result, contractFailures } = await args.exec(args.mode);
     const tokens = sumTokens(result);
-    addUsage(tokens.prompt, tokens.completion);
+    if (args.mode === "none") meter.add(tokens.prompt, tokens.completion);
+    if (meter.over) {
+      throw new TokenBudgetExceeded(
+        `Teto de tokens excedido (${(meter.promptTokens + meter.completionTokens).toLocaleString("pt-BR")} > ${maxTokens.toLocaleString("pt-BR")}).`,
+      );
+    }
     const costUsd = estimateCostUsd({ model, promptTokens: tokens.prompt, completionTokens: tokens.completion });
     const row: CompareRow = {
       id: args.id,
@@ -440,7 +499,7 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
             now: prepared.now,
             replayPath: join(examplesDir, file),
             llm: mode,
-            openai: mode === "openai" ? openai : undefined,
+            openai: mode === "openai" ? await meteredClient() : undefined,
             slotInterpret: mode === "openai",
             languageRewrite: mode === "openai",
             model: mode === "openai" ? model : undefined,
@@ -450,8 +509,8 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
           return { result, contractFailures: [] as string[] };
         };
         const noneRow = await runOnce({ id: file, kind: "example", run, mode: "none", exec });
-        if (!openai) openai = countEmbeddings(options.openai ?? (await loadLiveOpenAI()));
-        assertBudget();
+        await meteredClient();
+        meter.beforeCall();
         process.env.AI_AGENT_SLOT_INTERPRET = "true";
         process.env.AI_AGENT_LANGUAGE_REWRITE = "true";
         try {
@@ -479,13 +538,13 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
             const contractFailures: string[] = [];
             let result: SimulatorRunResult | undefined;
             for (const [index, turn] of scenario.turns.entries()) {
-              if (mode === "openai") assertBudget();
+              if (mode === "openai") meter.beforeCall();
               const step = await runSimulator({
                 tenant: fx.barbershopId,
                 phone: raw.clientPhone,
                 turns: [{ role: "user", text: turn.user }],
                 llm: mode,
-                openai: mode === "openai" ? openai : undefined,
+                openai: mode === "openai" ? await meteredClient() : undefined,
                 slotInterpret: mode === "openai",
                 languageRewrite: mode === "openai",
                 model: mode === "openai" ? model : undefined,
@@ -507,8 +566,8 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
           }
         };
         const noneRow = await runOnce({ id: scenario.id, kind: "golden", run, mode: "none", exec });
-        if (!openai) openai = countEmbeddings(options.openai ?? (await loadLiveOpenAI()));
-        assertBudget();
+        await meteredClient();
+        meter.beforeCall();
         process.env.AI_AGENT_SLOT_INTERPRET = "true";
         process.env.AI_AGENT_LANGUAGE_REWRITE = "true";
         try {
@@ -541,9 +600,13 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
     model,
     maxRuns,
     maxTokens,
-    promptTokens,
-    completionTokens,
-    costUsd: estimateCostUsd({ model, promptTokens, completionTokens }),
+    promptTokens: meter.promptTokens,
+    completionTokens: meter.completionTokens,
+    costUsd: estimateCostUsd({
+      model,
+      promptTokens: meter.promptTokens,
+      completionTokens: meter.completionTokens,
+    }),
     aborted,
     rows,
     generatedAt: new Intl.DateTimeFormat("sv-SE", {

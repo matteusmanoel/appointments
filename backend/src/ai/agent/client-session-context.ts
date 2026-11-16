@@ -5,6 +5,7 @@
  */
 import { pool } from "../../db.js";
 import { brPhoneMatchKeys, canonicalizeBrPhoneDigits, normalizeDigits } from "../../lib/phone-match.js";
+import { isLiveConfirmCard } from "./confirmation-card.js";
 import { emptyBookingDraft, parseBookingDraft, saveBookingDraft, type BookingDraft } from "../booking-draft.js";
 import {
   emptyPendingIntents,
@@ -20,8 +21,13 @@ export type ClientSessionContext = {
   updatedAt: string;
 };
 
-/** Depois disso, a conversa nova não herda data, hora, card nem intenções. */
-export const SESSION_CONTEXT_FRESH_MS = 6 * 60 * 60 * 1000;
+/** Rascunho e intenções pendentes expiram 24 h depois do updatedAt. O card tem o TTL dele. */
+export const SESSION_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Horário do card no fuso da barbearia (Brasil sem horário de verão). */
+function slotStartsAtMs(date: string, time: string): number {
+  return Date.parse(`${date}T${time.slice(0, 5)}:00-03:00`);
+}
 
 /** Mesmas chaves do resto do agente (`brPhoneMatchKeys`), sem o recorte dos últimos 10 dígitos. */
 export function sessionPhoneKeys(phone: string): string[] {
@@ -40,28 +46,42 @@ export function sessionBodiesMatch(a: ClientSessionContext, b: ClientSessionCont
 }
 
 /**
- * Contexto fresco devolve o rascunho inteiro. Contexto velho ou rascunho já
- * fechado não leva data, hora, card nem serviço: o de sempre continua na
- * memória de preferências, e um serviço no rascunho pularia a pergunta.
+ * Dentro de 24 h, a conversa nova herda o rascunho aberto e as intenções.
+ * Card ainda no TTL de 30 min vira contexto: `confirmCardReplay` impede o «sim»
+ * de executar e o agente reapresenta. Slot que já passou não volta como card.
+ * Rascunho fechado ou mais velho que 24 h não leva serviço: o de sempre fica
+ * na memória de preferências.
  */
 export function narrowSessionForHydration(
   session: ClientSessionContext,
   nowMs: number,
 ): { bookingDraft: BookingDraft; pendingIntents: PendingIntents; fresh: boolean } {
   const age = nowMs - Date.parse(session.updatedAt);
-  const stale = !Number.isFinite(age) || age > SESSION_CONTEXT_FRESH_MS;
+  const stale = !Number.isFinite(age) || age > SESSION_DRAFT_TTL_MS;
   const closed = session.bookingDraft.status === "closed";
-  if (!stale && !closed) {
-    return {
-      bookingDraft: session.bookingDraft,
-      pendingIntents: session.pendingIntents,
-      fresh: true,
-    };
+  if (stale || closed) {
+    return { bookingDraft: emptyBookingDraft(), pendingIntents: emptyPendingIntents(), fresh: false };
   }
-  return { bookingDraft: emptyBookingDraft(), pendingIntents: emptyPendingIntents(), fresh: false };
+  let bookingDraft: BookingDraft = { ...session.bookingDraft };
+  const card = bookingDraft.confirmCard;
+  if (card && card.kind !== "reminder") {
+    const slotMs =
+      bookingDraft.date && bookingDraft.time ? slotStartsAtMs(bookingDraft.date, bookingDraft.time) : NaN;
+    const passed = Number.isFinite(slotMs) && slotMs <= nowMs;
+    if (passed) {
+      const rest = { ...bookingDraft };
+      delete rest.confirmCard;
+      delete rest.confirmCardReplay;
+      bookingDraft = rest;
+    } else if (isLiveConfirmCard(card, new Date(nowMs))) {
+      bookingDraft = { ...bookingDraft, confirmCardReplay: true };
+    }
+  }
+  return { bookingDraft, pendingIntents: session.pendingIntents, fresh: true };
 }
 
-async function clientIdFor(barbershopId: string, clientPhone: string): Promise<string | null> {
+/** Casa o telefone com o cliente do tenant. A chave de 10 dígitos não atravessa DDD. */
+export async function findClientIdByPhone(barbershopId: string, clientPhone: string): Promise<string | null> {
   const keys = sessionPhoneKeys(clientPhone);
   if (!keys.length) return null;
   const canonical = canonicalizeBrPhoneDigits(normalizeDigits(clientPhone)) ?? keys[0];
@@ -97,7 +117,7 @@ export async function loadClientSessionContext(
   clientPhone: string,
 ): Promise<ClientSessionContext | null> {
   try {
-    const clientId = await clientIdFor(barbershopId, clientPhone);
+    const clientId = await findClientIdByPhone(barbershopId, clientPhone);
     if (!clientId) return null;
     const r = await pool.query<{ session_context: unknown }>(
       `SELECT session_context FROM public.client_ai_memory
@@ -123,7 +143,7 @@ export async function saveClientSessionContext(params: {
   updatedAt: string;
 }): Promise<void> {
   try {
-    const clientId = await clientIdFor(params.barbershopId, params.clientPhone);
+    const clientId = await findClientIdByPhone(params.barbershopId, params.clientPhone);
     if (!clientId) return;
     const payload: ClientSessionContext = {
       bookingDraft: params.bookingDraft,
@@ -158,7 +178,8 @@ export type HydratedSession = {
 
 /**
  * Conversa sem rascunho próprio herda o contexto do cliente.
- * Card vencido entra se o contexto ainda está fresco; o TTL do card continua valendo.
+ * O card vencido entra se o rascunho ainda está nas 24 h; o TTL de 30 min continua valendo.
+ * Card vivo entra com `confirmCardReplay`: o «sim» desta conversa não executa.
  */
 export async function hydrateConversationContext(params: {
   barbershopId: string;
