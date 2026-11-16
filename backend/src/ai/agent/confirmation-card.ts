@@ -59,9 +59,13 @@ export function composeCancelConfirmAsk(params: {
   return `Posso cancelar seu horário de ${service} ${params.when}${who}? Se preferir, posso remarcar.`;
 }
 
-export function composeWhichAppointmentCancel(
+export const RESCHEDULE_NONE_SAFE =
+  "Não encontrei um horário ativo pra remarcar. Se quiser, posso agendar um novo.";
+
+export function composeWhichAppointmentAsk(
   appointments: Array<{ serviceName?: string; date: string; time: string }>,
   todayIso: string,
+  verb: "cancelar" | "remarcar" = "cancelar",
 ): string {
   const items = appointments
     .map((a) => {
@@ -71,11 +75,25 @@ export function composeWhichAppointmentCancel(
     })
     .filter(Boolean);
   if (items.length < 2) {
-    return "Você tem mais de um horário marcado. Qual você quer cancelar?";
+    return `Você tem mais de um horário marcado. Qual você quer ${verb}?`;
   }
   const last = items[items.length - 1];
   const head = items.slice(0, -1).join(", ");
-  return `Você tem mais de um horário marcado. Qual você quer cancelar: ${head} ou ${last}?`;
+  return `Você tem mais de um horário marcado. Qual você quer ${verb}: ${head} ou ${last}?`;
+}
+
+export function composeWhichAppointmentCancel(
+  appointments: Array<{ serviceName?: string; date: string; time: string }>,
+  todayIso: string,
+): string {
+  return composeWhichAppointmentAsk(appointments, todayIso, "cancelar");
+}
+
+export function composeWhichAppointmentReschedule(
+  appointments: Array<{ serviceName?: string; date: string; time: string }>,
+  todayIso: string,
+): string {
+  return composeWhichAppointmentAsk(appointments, todayIso, "remarcar");
 }
 
 export function parseConfirmCard(raw: unknown): ConfirmCard | undefined {

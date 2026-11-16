@@ -60,6 +60,9 @@ export type OrchestratorInput = {
   usualServiceAlreadySuggested?: boolean;
   /** The client said yes to the suggested usual service this turn: it is now on the draft, the booking goes on. */
   usualServiceAccepted?: boolean;
+  /** Última intenção gravada, só se o rascunho hidratado ainda está aberto e recente. */
+  sessionLastIntent?: string | null;
+  sessionContextFresh?: boolean;
 };
 
 export const ASK_BOOKING_NAME = "Para confirmar, qual seu nome?";
@@ -275,6 +278,18 @@ export function orchestrate(input: OrchestratorInput): OrchestratorRouting {
   ) {
     effectivePrimary = "schedule";
     intents = ["schedule"];
+  }
+
+  const continuable = new Set<IntentType>(["schedule", "reschedule", "cancel", "presence"]);
+  if (
+    effectivePrimary === "unknown" &&
+    !input.isAffirmative &&
+    input.sessionContextFresh === true &&
+    input.sessionLastIntent &&
+    continuable.has(input.sessionLastIntent as IntentType)
+  ) {
+    effectivePrimary = input.sessionLastIntent as IntentType;
+    intents = [effectivePrimary];
   }
 
   // ── Rule 6b: priority between intents of the same turn ────────────────────
@@ -537,6 +552,17 @@ export function buildTurnPlan(
   const asideFromAgenda = routing.handleNow.some(
     (intent) => intent === "payment" || intent === "location" || intent === "plan",
   );
+  if (
+    routing.primaryIntent === "schedule" &&
+    !input.intentSet.service &&
+    !(input.carriedServiceIds?.length) &&
+    !input.intentSet.dateTime?.time &&
+    !input.carriedClock &&
+    Boolean(input.usualService?.service_ids.length) &&
+    !input.usualServiceAlreadySuggested
+  ) {
+    turnDirective = ASK_SERVICE;
+  }
   if (
     (routing.primaryIntent === "schedule" || routing.primaryIntent === "reschedule") &&
     !input.intentSet.dateTime?.time &&
