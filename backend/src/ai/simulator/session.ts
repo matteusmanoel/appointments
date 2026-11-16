@@ -14,6 +14,7 @@ import { maskPhone } from "../turn-trace.js";
 import { useNoopWhatsAppOutbound } from "../../integrations/whatsapp/noop-outbound.js";
 import { parseSimulatedNow } from "./clock.js";
 import { parseReplayFile, type ReplayScript, type ReplayTurn } from "./replay-file.js";
+import { NO_DUE_REMINDER_NOTICE, runSimulatorReminders } from "./reminders.js";
 import { stubOpenAI, loadLiveOpenAI } from "./openai-stub.js";
 import type { SlotInterpreter } from "../agent/slot-interpreter.js";
 import type { LanguageRewriter } from "../agent/language-rewrite.js";
@@ -39,17 +40,22 @@ export type SimulatorOptions = {
   trace?: boolean;
   persistAssistantMessages?: boolean;
   print?: (line: string) => void;
+  /** Roda o job de lembrete 24h no relógio simulado, via provider noop. */
+  runReminders?: boolean;
   /** Testes: intérprete fake determinístico (--llm none). */
   slotInterpreter?: SlotInterpreter;
   slotInterpret?: boolean;
   languageRewrite?: boolean;
   languageRewriter?: LanguageRewriter;
+  /** Sobrescreve o modelo (simulate:compare). */
+  model?: string;
 };
 
 export type SimulatorTurnResult = {
   trace: SimulatorTurnTrace;
   printed: string;
   reply: string;
+  agentResult?: import("../agent.js").AgentResult;
 };
 
 export type SimulatorRunResult = {
@@ -131,7 +137,8 @@ export async function runSimulatorTurn(params: {
   slotInterpret?: boolean;
   languageRewrite?: boolean;
   languageRewriter?: LanguageRewriter;
-}): Promise<SimulatorTurnTrace> {
+  model?: string;
+}): Promise<SimulatorTurnTrace & { agentResult: import("../agent.js").AgentResult }> {
   const started = Date.now();
   await insertMessage(params.conversationId, "user", params.userText);
   const turnIndex = await nextTurnIndex(params.conversationId);
@@ -143,6 +150,7 @@ export async function runSimulatorTurn(params: {
     slotInterpret: params.slotInterpret,
     languageRewrite: params.languageRewrite,
     languageRewriter: params.languageRewriter,
+    model: params.model,
   });
   const captured = result.simulatorTrace;
   const draft = await loadBookingDraft(params.conversationId);
@@ -164,7 +172,7 @@ export async function runSimulatorTurn(params: {
     totalTokens: captured?.totalTokens ?? usage.total_tokens ?? 0,
   };
   await saveSimulatorTurnTrace(trace);
-  return trace;
+  return Object.assign(trace, { agentResult: result });
 }
 
 export async function runSimulator(options: SimulatorOptions): Promise<SimulatorRunResult> {
@@ -210,15 +218,57 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
       slotInterpret: options.slotInterpret ?? options.llm === "openai",
       languageRewrite: options.languageRewrite,
       languageRewriter: options.languageRewriter,
+      model: options.model,
     });
     const printed = formatSimulatorTurn(trace, phoneMasked);
     print(printed);
     print("");
-    results.push({ trace, printed, reply: trace.finalReply });
+    results.push({ trace, printed, reply: trace.finalReply, agentResult: trace.agentResult });
+  };
+
+  const playReminders = async () => {
+    const sent = await runSimulatorReminders({
+      barbershopId: shop.id,
+      conversationId,
+      phone: sandboxPhone,
+      now: nowRaw,
+    });
+    const body = sent.length ? sent.map((s) => s.body).join("\n\n") : NO_DUE_REMINDER_NOTICE;
+    print(`── lembrete (noop, ${sent.length}):`);
+    print(body);
+    print("");
+    results.push({
+      trace: {
+        barbershopId: shop.id,
+        conversationId,
+        turnIndex: results.length,
+        simulatedNow: nowRaw ?? null,
+        userMessage: "[event:reminders]",
+        intent: { event: "reminders" },
+        draft: null,
+        tools: [],
+        finalReply: body,
+        aiExposure: null,
+        latencyMs: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      },
+      printed: body,
+      reply: body,
+    });
   };
 
   const seeded = options.turns ?? script?.turns ?? [];
+  const hasReminderEvent = seeded.some((turn) => turn.role === "system" && turn.event === "reminders");
+  if (options.runReminders && !hasReminderEvent) {
+    await playReminders();
+  }
   for (const turn of seeded) {
+    if (turn.role === "system") {
+      await playReminders();
+      continue;
+    }
     if (turn.role === "assistant") {
       await insertMessage(conversationId, "assistant", turn.text);
       print(`── (histórico) assistente: ${turn.text}`);
@@ -242,8 +292,8 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
     }
   }
 
-  if (!seeded.length && !options.interactive) {
-    throw new Error("Informe --replay <arquivo> ou --interactive.");
+  if (!seeded.length && !options.interactive && !options.runReminders) {
+    throw new Error("Informe --replay <arquivo>, --interactive ou --run-reminders.");
   }
 
   return {

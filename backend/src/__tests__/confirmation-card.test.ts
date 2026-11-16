@@ -4,6 +4,8 @@ import {
   assistantMessageIsCancelCard,
   composeCancelConfirmAsk,
   composeWhichAppointmentCancel,
+  composeWhichAppointmentReschedule,
+  RESCHEDULE_NONE_SAFE,
   CONFIRM_CARD_TTL_MS,
   isActiveAppointmentStatus,
   isLiveConfirmCard,
@@ -60,5 +62,18 @@ describe("confirmation-card", () => {
     expect(isActiveAppointmentStatus("confirmed")).toBe(true);
     expect(isActiveAppointmentStatus("cancelled")).toBe(false);
     expect(parseConfirmCard({ kind: "cancel", issuedAt: "nope" })).toBeUndefined();
+  });
+
+  it("composeWhichAppointmentReschedule pergunta qual remarcar", () => {
+    const which = composeWhichAppointmentReschedule(
+      [
+        { serviceName: "Corte", date: "2026-11-16", time: "10:00" },
+        { serviceName: "Barba", date: "2026-11-17", time: "18:00" },
+      ],
+      "2026-11-14",
+    );
+    expect(which).toMatch(/Qual você quer remarcar/);
+    expect(which).not.toMatch(/cancelar/);
+    expect(RESCHEDULE_NONE_SAFE).toMatch(/horário ativo pra remarcar/);
   });
 });

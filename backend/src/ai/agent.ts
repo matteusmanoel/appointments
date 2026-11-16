@@ -25,8 +25,10 @@ import {
   assistantMessageIsCancelCard,
   CANCEL_FAILED_SAFE,
   CANCEL_NONE_SAFE,
+  RESCHEDULE_NONE_SAFE,
   composeCancelConfirmAsk,
   composeWhichAppointmentCancel,
+  composeWhichAppointmentReschedule,
   isActiveAppointmentStatus,
   isLiveConfirmCard,
   type ConfirmCard,
@@ -2017,6 +2019,8 @@ export type RunAgentOptions = {
   languageRewrite?: boolean;
   /** Reescritor injetável (testes). Sem isso, a flag sozinha não chama o modelo. */
   languageRewriter?: LanguageRewriter;
+  /** Sobrescreve o modelo da barbearia (simulate:compare: só mini). */
+  model?: string;
 };
 
 let selectedBarbershopColumnSupported: boolean | null = null;
@@ -2128,9 +2132,10 @@ export async function runAgent(
   // ── Derived constants (unchanged from original) ─────────────────────────
   const ESCALATION_TOOL_ERROR_THRESHOLD = 2;
   let usePremiumModel = usePremiumByMessages;
-  let model: string = usePremiumModel
-    ? (settings?.model_premium ?? settings?.model ?? "gpt-4o-mini")
-    : (settings?.model ?? "gpt-4o-mini");
+  let model: string = options?.model
+    || (usePremiumModel
+      ? (settings?.model_premium ?? settings?.model ?? "gpt-4o-mini")
+      : (settings?.model ?? "gpt-4o-mini"));
   const temperature = settings?.temperature ?? 0.3;
   const draft = options?.sandboxDraft;
   const useDraft = draft && draft.agent_profile != null && typeof draft.agent_profile === "object";
@@ -3714,9 +3719,26 @@ export async function runAgent(
     }
 
     const rescheduling = isRescheduleNextSlotContext();
-    const moving =
+    let moving =
       resolveActiveMoving(bookingDraft.appointment_id) ??
       (rescheduling ? resolveActiveMoving(movingAppointmentId) : undefined);
+    if (rescheduling && !moving && upcomingAppointments.length > 1) {
+      const picked = pickCancelTarget();
+      if (picked === "which" || picked === null) {
+        return composeWhichAppointmentReschedule(
+          upcomingAppointments.map((a) => ({
+            serviceName: a.service_names,
+            date: String(a.date),
+            time: String(a.time),
+          })),
+          dateOnlyStr,
+        );
+      }
+      moving = picked;
+    }
+    if (rescheduling && !moving && upcomingAppointments.length === 0) {
+      return RESCHEDULE_NONE_SAFE;
+    }
     const movingId = moving?.id;
 
     // «O mais cedo» depois da oferta escolhe o primeiro horário, não refaz a busca.
@@ -4145,6 +4167,35 @@ export async function runAgent(
     return finishTurn(await offerCancelCard(), true);
   }
 
+  if (looksLikeRescheduleIntent(lastUserTextRaw) && !isAffirmativeOnly) {
+    const movingExisting = resolveActiveMoving(bookingDraft.appointment_id);
+    if (!movingExisting && upcomingAppointments.length > 1) {
+      const picked = pickCancelTarget();
+      if (picked === "which" || picked === null) {
+        return finishTurn(
+          composeWhichAppointmentReschedule(
+            upcomingAppointments.map((a) => ({
+              serviceName: a.service_names,
+              date: String(a.date),
+              time: String(a.time),
+            })),
+            dateOnlyStr,
+          ),
+          true,
+        );
+      }
+      bookingDraft = mergeBookingDraft(bookingDraft, { appointment_id: picked.id });
+      await saveBookingDraft(conversationId, bookingDraft);
+    }
+    if (!movingExisting && upcomingAppointments.length === 0) {
+      return finishTurn(RESCHEDULE_NONE_SAFE, true);
+    }
+    if (!parseClientTime(lastUserTextRaw)) {
+      const offered = await tryOfferNextHours();
+      if (offered) return finishTurn(withRobotPrefix(offered), true);
+    }
+  }
+
   if (
     isAffirmativeOnly &&
     bookingDraft.confirmCard &&
@@ -4461,14 +4512,14 @@ export async function runAgent(
 
     if (upcomingAppointments.length > 0 && !moving) {
       if (upcomingAppointments.length > 1) {
-        return composeWhichAppointmentCancel(
+        return composeWhichAppointmentReschedule(
           upcomingAppointments.map((a) => ({
             serviceName: a.service_names,
             date: String(a.date),
             time: String(a.time),
           })),
           dateOnlyStr,
-        ).replace("cancelar", "remarcar");
+        );
       }
       const existing = upcomingAppointments[0]!;
       const dateIso = String(bookingDraft.date ?? existing.date).slice(0, 10);

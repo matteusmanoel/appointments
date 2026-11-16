@@ -1,10 +1,17 @@
 import { readFileSync } from "node:fs";
 import { parseSimulatedNow } from "./clock.js";
 
-export type ReplayTurn = {
+export type ReplayUserTurn = {
   role: "user" | "assistant";
   text: string;
 };
+
+export type ReplaySystemTurn = {
+  role: "system";
+  event: "reminders";
+};
+
+export type ReplayTurn = ReplayUserTurn | ReplaySystemTurn;
 
 export type ReplayScript = {
   tenant?: string;
@@ -40,9 +47,16 @@ function normalizeScript(raw: unknown, path: string): ReplayScript {
       throw new Error(`Turno ${i + 1} inválido em ${path}.`);
     }
     const t = item as Record<string, unknown>;
+    const eventRaw = String(t.event ?? "").trim().toLowerCase();
+    const roleRaw = String(t.role ?? (t.user || t.assistant == null ? "user" : "assistant")).toLowerCase();
+    if (roleRaw === "system" || eventRaw === "reminders") {
+      if (eventRaw && eventRaw !== "reminders") {
+        throw new Error(`Turno ${i + 1} em ${path}: evento de sistema desconhecido (${eventRaw}).`);
+      }
+      return { role: "system", event: "reminders" };
+    }
     const text = String(t.text ?? t.user ?? t.content ?? "").trim();
     if (!text) throw new Error(`Turno ${i + 1} sem texto em ${path}.`);
-    const roleRaw = String(t.role ?? (t.user || t.assistant == null ? "user" : "assistant")).toLowerCase();
     const role: "user" | "assistant" = roleRaw === "assistant" ? "assistant" : "user";
     return { role, text };
   });
@@ -86,7 +100,7 @@ export function parseSimpleYaml(source: string): unknown {
       current = null;
       continue;
     }
-    const itemKey = line.match(/^\s*-\s+(?:(user|assistant|role|text|content):\s*)?(.*)$/);
+    const itemKey = line.match(/^\s*-\s+(?:(user|assistant|role|text|content|event):\s*)?(.*)$/);
     if (itemKey && turns) {
       const key = itemKey[1];
       const rest = unquote(itemKey[2] ?? "");
@@ -95,6 +109,9 @@ export function parseSimpleYaml(source: string): unknown {
         turns.push(current);
       } else if (key === "assistant") {
         current = { role: "assistant", text: rest };
+        turns.push(current);
+      } else if (key === "event") {
+        current = { role: "system", event: rest };
         turns.push(current);
       } else if (key === "role") {
         current = { role: rest };
@@ -105,7 +122,7 @@ export function parseSimpleYaml(source: string): unknown {
       }
       continue;
     }
-    const nested = line.match(/^\s{2,}(user|assistant|role|text|content):\s*(.*)$/);
+    const nested = line.match(/^\s{2,}(user|assistant|role|text|content|event):\s*(.*)$/);
     if (nested && current) {
       const key = nested[1];
       const val = unquote(nested[2] ?? "");
