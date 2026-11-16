@@ -4,8 +4,13 @@ const optional = (key: string, def: string): string => process.env[key] ?? def;
 
 const UAZAPI_REQUEST_TIMEOUT_MS = 25_000;
 
-function getBaseUrl(): string {
-  const base = optional("UAZAPI_BASE_URL", "").replace(/\/$/, "");
+export type UazapiHttpOpts = {
+  baseUrl?: string;
+  fetchImpl?: typeof fetch;
+};
+
+function getBaseUrl(opts?: UazapiHttpOpts): string {
+  const base = (opts?.baseUrl ?? optional("UAZAPI_BASE_URL", "")).replace(/\/$/, "");
   if (!base) throw new Error("UAZAPI_BASE_URL is required for Uazapi client");
   return base;
 }
@@ -28,13 +33,14 @@ export async function pingUazapi(): Promise<{ ok: boolean; status?: number; erro
 
 async function fetchWithTimeout(
   url: string,
-  options: RequestInit & { timeoutMs?: number } = {}
+  options: RequestInit & { timeoutMs?: number; fetchImpl?: typeof fetch } = {}
 ): Promise<Response> {
-  const { timeoutMs = UAZAPI_REQUEST_TIMEOUT_MS, ...fetchOptions } = options;
+  const { timeoutMs = UAZAPI_REQUEST_TIMEOUT_MS, fetchImpl, ...fetchOptions } = options;
+  const doFetch = fetchImpl ?? fetch;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
+    const res = await doFetch(url, { ...fetchOptions, signal: controller.signal });
     return res;
   } catch (e) {
     if ((e as Error).name === "AbortError") {
@@ -120,11 +126,12 @@ export type InstanceStatusResult = {
   [k: string]: unknown;
 };
 
-export async function instanceStatus(token: string): Promise<InstanceStatusResult> {
-  const base = getBaseUrl();
+export async function instanceStatus(token: string, opts?: UazapiHttpOpts): Promise<InstanceStatusResult> {
+  const base = getBaseUrl(opts);
   const res = await fetchWithTimeout(`${base}/instance/status`, {
     method: "GET",
     headers: { token },
+    fetchImpl: opts?.fetchImpl,
   });
 
   if (!res.ok) {
@@ -198,8 +205,8 @@ export async function sendLocation(params: {
  * A API Uazapi (ex.: severo.uazapi.com) pode usar path/método diferentes conforme a instalação.
  * Tentamos várias combinações; se todas retornarem 405, falhamos com mensagem clara.
  */
-export async function setWebhook(params: { token: string; url: string }): Promise<unknown> {
-  const base = getBaseUrl();
+export async function setWebhook(params: { token: string; url: string } & UazapiHttpOpts): Promise<unknown> {
+  const base = getBaseUrl(params);
   // Webhook autenticado: a Uazapi não envia cabeçalho próprio, então o segredo vai na URL (?token=).
   const url = withWebhookToken(params.url.replace(/\/$/, ""), getWebhookSecret("uazapi"));
   const body = JSON.stringify({ url, enabled: true });
@@ -221,6 +228,7 @@ export async function setWebhook(params: { token: string; url: string }): Promis
       method: method as "GET" | "POST" | "PUT" | "PATCH",
       headers,
       body: b,
+      fetchImpl: params.fetchImpl,
     });
     if (res.ok) {
       return res.json().catch(() => ({}));
