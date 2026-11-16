@@ -5,6 +5,7 @@ import { requireJwt, getBarbershopId, getBarbershopScope } from "../middleware/a
 import { ADMIN_MANAGER, ALL_ROLES, accessRules } from "../middleware/rbac.js";
 import { requireTenantRefs, uuidParam } from "../lib/tenant-refs.js";
 import { brPhoneMatchKeys, phoneForStorage } from "../lib/phone-match.js";
+import { clientMemoryReturning, clientMemorySelect } from "../ai/memory/client-memory.js";
 import { syncClientPhotoIfMissing } from "../clients/sync-contact-photo.js";
 
 const createBody = z.object({
@@ -227,7 +228,7 @@ clientsRouter.get("/:id/memory", async (req: Request, res: Response): Promise<vo
   const client = clientCheck.rows[0] as { id: string; barbershop_id: string; phone: string };
   const r = await pool.query(
     `SELECT
-       m.*,
+       ${clientMemorySelect("m")},
        b.name AS preferred_barber_name
      FROM public.client_ai_memory m
      LEFT JOIN public.barbers b ON b.id = m.preferred_barber_id
@@ -266,10 +267,10 @@ clientsRouter.patch("/:id/memory", async (req: Request, res: Response): Promise<
     `INSERT INTO public.client_ai_memory (client_id, barbershop_id, notes_safe, overall_confidence)
      VALUES ($1, $2, $3, 0.0)
      ON CONFLICT (client_id, barbershop_id) DO UPDATE SET notes_safe = EXCLUDED.notes_safe, updated_at = now()
-     RETURNING *`,
+     RETURNING ${clientMemoryReturning()}`,
     [client.id, client.barbershop_id, parsed.data.notes_safe]
   );
-  res.json(r.rows[0]);
+  res.json(r.rows[0] ?? null);
 });
 
 // GET /api/clients/by-phone/:phone/memory — memory lookup by phone (for InboxView)
@@ -284,7 +285,7 @@ clientsRouter.get("/by-phone/:phone/memory", async (req: Request, res: Response)
   const phone = req.params.phone.replace(/\D/g, "");
   const r = await pool.query(
     `SELECT
-       m.*,
+       ${clientMemorySelect("m")},
        b.name AS preferred_barber_name,
        c.name AS client_name
      FROM public.clients c

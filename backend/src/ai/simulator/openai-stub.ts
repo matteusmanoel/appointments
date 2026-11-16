@@ -13,6 +13,9 @@ export function stubOpenAI(message = "simulador: este turno caiu no LLM; use --l
         },
       },
     },
+    embeddings: {
+      create: async () => ({ data: [{ embedding: Array(1536).fill(0) }] }),
+    },
   } as unknown as OpenAI;
 }
 

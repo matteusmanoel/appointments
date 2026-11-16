@@ -1,0 +1,6 @@
+# Cliente já sabe serviço, dia e hora. Rode com --llm none no Postgres local.
+#   npm run simulate:agent -- --tenant <slug> --replay scripts/examples/cliente-decidido.yaml --llm none
+now: 2026-11-16T10:00:00-03:00
+turns:
+  - user: Mateus, quero um corte amanhã às 15h
+  - user: Sim, pode confirmar

@@ -35,13 +35,15 @@ type ShopFx = {
   slug: string;
   serviceId: string;
   barberId: string;
+  todayIso: string;
   tomorrowIso: string;
 };
 
 async function seedShop(suffix: string): Promise<ShopFx> {
   const slug = `slot-sim-${suffix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  const dates = await pool.query<{ t: string }>(
-    `SELECT ((now() AT TIME ZONE 'America/Sao_Paulo')::date + 1)::text AS t`,
+  const dates = await pool.query<{ today: string; t: string }>(
+    `SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date::text AS today,
+            ((now() AT TIME ZONE 'America/Sao_Paulo')::date + 1)::text AS t`,
   );
   const shop = await pool.query<{ id: string }>(
     `INSERT INTO public.barbershops (name, phone, billing_plan, slug, business_hours)
@@ -69,6 +71,7 @@ async function seedShop(suffix: string): Promise<ShopFx> {
     slug,
     serviceId: service.rows[0]!.id,
     barberId: barber.rows[0]!.id,
+    todayIso: dates.rows[0]!.today,
     tomorrowIso: dates.rows[0]!.t,
   };
 }
@@ -80,16 +83,31 @@ async function prepareSimulatorIdentity(fx: ShopFx, displayPhone: string) {
   return { sandboxPhone, conversationId };
 }
 
-async function insertUpcoming(fx: ShopFx, phone: string): Promise<string> {
-  const client = await pool.query<{ id: string }>(
-    `INSERT INTO public.clients (barbershop_id, name, phone, name_confirmed) VALUES ($1, 'Mateus', $2, true) RETURNING id`,
+async function insertUpcoming(
+  fx: ShopFx,
+  phone: string,
+  opts?: { time?: string; date?: string; status?: string },
+): Promise<string> {
+  const time = opts?.time ?? "18:00";
+  const date = opts?.date ?? fx.tomorrowIso;
+  const status = opts?.status ?? "pending";
+  const existing = await pool.query<{ id: string }>(
+    `SELECT id FROM public.clients WHERE barbershop_id = $1 AND phone = $2 LIMIT 1`,
     [fx.barbershopId, phone],
   );
+  const clientId =
+    existing.rows[0]?.id ??
+    (
+      await pool.query<{ id: string }>(
+        `INSERT INTO public.clients (barbershop_id, name, phone, name_confirmed) VALUES ($1, 'Mateus', $2, true) RETURNING id`,
+        [fx.barbershopId, phone],
+      )
+    ).rows[0]!.id;
   const appt = await pool.query<{ id: string }>(
     `INSERT INTO public.appointments
        (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
-     VALUES ($1, $2, $3, $4, $5::date, '18:00', 30, 40, 10, 'pending') RETURNING id`,
-    [fx.barbershopId, client.rows[0]!.id, fx.barberId, fx.serviceId, fx.tomorrowIso],
+     VALUES ($1, $2, $3, $4, $5::date, $6::time, 30, 40, 10, $7) RETURNING id`,
+    [fx.barbershopId, clientId, fx.barberId, fx.serviceId, date, time, status],
   );
   await pool.query(
     `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
@@ -458,4 +476,189 @@ describe("fluxos básicos pelo simulador", () => {
     expect(rejected.turns[0]!.reply).toBe(template);
     expect(rejected.turns[0]!.reply).not.toMatch(/às 11h/i);
   });
+
+
+  it("reagendar: «quero remarcar» sem horário oferece 2–3 opções", async () => {
+    const phone = "5500000000201";
+    const { sandboxPhone } = await prepareSimulatorIdentity(reschedFx, phone);
+    const appointmentId = await insertUpcoming(reschedFx, sandboxPhone);
+    const result = await runSimulator({
+      tenant: reschedFx.slug,
+      phone,
+      now: `${reschedFx.todayIso}T10:00:00-03:00`,
+      turns: [{ role: "user", text: "Quero remarcar meu horário" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    const reply = result.turns[0]!.reply;
+    const clocks = [...reply.matchAll(/às\s+\d{1,2}h/gi)];
+    expect(clocks.length).toBeGreaterThanOrEqual(2);
+    expect(clocks.length).toBeLessThanOrEqual(3);
+    expect(result.turns[0]!.trace.tools.some((t) => t.name === "get_next_slots" && t.ok)).toBe(true);
+    expect(result.turns[0]!.trace.tools.every((t) => t.name !== "reschedule_appointment")).toBe(true);
+    const status = await pool.query<{ status: string }>(`SELECT status FROM public.appointments WHERE id = $1`, [
+      appointmentId,
+    ]);
+    expect(status.rows[0]?.status).toBe("pending");
+  });
+
+  it("reagendar: horário nomeado livre pede confirmação e não remarca ainda", async () => {
+    const phone = "5500000000202";
+    const { sandboxPhone } = await prepareSimulatorIdentity(reschedFx, phone);
+    const appointmentId = await insertUpcoming(reschedFx, sandboxPhone);
+    const result = await runSimulator({
+      tenant: reschedFx.slug,
+      phone,
+      now: `${reschedFx.todayIso}T10:00:00-03:00`,
+      turns: [{ role: "user", text: "Preciso remarcar, pode ser amanhã às 10h?" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(result.turns[0]!.reply).toMatch(/Quer que eu mude|Posso confirmar/i);
+    expect(result.turns[0]!.trace.tools.some((t) => t.name === "check_availability" && t.ok)).toBe(true);
+    expect(result.turns[0]!.trace.tools.every((t) => t.name !== "reschedule_appointment")).toBe(true);
+    const row = await pool.query<{ status: string; scheduled_time: string }>(
+      `SELECT status, scheduled_time::text FROM public.appointments WHERE id = $1`,
+      [appointmentId],
+    );
+    expect(row.rows[0]?.status).toBe("pending");
+    expect(String(row.rows[0]?.scheduled_time).slice(0, 5)).toBe("18:00");
+  });
+
+  it("reagendar: horário nomeado ocupado oferece alternativas", async () => {
+    const phone = "5500000000203";
+    const { sandboxPhone } = await prepareSimulatorIdentity(reschedFx, phone);
+    const appointmentId = await insertUpcoming(reschedFx, sandboxPhone);
+    const other = await pool.query<{ id: string }>(
+      `INSERT INTO public.clients (barbershop_id, name, phone, name_confirmed) VALUES ($1, 'Outro', $2, true) RETURNING id`,
+      [reschedFx.barbershopId, "5500000000299"],
+    );
+    const barbers = await pool.query<{ id: string }>(
+      `SELECT id FROM public.barbers WHERE barbershop_id = $1`,
+      [reschedFx.barbershopId],
+    );
+    for (const row of barbers.rows) {
+      const appt = await pool.query<{ id: string }>(
+        `INSERT INTO public.appointments
+           (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
+         VALUES ($1, $2, $3, $4, $5::date, '15:00', 30, 40, 10, 'pending') RETURNING id`,
+        [reschedFx.barbershopId, other.rows[0]!.id, row.id, reschedFx.serviceId, reschedFx.tomorrowIso],
+      );
+      await pool.query(
+        `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
+         VALUES ($1, $2, 40, 30, 'Corte', 0)`,
+        [appt.rows[0]!.id, reschedFx.serviceId],
+      );
+    }
+    const result = await runSimulator({
+      tenant: reschedFx.slug,
+      phone,
+      now: `${reschedFx.todayIso}T10:00:00-03:00`,
+      turns: [{ role: "user", text: "Preciso remarcar, pode ser amanhã às 15h?" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    const reply = result.turns[0]!.reply;
+    const clocks = [...reply.matchAll(/às\s+(\d{1,2})h(?:(\d{2}))?/gi)].map((m) => {
+      const h = Number(m[1]);
+      const min = m[2] ? Number(m[2]) : 0;
+      return h * 60 + min;
+    });
+    expect(clocks.length).toBeGreaterThanOrEqual(2);
+    expect(clocks.every((mins) => mins !== 15 * 60)).toBe(true);
+    expect(reply).not.toMatch(/Posso confirmar\?/);
+    const status = await pool.query<{ status: string; scheduled_time: string }>(
+      `SELECT status, scheduled_time::text FROM public.appointments WHERE id = $1`,
+      [appointmentId],
+    );
+    expect(status.rows[0]?.status).toBe("pending");
+    expect(String(status.rows[0]?.scheduled_time).slice(0, 5)).toBe("18:00");
+  });
+
+  it("reagendar: mais de um horário futuro pergunta qual", async () => {
+    const phone = "5500000000204";
+    const { sandboxPhone } = await prepareSimulatorIdentity(extraFx, phone);
+    await insertUpcoming(extraFx, sandboxPhone, { time: "10:00" });
+    await insertUpcoming(extraFx, sandboxPhone, { time: "18:00" });
+    const result = await runSimulator({
+      tenant: extraFx.slug,
+      phone,
+      now: `${extraFx.todayIso}T09:00:00-03:00`,
+      turns: [{ role: "user", text: "Quero remarcar" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(result.turns[0]!.reply).toMatch(/mais de um horário/i);
+    expect(result.turns[0]!.reply).toMatch(/Qual você quer remarcar/i);
+    expect(result.turns[0]!.trace.tools.every((t) => t.name !== "reschedule_appointment")).toBe(true);
+  });
+
+  it("reagendar: «sim» com card expirado não remarca", async () => {
+    const phone = "5500000000205";
+    const { sandboxPhone, conversationId } = await prepareSimulatorIdentity(cancelFx, phone);
+    const appointmentId = await insertUpcoming(cancelFx, sandboxPhone);
+    const first = await runSimulator({
+      tenant: cancelFx.slug,
+      phone,
+      now: `${cancelFx.todayIso}T10:00:00-03:00`,
+      turns: [{ role: "user", text: "Preciso remarcar, pode ser amanhã às 10h?" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(first.turns[0]!.reply).toMatch(/Quer que eu mude|Posso confirmar/i);
+    await pool.query(
+      `UPDATE public.ai_conversation_runtime
+          SET booking_draft = jsonb_set(
+            COALESCE(booking_draft, '{}'::jsonb),
+            '{confirmCard,issuedAt}',
+            to_jsonb(('2026-01-01T00:00:00.000-03:00')::text)
+          )
+        WHERE conversation_id = $1`,
+      [conversationId],
+    );
+    const second = await runSimulator({
+      tenant: cancelFx.slug,
+      phone,
+      now: `${cancelFx.todayIso}T10:40:00-03:00`,
+      turns: [{ role: "user", text: "Sim" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(second.turns[0]!.reply).toMatch(/expirou/i);
+    expect(second.turns[0]!.trace.tools.every((t) => t.name !== "reschedule_appointment")).toBe(true);
+    const row = await pool.query<{ status: string; scheduled_time: string }>(
+      `SELECT status, scheduled_time::text FROM public.appointments WHERE id = $1`,
+      [appointmentId],
+    );
+    expect(row.rows[0]?.status).toBe("pending");
+    expect(String(row.rows[0]?.scheduled_time).slice(0, 5)).toBe("18:00");
+  });
+
+  it("reagendar: agendamento cancelled é recusado", async () => {
+    const phone = "5500000000206";
+    const { sandboxPhone } = await prepareSimulatorIdentity(scheduleFx, phone);
+    const appointmentId = await insertUpcoming(scheduleFx, sandboxPhone, { status: "cancelled" });
+    const result = await runSimulator({
+      tenant: scheduleFx.slug,
+      phone,
+      now: `${scheduleFx.todayIso}T10:00:00-03:00`,
+      turns: [{ role: "user", text: "Quero remarcar meu horário" }],
+      llm: "none",
+      trace: false,
+      print: () => {},
+    });
+    expect(result.turns[0]!.reply).toMatch(/Não encontrei um horário ativo pra remarcar/i);
+    expect(result.turns[0]!.trace.tools.every((t) => t.name !== "reschedule_appointment")).toBe(true);
+    const status = await pool.query<{ status: string }>(`SELECT status FROM public.appointments WHERE id = $1`, [
+      appointmentId,
+    ]);
+    expect(status.rows[0]?.status).toBe("cancelled");
+  });
 });
+

@@ -1576,6 +1576,8 @@ export async function createAppointment(
 export async function getClientFavoriteServices(
   barbershopId: string,
   clientPhone: string,
+  /** yyyy-MM-dd do relógio do turno. Sem ele, o corte é CURRENT_DATE. */
+  referenceDate?: string,
 ): Promise<{
   last: { service_ids: string[]; service_names: string } | null;
   frequent: Array<{
@@ -1590,6 +1592,8 @@ export async function getClientFavoriteServices(
     canonicalizeBrPhoneDigits(digits) ?? digits,
   );
 
+  const ref =
+    referenceDate && /^\d{4}-\d{2}-\d{2}$/.test(referenceDate) ? referenceDate : null;
   const lastRow = await pool.query<{
     service_ids: string[];
     service_names: string;
@@ -1599,7 +1603,7 @@ export async function getClientFavoriteServices(
        FROM public.appointments a
        JOIN public.clients c ON c.id = a.client_id
        WHERE a.barbershop_id = $1 AND a.status = 'completed'
-         AND a.scheduled_date < CURRENT_DATE
+         AND a.scheduled_date < COALESCE($3::date, CURRENT_DATE)
          AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
        ORDER BY a.scheduled_date DESC, a.scheduled_time DESC
        LIMIT 1
@@ -1614,7 +1618,7 @@ export async function getClientFavoriteServices(
        COALESCE(array_agg(svcs.service_id::text) FILTER (WHERE svcs.service_id IS NOT NULL), ARRAY[]::text[]) AS service_ids,
        COALESCE(string_agg(svcs.service_name, ', ' ORDER BY (SELECT 1)), '') AS service_names
      FROM svcs`,
-    [barbershopId, matchKeys],
+    [barbershopId, matchKeys, ref],
   );
   const last = lastRow.rows[0];
   const lastResult =
@@ -1625,8 +1629,6 @@ export async function getClientFavoriteServices(
         }
       : null;
 
-  const sixMonthsAgo = new Date();
-  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   const frequentRows = await pool.query<{
     service_ids: string[];
     service_names: string;
@@ -1637,9 +1639,9 @@ export async function getClientFavoriteServices(
        FROM public.appointments a
        JOIN public.clients c ON c.id = a.client_id
        WHERE a.barbershop_id = $1 AND a.status = 'completed'
-         AND a.scheduled_date >= $2::date
-         AND a.scheduled_date < CURRENT_DATE
-         AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($3::text[])
+         AND a.scheduled_date >= (COALESCE($3::date, CURRENT_DATE) - interval '6 months')
+         AND a.scheduled_date < COALESCE($3::date, CURRENT_DATE)
+         AND regexp_replace(c.phone, '[^0-9]', '', 'g') = ANY($2::text[])
      ),
      combo AS (
        SELECT
@@ -1654,7 +1656,7 @@ export async function getClientFavoriteServices(
      GROUP BY service_ids, service_names
      ORDER BY COUNT(*) DESC, service_names ASC
      LIMIT 2`,
-    [barbershopId, sixMonthsAgo.toISOString().slice(0, 10), matchKeys],
+    [barbershopId, matchKeys, ref],
   );
   const frequent = frequentRows.rows.map((r) => ({
     service_ids: r.service_ids ?? [],

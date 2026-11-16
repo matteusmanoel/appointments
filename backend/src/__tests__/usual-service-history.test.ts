@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { pool } from "../db.js";
 import { getClientFavoriteServices } from "../ai/tools.js";
-import { createGoldenFixture, dbAvailable, deleteGoldenFixture, type GoldenFixture } from "./golden/runner.js";
+import { createGoldenFixture, dbAvailable, deleteGoldenFixture, type GoldenFixture } from "../ai/simulator/golden/runner.js";
 
 // Histórico do "de sempre": só agendamento concluído conta. no_show, cancelado e passado nunca fechado ficam fora.
 describe("getClientFavoriteServices: só conta o que foi concluído", () => {

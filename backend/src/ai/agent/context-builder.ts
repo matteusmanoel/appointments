@@ -22,10 +22,8 @@ import {
   clientMemoryTableExists,
 } from "../memory/client-memory.js";
 import type { ClientMemoryRow } from "../memory/client-memory.js";
-import {
-  loadBookingDraft,
-  type BookingDraft,
-} from "../booking-draft.js";
+import { type BookingDraft } from "../booking-draft.js";
+import { hydrateConversationContext } from "./client-session-context.js";
 import {
   confirmedPersonName,
   isUsableClientName,
@@ -116,6 +114,9 @@ export type AgentContext = {
 
   // ── Booking draft ────────────────────────────────────────────────────────
   bookingDraft: BookingDraft;
+  /** Intenção do turno anterior, só quando o rascunho hidratado ainda está aberto. */
+  sessionLastIntent: string | null;
+  sessionContextFresh: boolean;
 };
 
 // ── Constants (mirrors runAgent) ─────────────────────────────────────────────
@@ -310,7 +311,7 @@ export async function buildAgentContext(
       .listClientUpcomingAppointments(effectiveBarbershopId, clientPhone, dateOnlyStr)
       .catch(() => [] as unknown[]),
     aiTools
-      .getClientFavoriteServices(effectiveBarbershopId, clientPhone)
+      .getClientFavoriteServices(effectiveBarbershopId, clientPhone, dateOnlyStr)
       .catch(() => null),
   ]);
 
@@ -351,8 +352,14 @@ export async function buildAgentContext(
   const lastN = history.slice(-MAX_MEMORY_MESSAGES);
   const lastUserTextRaw = lastUserTurnText(lastN);
 
-  // ── Booking draft ────────────────────────────────────────────────────────
-  const bookingDraft = await loadBookingDraft(conversationId);
+  // ── Booking draft (conversa nova herda o contexto do cliente) ───────────
+  const hydrated = await hydrateConversationContext({
+    barbershopId: effectiveBarbershopId,
+    clientPhone,
+    conversationId,
+    nowMs: now.getTime(),
+  });
+  const bookingDraft = hydrated.bookingDraft;
 
   // ── Return ────────────────────────────────────────────────────────────────
   return {
@@ -391,5 +398,7 @@ export async function buildAgentContext(
     lastN,
     lastUserTextRaw,
     bookingDraft,
+    sessionLastIntent: hydrated.lastIntent,
+    sessionContextFresh: hydrated.fresh,
   };
 }

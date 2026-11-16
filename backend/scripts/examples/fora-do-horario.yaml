@@ -1,0 +1,5 @@
+# Fora do expediente (quase no fechamento). A fala combinada usa «amanhã», não o nome do dia.
+#   npm run simulate:agent -- --tenant <slug> --replay scripts/examples/fora-do-horario.yaml --llm none
+now: 2026-11-16T19:50:00-03:00
+turns:
+  - user: Quero um corte, pode ser o próximo
