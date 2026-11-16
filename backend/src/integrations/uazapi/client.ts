@@ -209,14 +209,19 @@ export async function setWebhook(params: { token: string; url: string } & Uazapi
   const base = getBaseUrl(params);
   // Webhook autenticado: a Uazapi não envia cabeçalho próprio, então o segredo vai na URL (?token=).
   const url = withWebhookToken(params.url.replace(/\/$/, ""), getWebhookSecret("uazapi"));
-  const body = JSON.stringify({ url, enabled: true });
+  const body = JSON.stringify({
+    enabled: true,
+    url,
+    events: ["messages", "messages_update", "connection"],
+    excludeMessages: ["wasSentByApi"],
+  });
   const token = params.token;
 
   const attempts: { method: string; path: string; headers: Record<string, string>; body: string }[] = [
+    { method: "POST", path: "/webhook", headers: { "Content-Type": "application/json", token }, body },
     { method: "PUT", path: "/webhook/set", headers: { "Content-Type": "application/json", token }, body },
     { method: "POST", path: "/webhook/set", headers: { "Content-Type": "application/json", token }, body },
     { method: "PATCH", path: "/webhook/set", headers: { "Content-Type": "application/json", token }, body },
-    { method: "POST", path: "/webhook", headers: { "Content-Type": "application/json", token }, body },
     { method: "PUT", path: "/webhook", headers: { "Content-Type": "application/json", token }, body },
     { method: "POST", path: "/instance/webhook", headers: { "Content-Type": "application/json", token }, body },
     { method: "PUT", path: "/instance/webhook", headers: { "Content-Type": "application/json", token }, body },

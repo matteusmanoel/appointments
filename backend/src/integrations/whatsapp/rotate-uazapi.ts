@@ -53,7 +53,7 @@ export function sanitizePublicUrl(raw: string): string {
 }
 
 function requireEncryptionKey(): string {
-  const key = config.appEncryptionKey;
+  const key = (process.env.APP_ENCRYPTION_KEY ?? "").trim() || config.appEncryptionKey;
   if (!key) throw new Error("APP_ENCRYPTION_KEY é necessária para gravar o token da instância (o valor não é impresso).");
   return key;
 }
@@ -75,8 +75,8 @@ export function remoteRotateSteps(params: { webhookUrl?: string }): string[] {
     "Mantenha WHATSAPP_PROVIDER=uazapi no ambiente (Terraform: whatsapp_provider) para conexões novas. O provider da conexão já existente fica no banco (coluna provider).",
     "O token da instância, o nome e o id da instância moram no banco (barbershop_whatsapp_connections: uazapi_instance_token_encrypted, uazapi_instance_name, uazapi_instance_id). Não vá no .env. APP_ENCRYPTION_KEY precisa ser a mesma da API para criptografar o token.",
     params.webhookUrl
-      ? `Registre o webhook da instância nova (POST /webhook na Uazapi) para ${sanitizePublicUrl(params.webhookUrl)} (endpoint do backend: /api/webhooks/uazapi).`
-      : "Registre o webhook da instância nova em POST /webhook apontando para UAZAPI_WEBHOOK_PUBLIC_URL (deve terminar em /api/webhooks/uazapi).",
+      ? `Registre o webhook da instância nova com POST /webhook (header token, body enabled, url, events messages/messages_update/connection, excludeMessages wasSentByApi) para ${sanitizePublicUrl(params.webhookUrl)}?token=<segredo NavalhIA>. O backend recebe em POST /api/webhooks/uazapi.`
+      : "Registre o webhook da instância nova com POST /webhook (header token; body enabled, url, events messages/messages_update/connection, excludeMessages wasSentByApi) apontando para UAZAPI_WEBHOOK_PUBLIC_URL?token=<segredo NavalhIA> (deve terminar em /api/webhooks/uazapi).",
     "Confira: GET /instance/status (header token) deve vir connected; um evento de teste deve aparecer no log da API; depois fale no número de teste do Mateus ou use o simulador local.",
     "Para gravar o tenant, rode este comando contra o Postgres local (sem --remote) e replique o procedimento no Neon com aprovação — este modo não escreve em banco remoto.",
   ];

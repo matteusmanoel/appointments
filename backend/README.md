@@ -59,6 +59,20 @@ O CLI e os testes recusam `DATABASE_URL` cujo host não seja local (`localhost`,
 
 A criação `20261114210000_ai_simulator_turn_traces.sql` **não entra no `migrate:all`**, para não criar a tabela em produção. O follow-up `20261115120000_ai_simulator_turn_traces_harden.sql` permanece no `migrate:all` e é inofensivo: só roda se a tabela já existir, usa `lock_timeout`/`statement_timeout` curtos, remove FKs para tabelas quentes (`barbershops`, `ai_conversations`) e cria o índice de TTL. Testes e o CLI criam a tabela localmente, sem FKs.
 
+## Trocar a instância Uazapi (`whatsapp:rotate`)
+
+O servidor grátis da Uazapi cai depois de mais ou menos uma hora. O comando troca token e instância do tenant no Postgres **local**, com fetch injetável nos testes (nenhuma chamada real). Pede a URL e o token sem eco. Não edita `.env` e não imprime o token.
+
+`UAZAPI_BASE_URL` e `WHATSAPP_PROVIDER` são do processo: mudá-los exige reinício do container ou nova env na Lambda/Terraform. Token, nome e id da instância ficam em `barbershop_whatsapp_connections` e são relidos a cada mensagem, sem reinício. O token é gravado com `encrypt` / `APP_ENCRYPTION_KEY`.
+
+```bash
+npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --webhook-url https://<publico>/api/webhooks/uazapi
+npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --dry-run
+npm run whatsapp:rotate -- --remote
+```
+
+`--dry-run` não grava e não chama a Uazapi. `--remote` só imprime os passos da AWS. Sem `--remote`, `DATABASE_URL` tem que ser local. O passo a passo (webhook `POST /webhook`, túnel sem conta, como conferir `instance.status=connected`) está em `docs/qa/runbook-uazapi-instancia.md`. Os testes são `src/__tests__/whatsapp-rotate-uazapi.test.ts`.
+
 
 ## Preenchimento determinístico (fluxos básicos)
 
