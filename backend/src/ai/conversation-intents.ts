@@ -162,6 +162,19 @@ export function looksLikeHumanHandoff(text: string): boolean {
   );
 }
 
+/** Pergunta se é robô/IA — desvia e segue o atendimento; não é pedido de atendente. */
+export function looksLikeRobotQuestion(text: string): boolean {
+  const t = fold(text);
+  if (!t) return false;
+  if (looksLikeHumanHandoff(text)) return false;
+  return (
+    /\b(voce|vc)\s+(e|eh)\s+(um\s+)?(robo|bot|inteligencia\s+artificial|ia)\b/.test(t) ||
+    /\b(e|eh)\s+um\s+(robo|bot)\b/.test(t) ||
+    /\b(voce|vc)\s+(e|eh)\s+(humano|uma pessoa)\b/.test(t) ||
+    /\besta\s+falando\s+(com\s+)?(um\s+)?(robo|bot)\b/.test(t)
+  );
+}
+
 /**
  * Pedido de agendamento novo. Reagendar, cancelar, consultar e correção de serviço
  * já marcado não entram aqui.
@@ -178,6 +191,37 @@ export function looksLikeNewBookingIntent(text: string): boolean {
  * Mensagem sem nenhum sinal de intenção: sem verbo de agendamento, serviço, data,
  * horário, saudação, plano ou pergunta de FAQ. "pode ser" solto cai aqui.
  */
+
+/**
+ * Cliente pede o próximo horário livre, sem dizer o relógio:
+ * "pode ser o próximo", "o mais cedo", "qualquer horário", "o primeiro que tiver".
+ * Não cobre consulta ("meus próximos horários") nem um horário explícito ("às 18h").
+ */
+export function looksLikeNextAvailableIntent(text: string): boolean {
+  const t = fold(text);
+  if (!t) return false;
+  if (parseClientTime(text)) return false;
+  // Cancelar/consultar não viram busca de vaga. Reagendar + «o próximo» é o próximo
+  // horário daquele agendamento (serviço, barbeiro, exclude_appointment_id).
+  if (looksLikeCancelIntent(text) || looksLikeConsultIntent(text)) {
+    return false;
+  }
+  if (/\b(meus?|quais?)\s+proximos?\b/.test(t)) return false;
+  if (/\bqual\s+(e|eh|e o|o)?\s*meu\s+proximo\b/.test(t)) return false;
+  return (
+    /\b(o|a)\s+proxim[oa](\s+horario)?\b/.test(t) ||
+    /\bproxim[oa]\s+horario\b/.test(t) ||
+    /^(o\s+)?proxim[oa]\??$/.test(t) ||
+    /\bmais cedo\b/.test(t) ||
+    /\bmais breve\b/.test(t) ||
+    /\bqualquer horario\b/.test(t) ||
+    /\b(o\s+)?primeiro (horario|que tiver|disponivel)\b/.test(t) ||
+    /\bo que tiver\b/.test(t) ||
+    /\bpode ser agora\b/.test(t) ||
+    /\bquanto antes\b/.test(t)
+  );
+}
+
 export function looksLikeZeroIntentUnknown(text: string): boolean {
   const t = fold(text);
   if (!t) return true;
@@ -190,6 +234,7 @@ export function looksLikeZeroIntentUnknown(text: string): boolean {
     looksLikePlanIntent(text) ||
     looksLikeWaitlistIntent(text) ||
     looksLikeHumanHandoff(text) ||
+    looksLikeRobotQuestion(text) ||
     looksLikeSocialGreeting(text) ||
     isShopHoursQuestion(text)
   ) {
@@ -198,6 +243,7 @@ export function looksLikeZeroIntentUnknown(text: string): boolean {
   if (/^(oi|ola|opa|salve|bom dia|boa tarde|boa noite|fala|iae|e ai)\b/.test(t)) return false;
   if (/\b(agendar|marcar|quero|gostaria|remarcar|cancelar|desmarcar|reagendar)\b/.test(t)) return false;
   if (parseClientTime(text)) return false;
+  if (looksLikeNextAvailableIntent(text)) return false;
   if (/\b(hoje|amanha|depois de amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/.test(t)) return false;
   if (/\b\d{1,2}\/\d{1,2}\b/.test(t)) return false;
   if (inferServiceKeyword(text)) return false;
@@ -455,14 +501,25 @@ export function draftPatchFromTurn(params: {
   const clock = isShopHoursQuestion(text) ? null : parseClientTime(text);
   if (afterIntent) {
     if (clock) patch.after_time = clock;
+    else if (looksLikeAfterLunchIntent(text)) patch.after_time = AFTER_LUNCH_FLOOR_HHMM;
   } else if (clock) {
     patch.time = clock;
   }
-  return { patch, afterIntent, floorWithoutClock: afterIntent && !clock };
+  const hasAfter = typeof patch.after_time === "string" && /^\d{2}:\d{2}/.test(patch.after_time);
+  return { patch, afterIntent, floorWithoutClock: afterIntent && !clock && !hasAfter };
+}
+
+/** Piso usado quando o cliente pede «depois do almoço» sem relógio. */
+export const AFTER_LUNCH_FLOOR_HHMM = "13:00";
+
+export function looksLikeAfterLunchIntent(text: string): boolean {
+  const t = fold(text);
+  return /\b(depois|apos)\s+(do|de o|o)\s+almoco\b/.test(t) || /\bpos[- ]almoco\b/.test(t);
 }
 
 export function looksLikeAfterTimeIntent(text: string): boolean {
   const t = fold(text);
+  if (looksLikeAfterLunchIntent(t)) return true;
   return (
     /\bapos\s+as?\b/.test(t) ||
     /\bdepois\s+das?\b/.test(t) ||

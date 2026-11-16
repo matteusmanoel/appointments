@@ -1,0 +1,8 @@
+{
+  "now": "2026-11-14T18:08:00-03:00",
+  "turns": [
+    { "role": "user", "text": "Quero agendar um corte pra hoje" },
+    { "role": "user", "text": "Só o corte mesmo" },
+    { "role": "user", "text": "Pode ser o próximo" }
+  ]
+}

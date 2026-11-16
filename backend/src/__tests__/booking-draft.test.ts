@@ -96,6 +96,32 @@ describe("mergeBookingDraft", () => {
     expect(current.service_ids).toEqual([COMBO.id]);
     expect(current.time).not.toBe("18:00");
   });
+
+  it("time: null or undefined in the patch clears the old clock and keeps after_time", () => {
+    const prev = mergeBookingDraft(emptyBookingDraft(), {
+      service_ids: [CORTE.id],
+      date: "2026-11-14",
+      time: "15:00",
+      after_time: "14:00",
+      status: "offered",
+    });
+    const cleared = mergeBookingDraft(prev, { time: null, offeredTimes: ["16:00", "16:30", "17:00"] });
+    expect(cleared.time).toBeUndefined();
+    expect(cleared.after_time).toBe("14:00");
+    expect(cleared.offeredTimes).toEqual(["16:00", "16:30", "17:00"]);
+    const omitted = mergeBookingDraft(cleared, { status: "collecting" });
+    expect(omitted.after_time).toBe("14:00");
+    expect(omitted.offeredTimes).toEqual(["16:00", "16:30", "17:00"]);
+    const locked = lockOfferedSlot(cleared, {
+      date: "2026-11-14",
+      time: "16:00",
+      barber_id: LUCAS,
+      barber_name: "Lucas Lima",
+    });
+    expect(locked.time).toBe("16:00");
+    expect(locked.offeredTimes).toBeUndefined();
+    expect(locked.after_time).toBeUndefined();
+  });
 });
 
 describe("resolveServiceFromText", () => {
@@ -123,6 +149,14 @@ describe("resolveServiceFromText", () => {
   it("equivalent phrasing also maps to the combo", () => {
     expect(resolveServiceFromText("quero o combo", catalog).match?.id).toBe(COMBO.id);
     expect(resolveServiceFromText("corte + barba com o Lucas", catalog).match?.id).toBe(COMBO.id);
+  });
+
+  it("só o corte (com artigo) after simples-ou-combo is the simple cut, not ambiguous", () => {
+    for (const text of ["Só o corte mesmo", "só o corte", "apenas o corte", "somente o corte"]) {
+      const r = resolveServiceFromText(text, catalog);
+      expect(r.match?.id, text).toBe(CORTE.id);
+      expect(r.ambiguous, text).toBeUndefined();
+    }
   });
 });
 

@@ -137,4 +137,49 @@ describe("CheckoutModal: aceite do aviso do WhatsApp antes de pagar", () => {
     expect(document.getElementById("checkout-phone")).toBeTruthy();
     expect(document.getElementById("checkout-email")).toBeNull();
   });
+
+  it("no painel, com a conta conhecida, abre direto nos planos e marca o plano em uso", async () => {
+    render(
+      <CheckoutModal
+        open
+        onOpenChange={() => {}}
+        initialPlan="pro"
+        account={{
+          email: "dono@example.test",
+          phone: "45999990000",
+          barbershopName: "Navalha do João",
+          currentPlan: "essential",
+        }}
+      />,
+    );
+    const planRadio = (label: string) =>
+      screen.getAllByRole("radio").find((el) => el.querySelector(".font-display")?.textContent === label);
+
+    expect(document.getElementById("checkout-email")).toBeNull();
+    expect(document.getElementById("checkout-phone")).toBeNull();
+    expect(document.getElementById("checkout-name")).toBeNull();
+    const essential = planRadio("Essencial");
+    expect(essential?.textContent).toContain("Plano atual");
+    expect(essential?.getAttribute("aria-checked")).toBe("false");
+    expect(planRadio("Profissional")?.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(essential!);
+    const currentButton = screen.getByRole("button", { name: "Plano atual" }) as HTMLButtonElement;
+    expect(currentButton.disabled).toBe(true);
+    fireEvent.click(currentButton);
+    expect(createCheckout).not.toHaveBeenCalled();
+
+    fireEvent.click(planRadio("Profissional")!);
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: /Ir para pagamento/ }));
+    await waitFor(() => expect(createCheckout).toHaveBeenCalledTimes(1));
+    expect(createCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: "dono@example.test",
+        phone: "45999990000",
+        barbershop_name: "Navalha do João",
+        plan: "pro",
+      }),
+    );
+  });
 });

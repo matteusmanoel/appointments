@@ -1,6 +1,7 @@
 import { getSubscriptionAccess } from "../billing-access.js";
 import { pool } from "../db.js";
 import { getWhatsAppOrNull } from "../integrations/whatsapp/index.js";
+import { isNoopWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import {
   occupancyOpened,
   shouldPingOwner,
@@ -36,6 +37,7 @@ type WaitlistHit = {
 };
 
 async function notifyWaitlist(event: AgendaChangeEvent): Promise<WaitlistHit | null> {
+  if (isNoopWhatsAppOutbound()) return null;
   if (!event.appointmentId || !occupancyOpened(event.type)) return null;
   const meta = await pool.query<{
     scheduled_date: string;

@@ -62,6 +62,8 @@ export type Contract =
   | { kind: "name_known"; equals: boolean }
   | { kind: "name_source"; equals: "explicit" | "leading_address" | null }
   | { kind: "tools_executed"; equals: TurnTraceTool[] }
+  | { kind: "tools_executed_includes"; value: TurnTraceTool }
+  | { kind: "tools_executed_excludes"; value: string }
   | { kind: "catalog_rejections"; equals: TurnTraceCatalogRejection[] }
   | { kind: "state"; equals: AgentResult["state"] | null }
   | { kind: "not_silenced" }
@@ -366,6 +368,14 @@ export function checkContracts(outcome: TurnOutcome, contracts: Contract[]): str
         break;
       case "tools_executed":
         if (!same(trace?.toolsExecuted, c.equals)) fail(c, trace?.toolsExecuted);
+        break;
+      case "tools_executed_includes":
+        if (!(trace?.toolsExecuted ?? []).some((t) => t.name === c.value.name && t.ok === c.value.ok)) {
+          fail(c, trace?.toolsExecuted);
+        }
+        break;
+      case "tools_executed_excludes":
+        if ((trace?.toolsExecuted ?? []).some((t) => t.name === c.value)) fail(c, trace?.toolsExecuted);
         break;
       case "catalog_rejections":
         if (!same(trace?.catalogRejections, c.equals)) fail(c, trace?.catalogRejections);

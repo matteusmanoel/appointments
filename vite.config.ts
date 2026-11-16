@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "::",
       port: 8080,
+      allowedHosts: ["macteus.local"],
       hmr: {
         overlay: false,
       },

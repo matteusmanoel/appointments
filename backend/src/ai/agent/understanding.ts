@@ -27,6 +27,7 @@ import {
   looksLikeHumanHandoff,
   looksLikeLocationIntent,
   looksLikeNewBookingIntent,
+  looksLikeNextAvailableIntent,
   looksLikePixIntent,
   looksLikePlanIntent,
   looksLikeRescheduleIntent,
@@ -153,6 +154,16 @@ export function understandTurn(params: UnderstandTurnParams): IntentSet {
     rawSignals.push("schedule:clock");
   }
 
+  const wantsNextSlot = looksLikeNextAvailableIntent(text);
+  if (wantsNextSlot) {
+    rawSignals.push("time:next_available");
+    if (primary === "unknown") {
+      intents.splice(0, intents.length, "schedule");
+      primary = "schedule";
+      rawSignals.push("schedule:next_slot");
+    }
+  }
+
   // "Gostaria de" is a booking only when this turn names a slot.
   // A PIX, address, or plan request with no slot is that request, not a new hour.
   const namedSlot = Boolean((service && service !== "ambiguous") || dateTime?.time || dateTime?.date);
@@ -188,6 +199,7 @@ export function understandTurn(params: UnderstandTurnParams): IntentSet {
     service,
     barber,
     dateTime,
+    wantsNextSlot,
     rawSignals,
     confidence,
   };

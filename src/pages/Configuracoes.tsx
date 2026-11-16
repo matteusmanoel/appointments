@@ -76,7 +76,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/AuthContext";
 import { hasPro, hasPremium } from "@/lib/plan";
-import { CheckoutModal } from "@/components/CheckoutModal";
+import { AccountCheckoutModal } from "@/components/CheckoutModal";
 import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -1886,12 +1886,12 @@ export default function Configuracoes() {
         }}
       />
 
-      <CheckoutModal
+      <AccountCheckoutModal
         open={showUpgradeModal}
         onOpenChange={setShowUpgradeModal}
         initialPlan="pro"
       />
-      <CheckoutModal
+      <AccountCheckoutModal
         open={showUnitsUpgradeModal}
         onOpenChange={setShowUnitsUpgradeModal}
         initialPlan="premium"

@@ -55,6 +55,8 @@ export type IntentSet = {
   service: ServiceSignal | "ambiguous" | null;
   barber: BarberSignal;
   dateTime: DateTimeSignal;
+  /** Client asked for the next free slot without naming a clock ("o próximo", "o mais cedo"). */
+  wantsNextSlot?: boolean;
   /** Raw signals collected during extraction — used for debug/trace. */
   rawSignals: string[];
   /**
