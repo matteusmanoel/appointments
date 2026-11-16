@@ -430,13 +430,26 @@ describe("agente — 'Pode ser o próximo' oferece horários concretos", () => {
     expect(draft.offeredTimes).toBeUndefined();
   });
 
-  it("«quero cancelar o próximo» cancela de verdade e não oferece vaga", async () => {
+  it("«quero cancelar o próximo» pede confirmação e só cancela no sim, sem oferecer vaga", async () => {
     const appointmentId = await insertUpcoming(cancelFx, "10:00");
-    const result = await runUser(cancelFx, "quero cancelar o próximo");
+    const ask = await runUser(cancelFx, "quero cancelar o próximo");
+    expect(ask.reply).toMatch(/Posso cancelar seu horário/i);
+    expect(ask.reply).toMatch(/remarcar/i);
+    expect(ask.reply).not.toMatch(/cancelado/i);
+    expect(ask.reply).not.toMatch(/Consigo te atender/i);
+    expect(ask.turnTrace?.toolsExecuted?.some((t) => t.name === "get_next_slots")).toBeFalsy();
+    let status = await pool.query<{ status: string }>(`SELECT status FROM public.appointments WHERE id = $1`, [
+      appointmentId,
+    ]);
+    expect(status.rows[0]?.status).toBe("pending");
+    await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'assistant', $2)`, [
+      cancelFx.conversationId,
+      ask.reply,
+    ]);
+    const result = await runUser(cancelFx, "sim");
     expect(result.reply).toMatch(/cancelado/i);
     expect(result.reply).not.toMatch(/Consigo te atender/i);
-    expect(result.turnTrace?.toolsExecuted?.some((t) => t.name === "get_next_slots")).toBeFalsy();
-    const status = await pool.query<{ status: string }>(`SELECT status FROM public.appointments WHERE id = $1`, [
+    status = await pool.query<{ status: string }>(`SELECT status FROM public.appointments WHERE id = $1`, [
       appointmentId,
     ]);
     expect(status.rows[0]?.status).toBe("cancelled");

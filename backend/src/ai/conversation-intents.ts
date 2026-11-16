@@ -501,14 +501,25 @@ export function draftPatchFromTurn(params: {
   const clock = isShopHoursQuestion(text) ? null : parseClientTime(text);
   if (afterIntent) {
     if (clock) patch.after_time = clock;
+    else if (looksLikeAfterLunchIntent(text)) patch.after_time = AFTER_LUNCH_FLOOR_HHMM;
   } else if (clock) {
     patch.time = clock;
   }
-  return { patch, afterIntent, floorWithoutClock: afterIntent && !clock };
+  const hasAfter = typeof patch.after_time === "string" && /^\d{2}:\d{2}/.test(patch.after_time);
+  return { patch, afterIntent, floorWithoutClock: afterIntent && !clock && !hasAfter };
+}
+
+/** Piso usado quando o cliente pede «depois do almoço» sem relógio. */
+export const AFTER_LUNCH_FLOOR_HHMM = "13:00";
+
+export function looksLikeAfterLunchIntent(text: string): boolean {
+  const t = fold(text);
+  return /\b(depois|apos)\s+(do|de o|o)\s+almoco\b/.test(t) || /\bpos[- ]almoco\b/.test(t);
 }
 
 export function looksLikeAfterTimeIntent(text: string): boolean {
   const t = fold(text);
+  if (looksLikeAfterLunchIntent(t)) return true;
   return (
     /\bapos\s+as?\b/.test(t) ||
     /\bdepois\s+das?\b/.test(t) ||
