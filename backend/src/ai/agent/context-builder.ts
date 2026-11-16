@@ -114,6 +114,9 @@ export type AgentContext = {
 
   // ── Booking draft ────────────────────────────────────────────────────────
   bookingDraft: BookingDraft;
+  /** Intenção do turno anterior, só quando o rascunho hidratado ainda está aberto. */
+  sessionLastIntent: string | null;
+  sessionContextFresh: boolean;
 };
 
 // ── Constants (mirrors runAgent) ─────────────────────────────────────────────
@@ -350,11 +353,13 @@ export async function buildAgentContext(
   const lastUserTextRaw = lastUserTurnText(lastN);
 
   // ── Booking draft (conversa nova herda o contexto do cliente) ───────────
-  const bookingDraft = await hydrateConversationContext({
+  const hydrated = await hydrateConversationContext({
     barbershopId: effectiveBarbershopId,
     clientPhone,
     conversationId,
+    nowMs: now.getTime(),
   });
+  const bookingDraft = hydrated.bookingDraft;
 
   // ── Return ────────────────────────────────────────────────────────────────
   return {
@@ -393,5 +398,7 @@ export async function buildAgentContext(
     lastN,
     lastUserTextRaw,
     bookingDraft,
+    sessionLastIntent: hydrated.lastIntent,
+    sessionContextFresh: hydrated.fresh,
   };
 }

@@ -5,6 +5,33 @@ function isUndefinedTableOrColumn(e: unknown): boolean {
   return code === "42P01" || code === "42703";
 }
 
+/** Só altera se a coluna falta. O ALTER pega ACCESS EXCLUSIVE; não roda em todo boot. */
+async function ensureSessionContextColumn(): Promise<void> {
+  const found = await pool
+    .query<{ ok: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'client_ai_memory'
+           AND column_name = 'session_context'
+       ) AS ok`,
+    )
+    .catch(() => null);
+  if (!found || found.rows[0]?.ok) return;
+  const client = await pool.connect();
+  try {
+    await client.query(`SET lock_timeout = '3s'`);
+    await client.query(`SET statement_timeout = '10s'`);
+    await client.query(`ALTER TABLE public.client_ai_memory ADD COLUMN IF NOT EXISTS session_context jsonb`);
+  } catch {
+    // 42703: quem lê o contexto já trata coluna ausente.
+  } finally {
+    await client.query(`RESET statement_timeout`).catch(() => {});
+    await client.query(`RESET lock_timeout`).catch(() => {});
+    client.release();
+  }
+}
+
 /**
  * Ensures critical tables/columns exist in local/docker DBs.
  * This repo uses SQL migrations (supabase/), but docker volumes may start without them applied.
@@ -108,9 +135,7 @@ export async function ensureCriticalSchema(): Promise<void> {
        ADD COLUMN IF NOT EXISTS pending_intents jsonb`
     )
     .catch(() => {});
-  await pool
-    .query(`ALTER TABLE public.client_ai_memory ADD COLUMN IF NOT EXISTS session_context jsonb`)
-    .catch(() => {});
+  await ensureSessionContextColumn();
 
   await pool
     .query(

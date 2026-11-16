@@ -131,6 +131,7 @@ export async function getClientMemory(
     );
     if (!r.rows[0]) return null;
     const row = r.rows[0];
+    delete (row as { session_context?: unknown }).session_context;
     // Normalize arrays from DB (may come as postgres arrays or JSON)
     return {
       ...row,

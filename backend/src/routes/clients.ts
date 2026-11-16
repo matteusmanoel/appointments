@@ -234,7 +234,7 @@ clientsRouter.get("/:id/memory", async (req: Request, res: Response): Promise<vo
      WHERE m.client_id = $1 AND m.barbershop_id = $2`,
     [client.id, client.barbershop_id]
   );
-  res.json(r.rows[0] ?? null);
+  res.json(memoryWithoutSession(r.rows[0]));
 });
 
 // PATCH /api/clients/:id/memory — update notes_safe (human-editable field)
@@ -269,8 +269,14 @@ clientsRouter.patch("/:id/memory", async (req: Request, res: Response): Promise<
      RETURNING *`,
     [client.id, client.barbershop_id, parsed.data.notes_safe]
   );
-  res.json(r.rows[0]);
+  res.json(memoryWithoutSession(r.rows[0]));
 });
+
+function memoryWithoutSession(row: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  if (!row) return null;
+  const { session_context: _hidden, ...rest } = row;
+  return rest;
+}
 
 // GET /api/clients/by-phone/:phone/memory — memory lookup by phone (for InboxView)
 clientsRouter.get("/by-phone/:phone/memory", async (req: Request, res: Response): Promise<void> => {
@@ -294,7 +300,7 @@ clientsRouter.get("/by-phone/:phone/memory", async (req: Request, res: Response)
      LIMIT 1`,
     [barbershopId, phone, req.params.phone]
   );
-  res.json(r.rows[0] ?? null);
+  res.json(memoryWithoutSession(r.rows[0]));
 });
 
 clientsRouter.patch("/:id", async (req: Request, res: Response): Promise<void> => {

@@ -91,6 +91,18 @@ export type RunCompareOptions = {
 
 const EXAMPLES_DEFAULT_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../../scripts/examples");
 
+export const COMPARE_MAX_TOKEN_CAP = 2_000_000;
+export const COMPARE_MAX_RUNS_CAP = 20;
+
+/** Recusa NaN, zero, negativo e texto. O teto não pode ser desligado por um argumento inválido. */
+export function parseCompareLimit(raw: unknown, label: string, cap: number): number {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > cap) {
+    throw new Error(`${label} precisa ser um inteiro de 1 a ${cap.toLocaleString("pt-BR")}.`);
+  }
+  return n;
+}
+
 export class TokenBudgetExceeded extends Error {
   constructor(message: string) {
     super(message);
@@ -286,7 +298,7 @@ export function formatCompareMarkdown(report: CompareReport): string {
     `- Modelo: \`${report.model}\` (preço configurável em \`compare-pricing.ts\`: US$ ${price.input}/1M in, US$ ${price.output}/1M out)`,
     `- Rodadas por roteiro: ${report.maxRuns}`,
     `- Teto de tokens: ${report.maxTokens.toLocaleString("pt-BR")}`,
-    `- Tokens acumulados: ${report.promptTokens} in / ${report.completionTokens} out`,
+    `- Tokens acumulados: ${report.promptTokens} in / ${report.completionTokens} out (o modo openai interpreta slots; a reescrita de linguagem não roda neste comando, porque ele não injeta um languageRewriter)`,
     `- Custo estimado: US$ ${formatUsd(report.costUsd)}`,
   ];
   if (report.aborted) lines.push(`- **Abortado:** ${report.aborted}`);
@@ -317,8 +329,8 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
   assertLocalDatabaseUrl();
   const print = options.print ?? ((line: string) => process.stdout.write(`${line}\n`));
   const model = assertMiniModel(options.model ?? DEFAULT_COMPARE_MODEL);
-  const maxRuns = Math.max(1, options.maxRuns ?? DEFAULT_MAX_RUNS);
-  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
+  const maxRuns = parseCompareLimit(options.maxRuns ?? DEFAULT_MAX_RUNS, "--max-runs", COMPARE_MAX_RUNS_CAP);
+  const maxTokens = parseCompareLimit(options.maxTokens ?? DEFAULT_MAX_TOKENS, "--max-tokens", COMPARE_MAX_TOKEN_CAP);
   const requireKey = options.requireApiKey !== false;
   const examplesDir = options.examplesDir ?? EXAMPLES_DEFAULT_DIR;
 
@@ -350,14 +362,36 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
   let completionTokens = 0;
   let aborted: string | undefined;
 
+  const budgetMessage = () =>
+    `Teto de tokens excedido (${(promptTokens + completionTokens).toLocaleString("pt-BR")} > ${maxTokens.toLocaleString("pt-BR")}).`;
   const addUsage = (p: number, c: number) => {
     promptTokens += p;
     completionTokens += c;
     if (promptTokens + completionTokens > maxTokens) {
-      throw new TokenBudgetExceeded(
-        `Teto de tokens excedido (${(promptTokens + completionTokens).toLocaleString("pt-BR")} > ${maxTokens.toLocaleString("pt-BR")}).`,
-      );
+      throw new TokenBudgetExceeded(budgetMessage());
     }
+  };
+  const assertBudget = () => {
+    if (promptTokens + completionTokens >= maxTokens) {
+      throw new TokenBudgetExceeded(budgetMessage());
+    }
+  };
+  const countEmbeddings = (client: OpenAI): OpenAI => {
+    const embeddings = (client as unknown as { embeddings?: { create?: (...args: unknown[]) => Promise<{ usage?: { total_tokens?: number; prompt_tokens?: number } }> } }).embeddings;
+    if (!embeddings?.create) return client;
+    const create = embeddings.create.bind(embeddings);
+    return {
+      ...client,
+      embeddings: {
+        ...embeddings,
+        create: async (...args: unknown[]) => {
+          assertBudget();
+          const res = await create(...args);
+          addUsage(res?.usage?.total_tokens ?? res?.usage?.prompt_tokens ?? 0, 0);
+          return res;
+        },
+      },
+    } as OpenAI;
   };
 
   const prevInterp = process.env.AI_AGENT_SLOT_INTERPRET;
@@ -416,7 +450,8 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
           return { result, contractFailures: [] as string[] };
         };
         const noneRow = await runOnce({ id: file, kind: "example", run, mode: "none", exec });
-        if (!openai) openai = options.openai ?? (await loadLiveOpenAI());
+        if (!openai) openai = countEmbeddings(options.openai ?? (await loadLiveOpenAI()));
+        assertBudget();
         process.env.AI_AGENT_SLOT_INTERPRET = "true";
         process.env.AI_AGENT_LANGUAGE_REWRITE = "true";
         try {
@@ -444,6 +479,7 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
             const contractFailures: string[] = [];
             let result: SimulatorRunResult | undefined;
             for (const [index, turn] of scenario.turns.entries()) {
+              if (mode === "openai") assertBudget();
               const step = await runSimulator({
                 tenant: fx.barbershopId,
                 phone: raw.clientPhone,
@@ -471,7 +507,8 @@ export async function runCompare(options: RunCompareOptions): Promise<CompareRep
           }
         };
         const noneRow = await runOnce({ id: scenario.id, kind: "golden", run, mode: "none", exec });
-        if (!openai) openai = options.openai ?? (await loadLiveOpenAI());
+        if (!openai) openai = countEmbeddings(options.openai ?? (await loadLiveOpenAI()));
+        assertBudget();
         process.env.AI_AGENT_SLOT_INTERPRET = "true";
         process.env.AI_AGENT_LANGUAGE_REWRITE = "true";
         try {

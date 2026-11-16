@@ -4,7 +4,7 @@
  *
  *   npm run simulate:compare -- --tenant <slug> --out /tmp/navalhia-simulate-compare.md
  */
-import { runCompare } from "../ai/simulator/compare.js";
+import { parseCompareLimit, runCompare, COMPARE_MAX_RUNS_CAP, COMPARE_MAX_TOKEN_CAP } from "../ai/simulator/compare.js";
 import { assertLocalDatabaseUrl } from "../db/local-database-url.js";
 import { DEFAULT_COMPARE_MODEL, DEFAULT_MAX_RUNS, DEFAULT_MAX_TOKENS } from "../ai/simulator/compare-pricing.js";
 
@@ -24,6 +24,7 @@ Opções:
   --skip-goldens   Não roda os goldens
 
 O modo openai liga AI_AGENT_SLOT_INTERPRET e AI_AGENT_LANGUAGE_REWRITE só neste processo.
+A flag de reescrita não chama o modelo: este comando não injeta languageRewriter.
 Este comando não lê .env: exporte OPENAI_API_KEY (e DATABASE_URL) no terminal.
 Nada é enviado pelo WhatsApp. Não use contra clientes reais.`;
 }
@@ -67,8 +68,8 @@ async function main() {
       tenant: tenant || undefined,
       outPath: arg(args, ["--out", "-o"]),
       model: arg(args, ["--model"]) ?? DEFAULT_COMPARE_MODEL,
-      maxRuns: arg(args, ["--max-runs"]) ? Number(arg(args, ["--max-runs"])) : DEFAULT_MAX_RUNS,
-      maxTokens: arg(args, ["--max-tokens"]) ? Number(arg(args, ["--max-tokens"])) : DEFAULT_MAX_TOKENS,
+      maxRuns: parseCompareLimit(arg(args, ["--max-runs"]) ?? DEFAULT_MAX_RUNS, "--max-runs", COMPARE_MAX_RUNS_CAP),
+      maxTokens: parseCompareLimit(arg(args, ["--max-tokens"]) ?? DEFAULT_MAX_TOKENS, "--max-tokens", COMPARE_MAX_TOKEN_CAP),
       only: arg(args, ["--only"]),
       examples: skipExamples ? false : undefined,
       goldens: has(args, ["--skip-goldens"]) ? false : undefined,

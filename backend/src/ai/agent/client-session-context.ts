@@ -4,7 +4,8 @@
  * A conversa nova hidrata daqui quando ainda não tem rascunho próprio.
  */
 import { pool } from "../../db.js";
-import { parseBookingDraft, saveBookingDraft, type BookingDraft } from "../booking-draft.js";
+import { brPhoneMatchKeys, canonicalizeBrPhoneDigits, normalizeDigits } from "../../lib/phone-match.js";
+import { emptyBookingDraft, parseBookingDraft, saveBookingDraft, type BookingDraft } from "../booking-draft.js";
 import {
   emptyPendingIntents,
   parsePendingIntents,
@@ -19,22 +20,61 @@ export type ClientSessionContext = {
   updatedAt: string;
 };
 
-function phoneKeys(phone: string): string[] {
-  const digits = phone.replace(/\D/g, "");
-  if (!digits) return [];
-  const alt = digits.length === 10 ? `55${digits}` : digits.length > 10 ? digits.slice(-10) : digits;
-  return [...new Set([digits, alt])];
+/** Depois disso, a conversa nova não herda data, hora, card nem intenções. */
+export const SESSION_CONTEXT_FRESH_MS = 6 * 60 * 60 * 1000;
+
+/** Mesmas chaves do resto do agente (`brPhoneMatchKeys`), sem o recorte dos últimos 10 dígitos. */
+export function sessionPhoneKeys(phone: string): string[] {
+  const digits = normalizeDigits(phone);
+  if (digits.length < 10) return [];
+  const canonical = canonicalizeBrPhoneDigits(digits) ?? digits;
+  return brPhoneMatchKeys(canonical);
+}
+
+export function sessionBodiesMatch(a: ClientSessionContext, b: ClientSessionContext): boolean {
+  return (
+    JSON.stringify(a.bookingDraft) === JSON.stringify(b.bookingDraft) &&
+    JSON.stringify(a.pendingIntents) === JSON.stringify(b.pendingIntents) &&
+    a.lastIntent === b.lastIntent
+  );
+}
+
+/**
+ * Contexto fresco devolve o rascunho inteiro. Contexto velho ou rascunho já
+ * fechado não leva data, hora, card nem serviço: o de sempre continua na
+ * memória de preferências, e um serviço no rascunho pularia a pergunta.
+ */
+export function narrowSessionForHydration(
+  session: ClientSessionContext,
+  nowMs: number,
+): { bookingDraft: BookingDraft; pendingIntents: PendingIntents; fresh: boolean } {
+  const age = nowMs - Date.parse(session.updatedAt);
+  const stale = !Number.isFinite(age) || age > SESSION_CONTEXT_FRESH_MS;
+  const closed = session.bookingDraft.status === "closed";
+  if (!stale && !closed) {
+    return {
+      bookingDraft: session.bookingDraft,
+      pendingIntents: session.pendingIntents,
+      fresh: true,
+    };
+  }
+  return { bookingDraft: emptyBookingDraft(), pendingIntents: emptyPendingIntents(), fresh: false };
 }
 
 async function clientIdFor(barbershopId: string, clientPhone: string): Promise<string | null> {
-  const keys = phoneKeys(clientPhone);
+  const keys = sessionPhoneKeys(clientPhone);
   if (!keys.length) return null;
+  const canonical = canonicalizeBrPhoneDigits(normalizeDigits(clientPhone)) ?? keys[0];
   const r = await pool.query<{ id: string }>(
     `SELECT id FROM public.clients
      WHERE barbershop_id = $1
        AND regexp_replace(phone, '[^0-9]', '', 'g') = ANY($2::text[])
+     ORDER BY
+       CASE WHEN regexp_replace(phone, '[^0-9]', '', 'g') = $3 THEN 0 ELSE 1 END,
+       length(regexp_replace(phone, '[^0-9]', '', 'g')) DESC,
+       id
      LIMIT 1`,
-    [barbershopId, keys],
+    [barbershopId, keys, canonical],
   );
   return r.rows[0]?.id ?? null;
 }
@@ -79,6 +119,8 @@ export async function saveClientSessionContext(params: {
   bookingDraft: BookingDraft;
   pendingIntents: PendingIntents;
   lastIntent: string | null;
+  /** Início do turno. Uma execução mais antiga não cobre uma mais nova. */
+  updatedAt: string;
 }): Promise<void> {
   try {
     const clientId = await clientIdFor(params.barbershopId, params.clientPhone);
@@ -87,13 +129,17 @@ export async function saveClientSessionContext(params: {
       bookingDraft: params.bookingDraft,
       pendingIntents: params.pendingIntents.intents.length ? params.pendingIntents : emptyPendingIntents(),
       lastIntent: params.lastIntent,
-      updatedAt: new Date().toISOString(),
+      updatedAt: params.updatedAt,
     };
+    const current = await loadClientSessionContext(params.barbershopId, params.clientPhone);
+    if (current && sessionBodiesMatch(current, payload)) return;
     await pool.query(
       `INSERT INTO public.client_ai_memory (client_id, barbershop_id, session_context)
        VALUES ($1, $2, $3::jsonb)
        ON CONFLICT (client_id, barbershop_id) DO UPDATE
-         SET session_context = $3::jsonb, updated_at = now()`,
+         SET session_context = EXCLUDED.session_context, updated_at = now()
+       WHERE client_ai_memory.session_context IS NULL
+          OR COALESCE(client_ai_memory.session_context->>'updatedAt', '') <= EXCLUDED.session_context->>'updatedAt'`,
       [clientId, params.barbershopId, JSON.stringify(payload)],
     );
   } catch (e) {
@@ -103,22 +149,33 @@ export async function saveClientSessionContext(params: {
   }
 }
 
+export type HydratedSession = {
+  bookingDraft: BookingDraft;
+  lastIntent: string | null;
+  /** Verdadeiro só quando a conversa herdou um rascunho ainda aberto e recente. */
+  fresh: boolean;
+};
+
 /**
- * Conversa sem rascunho próprio herda o contexto do cliente (card incluso).
- * O TTL continua valendo: um card vencido entra, mas o «sim» não o executa.
+ * Conversa sem rascunho próprio herda o contexto do cliente.
+ * Card vencido entra se o contexto ainda está fresco; o TTL do card continua valendo.
  */
 export async function hydrateConversationContext(params: {
   barbershopId: string;
   clientPhone: string;
   conversationId: string;
-}): Promise<BookingDraft> {
+  nowMs?: number;
+}): Promise<HydratedSession> {
+  const empty: HydratedSession = { bookingDraft: parseBookingDraft(null), lastIntent: null, fresh: false };
   try {
     const row = await pool.query<{ booking_draft: unknown }>(
       `SELECT booking_draft FROM public.ai_conversation_runtime
        WHERE conversation_id = $1 AND booking_draft IS NOT NULL`,
       [params.conversationId],
     );
-    if (row.rows[0]) return parseBookingDraft(row.rows[0].booking_draft);
+    if (row.rows[0]) {
+      return { bookingDraft: parseBookingDraft(row.rows[0].booking_draft), lastIntent: null, fresh: false };
+    }
   } catch (e) {
     const code = (e as { code?: string }).code;
     if (code !== "42P01" && code !== "42703") {
@@ -127,10 +184,15 @@ export async function hydrateConversationContext(params: {
   }
 
   const prior = await loadClientSessionContext(params.barbershopId, params.clientPhone);
-  if (!prior) return parseBookingDraft(null);
-  await saveBookingDraft(params.conversationId, prior.bookingDraft);
-  if (prior.pendingIntents.intents.length) {
-    await savePendingIntents(params.conversationId, prior.pendingIntents);
+  if (!prior) return empty;
+  const narrowed = narrowSessionForHydration(prior, params.nowMs ?? Date.now());
+  await saveBookingDraft(params.conversationId, narrowed.bookingDraft);
+  if (narrowed.pendingIntents.intents.length) {
+    await savePendingIntents(params.conversationId, narrowed.pendingIntents);
   }
-  return prior.bookingDraft;
+  return {
+    bookingDraft: narrowed.bookingDraft,
+    lastIntent: narrowed.fresh ? prior.lastIntent : null,
+    fresh: narrowed.fresh,
+  };
 }

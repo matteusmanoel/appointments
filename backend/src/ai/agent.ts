@@ -2127,6 +2127,8 @@ export async function runAgent(
   let effectiveBarbershopId = _ctx.effectiveBarbershopId;
   let clientName = _ctx.clientName;
   let bookingDraft = _ctx.bookingDraft;
+  const sessionLastIntent = _ctx.sessionLastIntent;
+  const sessionContextFresh = _ctx.sessionContextFresh;
   const lastUserTextRaw = _ctx.lastUserTextRaw;
 
   async function rememberVisit(data: {
@@ -2923,6 +2925,8 @@ export async function runAgent(
     usualService: resolveUsualService({ favorites: clientFavorites, memory: clientMemory, catalog: catalogServices }),
     usualServiceAlreadySuggested: Boolean(bookingDraft.usualSuggested),
     usualServiceAccepted,
+    sessionLastIntent,
+    sessionContextFresh,
   });
   if (routing.primaryIntent === "hours") {
     const openNow = shopOpenStatusNow({
@@ -3340,6 +3344,7 @@ export async function runAgent(
       bookingDraft,
       pendingIntents: pending,
       lastIntent: routing.primaryIntent ?? null,
+      updatedAt: new Date(simulatorStartedAt).toISOString(),
     });
   }
 

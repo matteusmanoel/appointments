@@ -9,7 +9,7 @@ import { join } from "node:path";
 import type OpenAI from "openai";
 import { pool } from "../db.js";
 import { assertLocalDatabaseUrl } from "../db/local-database-url.js";
-import { runCompare } from "../ai/simulator/compare.js";
+import { COMPARE_MAX_RUNS_CAP, COMPARE_MAX_TOKEN_CAP, parseCompareLimit, runCompare } from "../ai/simulator/compare.js";
 import { assertMiniModel, estimateCostUsd, formatUsd } from "../ai/simulator/compare-pricing.js";
 import { resetWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { setSimulatorTraceEnabled } from "../ai/simulator/trace.js";
@@ -125,6 +125,14 @@ describe("simulate:compare", () => {
   afterAll(async () => {
     resetWhatsAppOutbound();
     if (barbershopId) await wipe(barbershopId);
+  });
+
+  it("recusa teto e rodadas inválidos", () => {
+    expect(() => parseCompareLimit("abc", "--max-tokens", COMPARE_MAX_TOKEN_CAP)).toThrow(/inteiro/);
+    expect(() => parseCompareLimit(0, "--max-tokens", COMPARE_MAX_TOKEN_CAP)).toThrow(/inteiro/);
+    expect(() => parseCompareLimit(-1, "--max-tokens", COMPARE_MAX_TOKEN_CAP)).toThrow(/inteiro/);
+    expect(() => parseCompareLimit("abc", "--max-runs", COMPARE_MAX_RUNS_CAP)).toThrow(/inteiro/);
+    expect(parseCompareLimit(1, "--max-runs", COMPARE_MAX_RUNS_CAP)).toBe(1);
   });
 
   it("só aceita modelos mini e calcula o custo da tabela", () => {
