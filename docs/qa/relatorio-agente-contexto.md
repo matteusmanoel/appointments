@@ -89,7 +89,17 @@ npx vitest run src/__tests__/agent-context-conversations.test.ts
 OPENAI_API_KEY=sk-... npm run simulate:compare -- --tenant <slug-da-barbearia-local> --out /tmp/navalhia-simulate-compare.md --model gpt-4o-mini --max-runs 1 --max-tokens 300000
 ```
 
-A rotação de instância (`npm run whatsapp:rotate`) está no outro PR. O runbook é `docs/qa/runbook-uazapi-instancia.md`.
+A rotação de instância está no PR https://github.com/matteusmanoel/appointments/pull/44 (`cd32ba7`). O runbook, nesse PR, é `docs/qa/runbook-uazapi-instancia.md`.
+
+```bash
+cd backend
+export DATABASE_URL='postgres://USUARIO:SENHA@127.0.0.1:5432/navalhia'
+export DATABASE_SSL=false
+export APP_ENCRYPTION_KEY='<a mesma chave da API>'
+npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --webhook-url https://<publico>/api/webhooks/uazapi
+npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --dry-run
+npm run whatsapp:rotate -- --remote
+```
 
 ## O que rodou aqui
 
