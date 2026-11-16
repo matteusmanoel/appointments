@@ -97,14 +97,16 @@ Para validar o fluxo completo (landing → pagamento → webhook → `/onboardin
 ### 1. Abrir o Stripe CLI listener
 
 ```bash
-stripe listen --forward-to localhost:3003/api/billing/webhook
+npm run stripe:listen
 ```
 
-Copie o `whsec_...` exibido e atualize no `.env`:
-```env
-STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxx
+O comando encaminha para `localhost:3003/api/billing/webhook` os eventos que o handler trata. Na CLI 1.55, `stripe listen --forward-to` sem `--events` encerra com erro.
+
+O `whsec_...` deste listener já está em `STRIPE_WEBHOOK_SECRET` no `.env` local e não muda ao reiniciar o `listen` na mesma conta. Se trocar de conta Stripe, rode `stripe listen --print-secret` com os mesmos `--events` e recrie a API para reler o `.env`:
+
+```bash
+docker compose up -d --force-recreate --no-deps api
 ```
-Reinicie a API (`docker compose restart api`) para carregar o novo secret.
 
 ### 2. Acessar a landing e fazer checkout
 

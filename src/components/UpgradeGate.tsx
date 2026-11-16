@@ -19,7 +19,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CheckoutModal } from "@/components/CheckoutModal";
+import { AccountCheckoutModal } from "@/components/CheckoutModal";
 import type { BillingPlan } from "@/lib/api";
 import { BILLING_PLANS } from "@/lib/billing-plans";
 import { cn } from "@/lib/utils";
@@ -227,7 +227,7 @@ export function UpgradeGate({
           {cardGrid}
         </div>
       </div>
-      <CheckoutModal
+      <AccountCheckoutModal
         open={checkoutOpen}
         onOpenChange={setCheckoutOpen}
         initialPlan={selectedPlan}

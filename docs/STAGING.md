@@ -85,7 +85,7 @@ Em staging use **sempre** Stripe em **Test mode** para evitar cobranças reais e
 
 - **Endpoint**: a API de staging deve expor o webhook publicamente, ex.: `https://<api-gateway-id>.execute-api.us-east-1.amazonaws.com/api/billing/webhook` ou `https://staging.api.navalhia.com.br/api/billing/webhook` (se domínio custom estiver configurado).
 - **Secret**:
-  - **Opção A (recomendada para validação local)**: use o Stripe CLI: `stripe listen --forward-to https://<staging-api-url>/api/billing/webhook`; o CLI exibe um `whsec_...` — use-o como `STRIPE_WEBHOOK_SECRET` ao testar localmente. Para o Lambda de staging receber eventos reais do Stripe, crie um endpoint no Dashboard.
+  - **Opção A (recomendada para validação local)**: use o Stripe CLI com a lista de eventos (a CLI 1.55 recusa `--forward-to` sem `--events`): `stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,customer.subscription.updated,customer.subscription.deleted,invoice.paid,invoice.payment_succeeded,invoice.payment_failed --forward-to https://<staging-api-url>/api/billing/webhook`. O `whsec_...` vai em `STRIPE_WEBHOOK_SECRET`. Para o Lambda de staging receber eventos reais do Stripe, crie um endpoint no Dashboard.
   - **Opção B**: no [Stripe Dashboard → Developers → Webhooks](https://dashboard.stripe.com/test/webhooks), adicione um endpoint apontando para a URL do webhook de staging (modo Test). Copie o **Signing secret** (`whsec_...`) e configure no deploy da API: `STRIPE_WEBHOOK_SECRET=whsec_...`.
 
 ### 3. Validação

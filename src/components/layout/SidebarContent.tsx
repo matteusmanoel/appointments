@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
-import { CheckoutModal } from "@/components/CheckoutModal";
+import { AccountCheckoutModal } from "@/components/CheckoutModal";
 import { isEssential } from "@/lib/plan";
 import { ThemeToggle, ConfirmDialog } from "@/components/shared";
 import { toastError } from "@/lib/toast-helpers";
@@ -152,7 +152,7 @@ export function SidebarContent({
               : "items-center gap-3 px-6 py-4",
           )}
         >
-          <div className="w-12 h-12 rounded-lg bg-sidebar-primary flex items-center justify-center flex-shrink-0 overflow-hidden">
+          <div className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
             <img
               src="/logo-v5.png"
               alt="NavalhIA"
@@ -395,7 +395,7 @@ export function SidebarContent({
           )}
         </div>
       </div>
-      <CheckoutModal
+      <AccountCheckoutModal
         open={checkoutOpen}
         onOpenChange={setCheckoutOpen}
         initialPlan="pro"

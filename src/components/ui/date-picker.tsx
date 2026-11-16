@@ -25,6 +25,8 @@ export interface DatePickerProps {
   triggerVariant?: TriggerVariant;
   /** On mobile: compact, verbose, or auto. Default: auto */
   mobileVariant?: MobileVariant;
+  /** Substitui o texto do botão quando a data está preenchida. */
+  formatDate?: (date: Date) => string;
 }
 
 function formatCompact(d: Date, locale: Locale) {
@@ -45,6 +47,7 @@ export function DatePicker({
   placeholder = "Selecione a data",
   triggerVariant = "verbose",
   mobileVariant = "auto",
+  formatDate,
 }: DatePickerProps) {
   const [open, setOpen] = React.useState(false);
   const isMobile = useIsMobile();
@@ -58,10 +61,11 @@ export function DatePicker({
 
   const displayValue = React.useMemo(() => {
     if (!value) return placeholder;
+    if (formatDate) return formatDate(value);
     return useVerboseTrigger
       ? formatVerbose(value, ptBR)
       : formatCompact(value, ptBR);
-  }, [value, useVerboseTrigger, placeholder]);
+  }, [formatDate, value, useVerboseTrigger, placeholder]);
 
   const handleSelect = React.useCallback(
     (d: Date | undefined) => {

@@ -28,7 +28,6 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
-  Scissors,
   Phone,
   MessageCircle,
   Copy,
@@ -51,6 +50,7 @@ import {
   clientsApi,
   servicesApi,
   type AppointmentListItem,
+  type UnavailabilityInterval,
   serviceLabel,
 } from "@/lib/api";
 import { getTimeSlotsForDay } from "@/lib/slots";
@@ -109,6 +109,8 @@ import {
   FiltersBar,
   FiltersBarField,
 } from "@/components/appointments/FiltersBar";
+import { DayTimeline, DayTimelineSkeleton } from "@/components/appointments/DayTimeline";
+import { formatTimelineDayLabel, WeekDayStrip } from "@/components/appointments/WeekDayStrip";
 
 const TIME_SLOTS = [
   "08:00",
@@ -137,14 +139,17 @@ const TIME_SLOTS = [
   "19:30",
 ];
 
-const BARBER_COLORS = [
-  "bg-accent",
-  "bg-info",
-  "bg-warning",
-  "bg-chart-4",
-] as const;
-
 type Appointment = AppointmentListItem;
+
+const WEEKDAY_KEYS = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+] as const;
 
 function appointmentDayKey(scheduledDate: string | null | undefined): string {
   return scheduledDate != null ? String(scheduledDate).slice(0, 10) : "";
@@ -221,43 +226,6 @@ function formatAppointmentDateTimeVerbose(
       ? String(scheduled_time).slice(0, 5)
       : "—";
   return `${dateStr} · ${timeStr}`;
-}
-
-function AgendamentosGradeDaySkeleton({ barberCount }: { barberCount: number }) {
-  const cols = Math.max(barberCount, 1);
-  return (
-    <div className="stat-card overflow-hidden flex-1 min-h-0 flex flex-col">
-      <div className="overflow-x-auto scrollbar-thin flex-1 min-h-0 flex flex-col p-1 sm:p-0">
-        <div
-          className="grid gap-2 mb-4 pb-4 border-b border-border min-w-[280px] shrink-0"
-          style={{
-            gridTemplateColumns: `80px repeat(${cols}, minmax(100px, 1fr))`,
-          }}
-        >
-          <Skeleton className="h-5 w-14" />
-          {Array.from({ length: cols }).map((_, i) => (
-            <Skeleton key={i} className="h-5 w-full min-w-[80px]" />
-          ))}
-        </div>
-        <div className="space-y-2 flex-1 min-h-0">
-          {Array.from({ length: 10 }).map((_, row) => (
-            <div
-              key={row}
-              className="grid gap-2"
-              style={{
-                gridTemplateColumns: `80px repeat(${cols}, 1fr)`,
-              }}
-            >
-              <Skeleton className="h-12 w-14 self-center" />
-              {Array.from({ length: cols }).map((_, c) => (
-                <Skeleton key={c} className="h-[52px] rounded-lg" />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function AgendamentosMonthSkeleton() {
@@ -813,6 +781,15 @@ export default function Agendamentos() {
   })();
   const slotsToShow = timeSlots.length > 0 ? timeSlots : TIME_SLOTS;
 
+  const dayUnavailability: UnavailabilityInterval[] = (() => {
+    const closure = closureForDate(selectedDate);
+    if (closure?.status === "closed") return [];
+    if (closure?.status === "open_partial") return closure.unavailability_intervals ?? [];
+    const day = barbershop?.business_hours?.[WEEKDAY_KEYS[selectedDate.getDay()]];
+    if (!day || typeof day !== "object") return [];
+    return day.unavailability_intervals ?? [];
+  })();
+
   const form = useForm<AppointmentFormValues>({
     resolver: zodResolver(appointmentFormSchema),
     defaultValues: {
@@ -1018,35 +995,6 @@ export default function Agendamentos() {
   const gradeDayAppointments = appointments;
   const gradeBarbers = barbers;
   const gradeMonthAppointments = monthAppointments;
-
-  /** Agendamento que cobre o slot (início ou continuação de serviço longo). */
-  const getAppointmentCoveringSlot = (
-    list: AppointmentListItem[],
-    time: string,
-    barberId: string,
-  ): Appointment | undefined => {
-    const slotMins = (() => {
-      const [h, m] = time.split(":").map(Number);
-      return (h ?? 0) * 60 + (m ?? 0);
-    })();
-    for (const apt of list) {
-      if (apt.status === "cancelled" || apt.status === "no_show") continue;
-      if (apt.barber_id !== barberId) continue;
-      const [h, m] = String(apt.scheduled_time).slice(0, 5).split(":").map(Number);
-      const startMins = (h ?? 0) * 60 + (m ?? 0);
-      const endMins =
-        apt.status === "completed" && apt.completed_time != null
-          ? (() => {
-              const [eh, em] = String(apt.completed_time).slice(0, 5).split(":").map(Number);
-              return (eh ?? 0) * 60 + (em ?? 0);
-            })()
-          : startMins + (apt.duration_minutes ?? 0);
-      if (slotMins >= startMins && slotMins < endMins) {
-        return apt as Appointment;
-      }
-    }
-    return undefined;
-  };
 
   const editSlotsToShow = (() => {
     if (!editDateStr || !/^\d{4}-\d{2}-\d{2}$/.test(editDateStr))
@@ -1333,19 +1281,25 @@ export default function Agendamentos() {
   return (
     <>
       <div className="animate-fade-in flex flex-col flex-1 min-h-0">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div
+          className={`flex flex-col md:flex-row md:items-center md:justify-between gap-4 ${
+            isMobile && viewMode === "grade" && gradeViewMode === "day" ? "mb-4" : "mb-8"
+          }`}
+        >
           <div className="page-header mb-0">
             <h1 className="page-title">Agendamentos</h1>
             <p className="page-subtitle">Gerencie sua agenda de atendimentos</p>
           </div>
-          <Button
-            className="btn-accent w-full md:w-fit"
-            onClick={openCreateFromButton}
-            aria-label="Novo agendamento"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Novo Agendamento
-          </Button>
+          {!(isMobile && viewMode === "grade" && gradeViewMode === "day") && (
+            <Button
+              className="btn-accent w-full md:w-fit"
+              onClick={openCreateFromButton}
+              aria-label="Novo agendamento"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Novo Agendamento
+            </Button>
+          )}
         </div>
 
         <Tabs
@@ -1368,7 +1322,7 @@ export default function Agendamentos() {
             value="grade"
             className="mt-0 pt-4 flex flex-col flex-1 min-h-0"
           >
-            <div className="stat-card mb-4 shrink-0">
+            <div className="stat-card mb-4 shrink-0 max-md:p-3">
               <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] gap-3 items-center">
                 <div className="flex flex-wrap items-center justify-start gap-2 min-w-0">
                   <Tabs
@@ -1400,6 +1354,12 @@ export default function Agendamentos() {
                   </Tabs>
                 </div>
                 <div className="flex flex-1 min-w-0 justify-center">
+                  {gradeViewMode === "day" && isMobile ? (
+                    <WeekDayStrip
+                      selectedDate={selectedDate}
+                      onSelect={setSelectedDate}
+                    />
+                  ) : (
                   <div className="flex items-center border rounded-xl overflow-hidden bg-muted/30">
                     <button
                       type="button"
@@ -1423,12 +1383,23 @@ export default function Agendamentos() {
                     >
                       <ChevronLeft className="w-6 h-6 text-muted-foreground" />
                     </button>
-                    <div className="w-[320px] min-h-[3.5rem] h-full flex items-center justify-center shrink-0 border-x border-border">
+                    {gradeViewMode === "day" && (
+                      <button
+                        type="button"
+                        className="px-4 h-14 text-sm font-medium border-l border-border hover:bg-muted"
+                        onClick={() => setSelectedDate(new Date())}
+                      >
+                        Hoje
+                      </button>
+                    )}
+                    <div
+                      className={`${gradeViewMode === "day" ? "w-[220px]" : "w-[320px]"} min-h-[3.5rem] h-full flex items-center justify-center shrink-0 border-x border-border`}
+                    >
                       {gradeViewMode === "day" && (
                         <DatePicker
                           value={selectedDate}
                           onChange={(d) => d && setSelectedDate(d)}
-                          triggerVariant="verbose"
+                          formatDate={formatTimelineDayLabel}
                           className="w-full min-w-0 flex items-center justify-center gap-2 text-base font-medium border-0 rounded-none h-full"
                         />
                       )}
@@ -1470,6 +1441,7 @@ export default function Agendamentos() {
                       <ChevronRight className="w-6 h-6 text-muted-foreground" />
                     </button>
                   </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                   <div className="relative min-w-[180px]">
@@ -1509,7 +1481,7 @@ export default function Agendamentos() {
                     />
                   )}
                   {isLoading && (
-                    <AgendamentosGradeDaySkeleton
+                    <DayTimelineSkeleton
                       barberCount={Math.max(barbers.length, 3)}
                     />
                   )}
@@ -1543,119 +1515,25 @@ export default function Agendamentos() {
                     </div>
                   )}
                   {!isLoading && timeSlots.length > 0 && barbers.length > 0 && (
-                    <div className="stat-card overflow-hidden flex-1 min-h-0 flex flex-col">
-                      <div className="overflow-x-auto scrollbar-thin flex-1 min-h-0 flex flex-col">
-                        <div
-                          className="grid gap-2 mb-4 pb-4 border-b border-border min-w-[280px] shrink-0"
-                          style={{
-                            gridTemplateColumns: `80px repeat(${gradeBarbers.length}, minmax(100px, 1fr))`,
-                          }}
-                        >
-                          <div className="text-sm font-medium text-muted-foreground">
-                            Horário
-                          </div>
-                          {gradeBarbers.map((barber, i) => (
-                            <div
-                              key={barber.id}
-                              className="flex items-center gap-2"
-                            >
-                              <div
-                                className={`w-3 h-3 rounded-full shrink-0 ${BARBER_COLORS[i % BARBER_COLORS.length]}`}
-                              />
-                              <span className="text-sm font-medium text-foreground truncate">
-                                {barber.name}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-
-                        <div className="space-y-1 flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-                          {slotsToShow.map((time) => (
-                            <div
-                              key={time}
-                              className="grid gap-2"
-                              style={{
-                                gridTemplateColumns: `80px repeat(${gradeBarbers.length}, 1fr)`,
-                              }}
-                            >
-                              <div className="text-sm text-muted-foreground py-3 font-medium">
-                                {time}
-                              </div>
-                              {gradeBarbers.map((barber, i) => {
-                                const appointment = getAppointmentCoveringSlot(
-                                  gradeDayAppointments,
-                                  time,
-                                  barber.id,
-                                );
-                                const colorClass =
-                                  BARBER_COLORS[i % BARBER_COLORS.length];
-                                if (appointment) {
-                                  return (
-                                    <div
-                                      key={`${time}-${barber.id}`}
-                                      role="button"
-                                      tabIndex={0}
-                                      onClick={() => openEdit(appointment)}
-                                      onKeyDown={(e) => {
-                                        if (
-                                          e.key === "Enter" ||
-                                          e.key === " "
-                                        ) {
-                                          e.preventDefault();
-                                          openEdit(appointment);
-                                        }
-                                      }}
-                                      className={`w-full text-left ${colorClass}/10 border-l-4 ${colorClass} rounded-lg p-3 cursor-pointer hover:shadow-md transition-shadow`}
-                                    >
-                                      <div className="flex items-start justify-between">
-                                        <div>
-                                          <p className="font-medium text-foreground text-sm">
-                                            {appointment.client_name}
-                                          </p>
-                                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-                                            <Scissors className="w-3 h-3" />
-                                            {serviceLabel(
-                                              appointment.service_names,
-                                              appointment.service_name,
-                                            )}
-                                          </p>
-                                          <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                                            <Phone className="w-3 h-3" />
-                                            {appointment.client_phone}
-                                          </p>
-                                        </div>
-                                        <span
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          <EntityActionsMenu
-                                            onEdit={() => openEdit(appointment)}
-                                            onDelete={() =>
-                                              setCancelTarget(appointment)
-                                            }
-                                            aria-label="Menu do agendamento"
-                                          />
-                                        </span>
-                                      </div>
-                                    </div>
-                                  );
-                                }
-                                return (
-                                  <button
-                                    type="button"
-                                    key={`${time}-${barber.id}`}
-                                    className="rounded-lg border border-dashed border-border hover:border-accent hover:bg-accent/5 transition-colors cursor-pointer min-h-[52px] flex items-center justify-center"
-                                    onClick={() => openCreate(time, barber.id)}
-                                    aria-label={`Adicionar agendamento ${time} para ${barber.name}`}
-                                  >
-                                    <Plus className="w-4 h-4 text-muted-foreground" />
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
+                    <DayTimeline
+                      barbers={gradeBarbers}
+                      appointments={gradeDayAppointments}
+                      slots={timeSlots}
+                      date={selectedDate}
+                      unavailability={dayUnavailability}
+                      onOpen={openEdit}
+                      onCreate={openCreate}
+                    />
+                  )}
+                  {isMobile && (
+                    <button
+                      type="button"
+                      className="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={openCreateFromButton}
+                      aria-label="Novo agendamento"
+                    >
+                      <Plus className="h-6 w-6" />
+                    </button>
                   )}
                 </>
               )}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,8 @@ vi.hoisted(() => {
 });
 
 const createAppointment = vi.fn();
+const rescheduleAppointmentByToken = vi.fn();
+const cancelAppointmentByToken = vi.fn();
 let shopPhone: string | undefined = undefined;
 vi.mock("@/lib/api", () => ({
   publicApi: {
@@ -20,6 +22,8 @@ vi.mock("@/lib/api", () => ({
     getBarbers: vi.fn(async () => [{ id: "b1", name: "João", schedule: null }]),
     getAvailability: vi.fn(async () => []),
     createAppointment: (...a: unknown[]) => createAppointment(...a),
+    rescheduleAppointmentByToken: (...a: unknown[]) => rescheduleAppointmentByToken(...a),
+    cancelAppointmentByToken: (...a: unknown[]) => cancelAppointmentByToken(...a),
   },
 }));
 
@@ -58,7 +62,11 @@ describe("PublicBooking: tela de sucesso do cliente", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 10, 16, 6, 0, 0));
     createAppointment.mockReset();
+    rescheduleAppointmentByToken.mockReset();
+    cancelAppointmentByToken.mockReset();
     createAppointment.mockResolvedValue({ public_token: "tok123" });
+    rescheduleAppointmentByToken.mockResolvedValue({ id: "apt1" });
+    cancelAppointmentByToken.mockResolvedValue({ ok: true, message: "Agendamento cancelado" });
     shopPhone = undefined;
   });
   afterEach(() => vi.useRealTimers());
@@ -72,24 +80,55 @@ describe("PublicBooking: tela de sucesso do cliente", () => {
     expect(screen.getByText(/A barbearia vai confirmar o seu horário/)).toBeInTheDocument();
   });
 
-  it("copiar link dá feedback e copia o link certo (reagendar e cancelar)", async () => {
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  it("com telefone, oferece Reagendar, Cancelar e WhatsApp, sem links de copiar", async () => {
+    shopPhone = "11988887777";
     renderPage();
     await bookUntilSuccess();
-    fireEvent.click(screen.getByRole("button", { name: /Copiar link de reagendar/ }));
-    await waitFor(() => expect(screen.getByTestId("copy-feedback")).toHaveTextContent("Link de reagendar copiado."));
-    expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/reagendar/tok123`);
-    fireEvent.click(screen.getByRole("button", { name: /Copiar link de cancelar/ }));
-    await waitFor(() => expect(screen.getByTestId("copy-feedback")).toHaveTextContent("Link de cancelar copiado."));
-    expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/cancelar/tok123`);
+    expect(screen.getByRole("button", { name: "Reagendar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "WhatsApp" })).toHaveAttribute("href", expect.stringContaining("wa.me/5511988887777"));
+    expect(screen.queryByRole("link", { name: /reagendar/i })).toBeNull();
+    expect(screen.queryByText(/Copiar link/)).toBeNull();
   });
 
-  it("sem permissão para copiar, avisa em vez de falhar em silêncio", async () => {
-    Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn(async () => { throw new Error("denied"); }) }, configurable: true });
+  it("Reagendar retoma o fluxo com a escolha anterior e confirma pelo reagendamento", async () => {
     renderPage();
     await bookUntilSuccess();
-    fireEvent.click(screen.getByRole("button", { name: /Copiar link de reagendar/ }));
-    await waitFor(() => expect(screen.getByTestId("copy-feedback")).toHaveTextContent(/Não foi possível copiar/));
+    fireEvent.click(screen.getByRole("button", { name: "Reagendar" }));
+    expect(screen.queryByText("RESUMO")).toBeNull();
+    expect(screen.queryByText(/Etapa/)).toBeNull();
+    const corte = screen.getByRole("button", { name: /Corte/ });
+    expect(corte).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(screen.getByRole("button", { name: "João" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(screen.getByRole("button", { name: "10:00" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(screen.getByText("RESUMO")).toBeInTheDocument();
+    expect(screen.queryByText("Pedido")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    await screen.findByText("Agendamento solicitado!");
+    expect(rescheduleAppointmentByToken).toHaveBeenCalledWith(
+      "tok123",
+      expect.objectContaining({
+        scheduled_date: "2026-11-16",
+        scheduled_time: "10:00",
+        barber_id: "b1",
+      }),
+    );
+    expect(createAppointment).toHaveBeenCalledTimes(1);
+  });
+
+  it("Cancelar pede confirmação e só então chama a API", async () => {
+    renderPage();
+    await bookUntilSuccess();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Cancelar este horário?")).toBeInTheDocument();
+    expect(cancelAppointmentByToken).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar horário" }));
+    await screen.findByText("Agendamento cancelado");
+    expect(cancelAppointmentByToken).toHaveBeenCalledWith("tok123");
   });
 });

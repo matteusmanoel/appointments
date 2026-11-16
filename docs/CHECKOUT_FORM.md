@@ -101,17 +101,13 @@ stripe login
 
 Com o backend rodando (ex.: porta 3000):
 
+Com a API no Docker (porta publicada **3003**):
+
 ```bash
-stripe listen --forward-to localhost:3000/api/billing/webhook
+npm run stripe:listen
 ```
 
-O CLI exibe um **webhook signing secret** (começa com `whsec_...`). Use-o no `.env` do backend:
-
-```env
-STRIPE_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-**Importante:** esse secret muda a cada execução de `stripe listen`. Ao reiniciar o comando, atualize o `STRIPE_WEBHOOK_SECRET` no `.env` e reinicie o backend.
+O `whsec_...` impresso na primeira execução vai para `STRIPE_WEBHOOK_SECRET`. Na CLI atual ele permanece o mesmo entre reinícios do `listen` na mesma conta. `docker compose restart` não relê o `.env`; use `docker compose up -d --force-recreate --no-deps api`.
 
 ### 3. Testar o fluxo
 

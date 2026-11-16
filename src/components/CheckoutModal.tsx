@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   EmbeddedCheckoutProvider,
@@ -17,7 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatPhoneAsTyped } from "@/lib/input-masks";
-import { billingApi, type BillingPlan } from "@/lib/api";
+import { billingApi, barbershopsApi, type BillingPlan } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { BILLING_PLANS } from "@/lib/billing-plans";
 import { checkoutErrorMessage } from "@/lib/checkout-validation";
 import {
@@ -104,14 +106,26 @@ function AdvanceButton({
 }
 
 
+/** Conta já autenticada no painel: e-mail, telefone e nome não são perguntados de novo. */
+export type CheckoutAccount = {
+  email: string;
+  phone: string;
+  barbershopName: string;
+  currentPlan: BillingPlan;
+  /** Nome e telefone da barbearia ainda estão carregando. */
+  loading?: boolean;
+};
+
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** When opening for upgrade from Essential, pass "pro" to preselect Profissional. */
   initialPlan?: BillingPlan;
+  /** Preenchido no painel admin. A landing e o login continuam no cadastro completo. */
+  account?: CheckoutAccount;
 };
 
-export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props) {
+export function CheckoutModal({ open, onOpenChange, initialPlan = "pro", account }: Props) {
   const stripePromise = useMemo(
     () => (open && STRIPE_PK ? loadStripe(STRIPE_PK) : null),
     [open],
@@ -131,33 +145,56 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
   const [riskNudge, setRiskNudge] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const step = STEPS[stepIndex];
-  const progress = ((stepIndex + 1) / STEPS.length) * 100;
+  const identity = {
+    email: account && isValidEmail(account.email) ? account.email.trim() : email,
+    phone: account && phoneDigits(account.phone).length >= 10 ? account.phone.trim() : phone,
+    name: account && account.barbershopName.trim() ? account.barbershopName.trim() : barbershopName,
+  };
+  const accountSkipsIdentity =
+    !!account &&
+    (account.loading ||
+      (isValidEmail(identity.email) &&
+        phoneDigits(identity.phone).length >= 10 &&
+        identity.name.trim().length > 0));
+  const steps = account
+    ? accountSkipsIdentity
+      ? [STEPS[3]]
+      : [
+          ...(!isValidEmail(identity.email) ? [STEPS[0]] : []),
+          ...(phoneDigits(identity.phone).length < 10 ? [STEPS[1]] : []),
+          ...(!identity.name.trim() ? [STEPS[2]] : []),
+          STEPS[3],
+        ]
+    : STEPS;
+  const safeIndex = Math.min(stepIndex, Math.max(steps.length - 1, 0));
+  const step = steps[safeIndex];
+  const progress = ((safeIndex + 1) / steps.length) * 100;
+  const onCurrentPlan = !!account && plan === account.currentPlan;
 
-  const validateStep = (index: number): string => {
-    if (index === 0) {
-      if (!email.trim()) return "E-mail é obrigatório";
-      if (!isValidEmail(email)) return "E-mail inválido";
+  const validateStepId = (id: (typeof STEPS)[number]["id"]): string => {
+    if (id === "email") {
+      if (!identity.email.trim()) return "E-mail é obrigatório";
+      if (!isValidEmail(identity.email)) return "E-mail inválido";
     }
-    if (index === 1) {
-      const ph = phoneDigits(phone);
+    if (id === "phone") {
+      const ph = phoneDigits(identity.phone);
       if (!ph) return "Telefone é obrigatório";
       if (ph.length < 10) return "Telefone deve ter pelo menos 10 dígitos";
     }
-    if (index === 2 && !barbershopName.trim()) return "Nome é obrigatório";
+    if (id === "name" && !identity.name.trim()) return "Nome é obrigatório";
     return "";
   };
 
   const goNext = () => {
-    const message = validateStep(stepIndex);
+    const message = validateStepId(step.id);
     setFieldError(message);
     if (message) {
       inputRef.current?.focus();
       return;
     }
-    if (stepIndex >= STEPS.length - 1) return;
+    if (safeIndex >= steps.length - 1) return;
     setSlideDir("next");
-    setStepIndex((i) => i + 1);
+    setStepIndex(safeIndex + 1);
   };
 
   const goBack = () => {
@@ -169,11 +206,12 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
   };
 
   const startCheckout = async () => {
-    for (let i = 0; i < STEPS.length - 1; i += 1) {
-      const message = validateStep(i);
+    if (account?.loading || onCurrentPlan) return;
+    for (let i = 0; i < steps.length - 1; i += 1) {
+      const message = validateStepId(steps[i].id);
       if (message) {
         setFieldError(message);
-        setSlideDir(i < stepIndex ? "prev" : "next");
+        setSlideDir(i < safeIndex ? "prev" : "next");
         setStepIndex(i);
         return;
       }
@@ -187,9 +225,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     setError(null);
     setLoading(true);
     const body = {
-      barbershop_name: barbershopName.trim(),
-      phone: phone.trim(),
-      email: email.trim(),
+      barbershop_name: identity.name.trim(),
+      phone: identity.phone.trim(),
+      email: identity.email.trim(),
       plan,
       whatsapp_risk_accepted: true as const,
       whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
@@ -214,7 +252,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (stepIndex < STEPS.length - 1) {
+    if (safeIndex < steps.length - 1) {
       goNext();
       return;
     }
@@ -231,9 +269,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
     try {
       trackInitiateCheckout(plan);
       const { url } = await billingApi.createCheckout({
-        barbershop_name: barbershopName.trim(),
-        phone: phone.trim(),
-        email: email.trim(),
+        barbershop_name: identity.name.trim(),
+        phone: identity.phone.trim(),
+        email: identity.email.trim(),
         plan,
         whatsapp_risk_accepted: true,
         whatsapp_risk_notice_version: WHATSAPP_RISK_NOTICE_VERSION,
@@ -305,7 +343,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                 aria-hidden
               />
               <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/70">
-                Assinar NavalhIA
+                {account ? "Seu plano" : "Assinar NavalhIA"}
               </p>
             </div>
 
@@ -329,7 +367,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     {step.question}
                   </DialogTitle>
                   <DialogDescription className="text-sm text-white/55">
-                    {step.incentive}
+                    {account && step.id === "plan"
+                      ? "O plano em uso está marcado. Escolha outro para alterar a assinatura."
+                      : step.incentive}
                   </DialogDescription>
                 </DialogHeader>
                 {step.id === "email" && (
@@ -355,7 +395,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     />
                     <AdvanceButton
                       typed={email.trim().length > 0}
-                      ready={validateStep(0) === ""}
+                      ready={validateStepId("email") === ""}
                       onAdvance={goNext}
                     />
                     </div>
@@ -385,7 +425,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     />
                     <AdvanceButton
                       typed={phoneDigits(phone).length > 0}
-                      ready={validateStep(1) === ""}
+                      ready={validateStepId("phone") === ""}
                       onAdvance={goNext}
                     />
                     </div>
@@ -413,7 +453,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     />
                     <AdvanceButton
                       typed={barbershopName.trim().length > 0}
-                      ready={validateStep(2) === ""}
+                      ready={validateStepId("name") === ""}
                       onAdvance={goNext}
                     />
                     </div>
@@ -425,6 +465,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                     {BILLING_PLANS.map((p) => {
                       const selected = plan === p.id;
                       const featured = p.id === "pro";
+                      const isCurrent = account?.currentPlan === p.id;
                       return (
                         <button
                           key={p.id}
@@ -457,7 +498,14 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                             )}
                           >
                             <span className="flex flex-col items-start gap-1">
-                              <span className="font-display text-xl font-bold leading-tight text-white md:text-2xl">{p.label}</span>
+                              <span className="flex flex-wrap items-center gap-2">
+                                <span className="font-display text-xl font-bold leading-tight text-white md:text-2xl">{p.label}</span>
+                                {isCurrent && (
+                                  <span className="rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                                    Plano atual
+                                  </span>
+                                )}
+                              </span>
                               <span className="font-display text-xl font-bold leading-tight text-white md:text-2xl">{p.price}</span>
                             </span>
                             <span className="hidden text-sm text-white/40 md:block">{p.desc}</span>
@@ -496,7 +544,7 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
 
             {step.id !== "plan" && (
               <div className="hidden items-center gap-3 px-6 pb-4 md:flex">
-                {stepIndex > 0 && (
+                {safeIndex > 0 && (
                   <button
                     type="button"
                     onClick={goBack}
@@ -559,18 +607,26 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                 )}
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={loading || !!account?.loading || onCurrentPlan}
                   className="lp-shimmer relative w-full overflow-hidden rounded-xl bg-primary py-3 text-sm font-semibold text-white shadow-[0_0_28px_hsl(239_84%_62%/0.55),0_0_0_1px_hsl(270_80%_72%/0.95)] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500" />
-                  <span className="relative z-10">{loading ? "Preparando..." : "Ir para pagamento"}</span>
+                  <span className="relative z-10">
+                    {loading
+                      ? "Preparando..."
+                      : account?.loading
+                        ? "Carregando..."
+                        : onCurrentPlan
+                          ? "Plano atual"
+                          : "Ir para pagamento"}
+                  </span>
                 </button>
               </footer>
             ) : (
               <footer className="shrink-0 border-t border-white/10 px-6 py-4">
                 <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/55">
                   <span>
-                    Etapa {stepIndex + 1} de {STEPS.length} · {step.label}
+                    Etapa {safeIndex + 1} de {steps.length} · {step.label}
                   </span>
                   <span className="tabular-nums">{Math.round(progress)}%</span>
                 </div>
@@ -578,9 +634,9 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
                   className="h-2 overflow-hidden rounded-full bg-white/10"
                   role="progressbar"
                   aria-valuemin={1}
-                  aria-valuemax={STEPS.length}
-                  aria-valuenow={stepIndex + 1}
-                  aria-valuetext={`Etapa ${stepIndex + 1} de ${STEPS.length}: ${step.label}`}
+                  aria-valuemax={steps.length}
+                  aria-valuenow={safeIndex + 1}
+                  aria-valuetext={`Etapa ${safeIndex + 1} de ${steps.length}: ${step.label}`}
                 >
                   <div
                     className="checkout-progress-fill h-full rounded-full bg-gradient-to-r from-primary to-violet-400 shadow-[0_0_12px_hsl(239_84%_62%/0.65)]"
@@ -643,5 +699,32 @@ export function CheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Props
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Checkout aberto de dentro do painel: só a escolha de plano, com o plano em uso marcado. */
+export function AccountCheckoutModal({ open, onOpenChange, initialPlan = "pro" }: Omit<Props, "account">) {
+  const { profile } = useAuth();
+  const { data: shop, isFetching } = useQuery({
+    queryKey: ["barbershop"],
+    queryFn: () => barbershopsApi.get(),
+    enabled: open,
+  });
+  const fromProfile = profile?.barbershops?.find((b) => b.id === profile.barbershop_id)?.name ?? "";
+  const account: CheckoutAccount = {
+    email: profile?.email ?? "",
+    phone: shop?.phone ?? "",
+    barbershopName: shop?.name?.trim() || fromProfile,
+    currentPlan: profile?.billing_plan ?? "essential",
+    loading: open && isFetching && !shop,
+  };
+
+  return (
+    <CheckoutModal
+      open={open}
+      onOpenChange={onOpenChange}
+      initialPlan={initialPlan}
+      account={account}
+    />
   );
 }

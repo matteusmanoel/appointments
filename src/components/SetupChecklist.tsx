@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { CheckCircle2, Circle, Settings, Scissors, Users, MessageCircle, Lock } from "lucide-react";
 import { hasPro } from "@/lib/plan";
 import type { Profile } from "@/contexts/AuthContext";
-import { CheckoutModal } from "@/components/CheckoutModal";
+import { AccountCheckoutModal } from "@/components/CheckoutModal";
 import { confirmHours, hoursStepDone, summarizeBusinessHours } from "@/lib/business-hours-setup";
 
 type SetupChecklistProps = {
@@ -163,7 +163,7 @@ export function SetupChecklist({
           );
         })}
       </ul>
-      <CheckoutModal open={checkoutOpen} onOpenChange={setCheckoutOpen} initialPlan="pro" />
+      <AccountCheckoutModal open={checkoutOpen} onOpenChange={setCheckoutOpen} initialPlan="pro" />
     </div>
   );
 }
