@@ -3,26 +3,30 @@
  *
  *   npm run whatsapp:rotate -- --tenant <slug> --webhook-url https://<publico>/api/webhooks/uazapi
  *
- * Pede a URL do servidor e o token no terminal, sem eco. Não lê nem edita .env.
- * Guarda de banco local. --remote só imprime os passos da AWS. --dry-run não grava.
+ * URL e token vêm do prompt sem eco, ou de UAZAPI_BASE_URL e UAZAPI_NEW_TOKEN.
+ * Não lê nem edita .env. Guarda de banco local. --remote só imprime os passos da AWS.
  */
 import { emitKeypressEvents } from "node:readline";
 import { rotateUazapiInstance, remoteRotateSteps, sanitizePublicUrl } from "../integrations/whatsapp/rotate-uazapi.js";
 import { assertLocalDatabaseUrl } from "../db/local-database-url.js";
+import { redactWebhookSecrets } from "../integrations/whatsapp/webhook-auth.js";
 
 function usage(): string {
   return `Uso:
   npm run whatsapp:rotate -- --tenant <slug|uuid> [--webhook-url https://<publico>/api/webhooks/uazapi]
-                             [--dry-run] [--remote]
+                             [--dry-run] [--remote] [--allow-http]
 
-O comando pede a URL do servidor Uazapi e o token da instância (sem eco).
-Não imprime token, URL com credenciais ou headers. Não edita o .env.
+A URL do servidor e o token da instância vêm do prompt sem eco, ou das variáveis
+UAZAPI_BASE_URL e UAZAPI_NEW_TOKEN. Não coloque esses valores na linha de comando.
+Não imprime token, URL com query, headers ou corpo da resposta. Não edita o .env.
 
   --tenant, -t     Slug ou UUID da barbearia
-  --webhook-url    URL pública do backend (…/api/webhooks/uazapi)
+  --webhook-url    URL pública https do backend (…/api/webhooks/uazapi)
   --instance-name  Nome da instância, se a API de status não trouxer
   --dry-run        Não grava no banco e não chama a Uazapi
-  --remote         Só imprime os passos para a AWS; não grava nada
+  --remote         Só imprime os passos para a AWS; não grava nada e não pede token
+  --allow-http     Laboratório: HTTP em localhost e host privado na URL da Uazapi.
+                   O webhook continua https e público.
 `;
 }
 
@@ -49,7 +53,7 @@ async function promptHidden(label: string): Promise<string> {
   const stdout = process.stdout;
   stdout.write(label);
   if (!stdin.isTTY) {
-    throw new Error("Este terminal não aceita digitação oculta. Rode em um TTY, ou use o modo de testes.");
+    throw new Error("Este terminal não aceita digitação oculta. Rode em um TTY, ou defina UAZAPI_BASE_URL e UAZAPI_NEW_TOKEN.");
   }
   emitKeypressEvents(stdin);
   if (stdin.isRaw === false) stdin.setRawMode?.(true);
@@ -83,8 +87,39 @@ async function promptHidden(label: string): Promise<string> {
   });
 }
 
+function rejectSecretArgs(args: string[]): void {
+  const forbidden = args.some(
+    (a) => a === "--token" || a === "--uazapi-url" || a.startsWith("--token=") || a.startsWith("--uazapi-url="),
+  );
+  if (!forbidden) return;
+  process.stderr.write(
+    "Não passe o token nem a URL da Uazapi na linha de comando. Use o prompt sem eco, ou as variáveis UAZAPI_NEW_TOKEN e UAZAPI_BASE_URL.\n",
+  );
+  process.exit(1);
+}
+
+function publicFailure(e: unknown, secrets: string[]): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  let msg = redactWebhookSecrets(raw);
+  for (const secret of secrets) {
+    const value = secret.trim();
+    if (value.length < 4) continue;
+    msg = msg.split(value).join("[redacted]");
+  }
+  msg = msg.replace(/[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s'")\]]+/g, (found) => {
+    try {
+      return sanitizePublicUrl(found);
+    } catch {
+      return "[url]";
+    }
+  });
+  msg = msg.replace(/\b(token|authorization|admintoken|apikey|cookie)\b\s*[:=]\s*\S+/gi, "$1=[redacted]");
+  return msg;
+}
+
 async function main() {
   const args = process.argv.slice(2);
+  rejectSecretArgs(args);
   if (has(args, ["-h", "--help"]) || args.length === 0) {
     process.stdout.write(`${usage()}\n`);
     process.exit(args.length === 0 ? 1 : 0);
@@ -96,28 +131,21 @@ async function main() {
   }
   const remote = has(args, ["--remote"]);
   const dryRun = has(args, ["--dry-run"]);
-  if (!remote) {
-    try {
-      assertLocalDatabaseUrl();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`${msg}\nUse --remote para só imprimir os passos da AWS.\n`);
-      process.exit(1);
-    }
-  } else if (dryRun || true) {
-    // --remote não pede token se o operador só quer os passos; ainda assim pedimos se quiserem o texto completo.
-  }
-
-  if (remote && !arg(args, ["--uazapi-url"]) && !process.stdin.isTTY) {
+  if (remote) {
     for (const line of remoteRotateSteps({ webhookUrl: arg(args, ["--webhook-url"]) })) {
       process.stdout.write(`${line}\n`);
     }
     return;
   }
+  try {
+    assertLocalDatabaseUrl();
+  } catch (e) {
+    process.stderr.write(`${publicFailure(e, [])}\nUse --remote para só imprimir os passos da AWS.\n`);
+    process.exit(1);
+  }
 
-  const uazapiUrl = (arg(args, ["--uazapi-url"]) ?? (await promptHidden("URL do servidor Uazapi (sem eco): "))).trim();
-  const token = (arg(args, ["--token"]) ?? (await promptHidden("Token da instância (sem eco): "))).trim();
-  // --token / --uazapi-url existem só para testes internos; o help não os anuncia para não incentivar token na linha de comando.
+  const uazapiUrl = (process.env.UAZAPI_BASE_URL ?? "").trim() || (await promptHidden("URL do servidor Uazapi (sem eco): ")).trim();
+  const token = (process.env.UAZAPI_NEW_TOKEN ?? "").trim() || (await promptHidden("Token da instância (sem eco): ")).trim();
   try {
     await rotateUazapiInstance({
       tenant,
@@ -127,12 +155,17 @@ async function main() {
       webhookUrl: arg(args, ["--webhook-url"]),
       dryRun,
       remote,
+      allowLocal: has(args, ["--allow-http"]),
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    process.stderr.write(`${sanitizePublicUrl(msg) === msg ? msg : "Falha ao trocar a instância."}\n`);
+    const secrets = [token, process.env.UAZAPI_NEW_TOKEN ?? "", process.env.WHATSAPP_WEBHOOK_SECRET ?? ""];
+    process.stderr.write(`${publicFailure(e, secrets)}\n`);
     process.exit(1);
   }
 }
 
-main();
+main().catch((e) => {
+  const secrets = [process.env.UAZAPI_NEW_TOKEN ?? "", process.env.WHATSAPP_WEBHOOK_SECRET ?? ""];
+  process.stderr.write(`${publicFailure(e, secrets)}\n`);
+  process.exit(1);
+});

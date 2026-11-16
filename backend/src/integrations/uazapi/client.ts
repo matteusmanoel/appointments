@@ -1,4 +1,5 @@
-import { getWebhookSecret, redactWebhookSecrets, withWebhookToken } from "../whatsapp/webhook-auth.js";
+import { getWebhookSecret, withWebhookToken } from "../whatsapp/webhook-auth.js";
+import { assertSafeOutboundUrl, type HostLookup } from "./safe-url.js";
 
 const optional = (key: string, def: string): string => process.env[key] ?? def;
 
@@ -7,7 +8,35 @@ const UAZAPI_REQUEST_TIMEOUT_MS = 25_000;
 export type UazapiHttpOpts = {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+  /** Só o comando local, com --allow-http. A API em produção fica em https público. */
+  allowLocal?: boolean;
+  lookup?: HostLookup;
 };
+
+function uazapiHttpError(what: string, status: number): Error {
+  return new Error(`Uazapi ${what} falhou. HTTP ${status}.`);
+}
+
+async function discardBody(res: Response): Promise<void> {
+  try {
+    await res.body?.cancel();
+  } catch {
+    /* o corpo não entra em erro nem em log */
+  }
+}
+
+function urlWithoutSecrets(raw: string): string {
+  try {
+    const u = new URL(raw);
+    u.username = "";
+    u.password = "";
+    u.search = "";
+    u.hash = "";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return "a URL pública do webhook";
+  }
+}
 
 function getBaseUrl(opts?: UazapiHttpOpts): string {
   const base = (opts?.baseUrl ?? optional("UAZAPI_BASE_URL", "")).replace(/\/$/, "");
@@ -33,20 +62,35 @@ export async function pingUazapi(): Promise<{ ok: boolean; status?: number; erro
 
 async function fetchWithTimeout(
   url: string,
-  options: RequestInit & { timeoutMs?: number; fetchImpl?: typeof fetch } = {}
+  options: RequestInit & {
+    timeoutMs?: number;
+    fetchImpl?: typeof fetch;
+    allowLocal?: boolean;
+    lookup?: HostLookup;
+  } = {},
 ): Promise<Response> {
-  const { timeoutMs = UAZAPI_REQUEST_TIMEOUT_MS, fetchImpl, ...fetchOptions } = options;
+  const { timeoutMs = UAZAPI_REQUEST_TIMEOUT_MS, fetchImpl, allowLocal, lookup, ...fetchOptions } = options;
+  const safe = await assertSafeOutboundUrl(url, { allowLocal, lookup });
   const doFetch = fetchImpl ?? fetch;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await doFetch(url, { ...fetchOptions, signal: controller.signal });
+    const res = await doFetch(safe.toString(), {
+      ...fetchOptions,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (res.status >= 300 && res.status < 400) {
+      await discardBody(res);
+      throw new Error(`Uazapi recusou o redirect. HTTP ${res.status}.`);
+    }
     return res;
   } catch (e) {
+    if (e instanceof Error && e.message.startsWith("Uazapi ")) throw e;
     if ((e as Error).name === "AbortError") {
-      throw new Error(`Uazapi não respondeu a tempo (${timeoutMs / 1000}s). Verifique UAZAPI_BASE_URL e rede.`);
+      throw new Error(`Uazapi não respondeu a tempo (${timeoutMs / 1000}s). Verifique UAZAPI_BASE_URL e a rede.`);
     }
-    throw e;
+    throw new Error("Uazapi não respondeu. Verifique UAZAPI_BASE_URL e a rede.");
   } finally {
     clearTimeout(timeout);
   }
@@ -81,8 +125,8 @@ export async function adminCreateInstance(params: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi instance/init failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("instance/init", res.status);
   }
 
   const data = (await res.json()) as CreateInstanceResult;
@@ -102,8 +146,8 @@ export async function instanceConnect(params: { token: string; phone?: string })
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi instance/connect failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("instance/connect", res.status);
   }
 
   return res.json();
@@ -132,11 +176,13 @@ export async function instanceStatus(token: string, opts?: UazapiHttpOpts): Prom
     method: "GET",
     headers: { token },
     fetchImpl: opts?.fetchImpl,
+    allowLocal: opts?.allowLocal,
+    lookup: opts?.lookup,
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi instance/status failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("instance/status", res.status);
   }
 
   return res.json() as Promise<InstanceStatusResult>;
@@ -159,8 +205,8 @@ export async function sendText(params: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi send/text failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("send/text", res.status);
   }
 
   return res.json();
@@ -193,8 +239,8 @@ export async function sendLocation(params: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi send/location failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("send/location", res.status);
   }
 
   return res.json();
@@ -207,7 +253,8 @@ export async function sendLocation(params: {
  */
 export async function setWebhook(params: { token: string; url: string } & UazapiHttpOpts): Promise<unknown> {
   const base = getBaseUrl(params);
-  // Webhook autenticado: a Uazapi não envia cabeçalho próprio, então o segredo vai na URL (?token=).
+  // A documentação do POST /webhook não tem campo de cabeçalho na entrega. O segredo vai na query.
+  await assertSafeOutboundUrl(params.url, { httpsOnly: true, lookup: params.lookup });
   const url = withWebhookToken(params.url.replace(/\/$/, ""), getWebhookSecret("uazapi"));
   const body = JSON.stringify({
     enabled: true,
@@ -234,24 +281,21 @@ export async function setWebhook(params: { token: string; url: string } & Uazapi
       headers,
       body: b,
       fetchImpl: params.fetchImpl,
+      allowLocal: params.allowLocal,
+      lookup: params.lookup,
     });
     if (res.ok) {
       return res.json().catch(() => ({}));
     }
-    if (res.status !== 405) {
-      const text = await res.text();
-      throw new Error(redactWebhookSecrets(`Uazapi webhook failed (${method} ${path}): ${res.status} ${text}`));
-    }
+    await discardBody(res);
+    if (res.status !== 405) throw uazapiHttpError("webhook", res.status);
   }
 
-  // params.url (sem token): a URL autenticada nunca vai para mensagem de erro, log ou resposta.
   throw new Error(
-    redactWebhookSecrets(
-      "Uazapi retornou 405 (Method Not Allowed) em todos os endpoints de webhook testados. " +
-        "Configure o webhook manualmente no painel da Uazapi (ex.: severo.uazapi.com) para esta instância, " +
-        "apontando para: " +
-        params.url.replace(/\/$/, "")
-    )
+    "Uazapi retornou 405 (Method Not Allowed) em todos os endpoints de webhook testados. " +
+      "Configure o webhook manualmente no painel da Uazapi para esta instância, " +
+      "apontando para: " +
+      urlWithoutSecrets(params.url),
   );
 }
 
@@ -298,8 +342,8 @@ export async function findMessages(params: FindMessagesParams): Promise<FindMess
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi message/find failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("message/find", res.status);
   }
   return res.json() as Promise<FindMessagesResult>;
 }
@@ -322,8 +366,8 @@ export async function sendSticker(params: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi send/media (sticker) failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("send/media", res.status);
   }
 
   return res.json();
@@ -358,8 +402,8 @@ export async function sendPixRequest(params: {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi send/request-payment failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("send/request-payment", res.status);
   }
 
   return res.json();
@@ -377,8 +421,8 @@ export async function instanceDisconnect(token: string): Promise<unknown> {
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Uazapi instance/disconnect failed: ${res.status} ${text}`);
+    await discardBody(res);
+    throw uazapiHttpError("instance/disconnect", res.status);
   }
 
   return res.json();

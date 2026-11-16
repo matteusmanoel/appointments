@@ -61,7 +61,7 @@ A criação `20261114210000_ai_simulator_turn_traces.sql` **não entra no `migra
 
 ## Trocar a instância Uazapi (`whatsapp:rotate`)
 
-O servidor grátis da Uazapi cai depois de mais ou menos uma hora. O comando troca token e instância do tenant no Postgres **local**, com fetch injetável nos testes (nenhuma chamada real). Pede a URL e o token sem eco. Não edita `.env` e não imprime o token.
+O servidor grátis da Uazapi cai depois de mais ou menos uma hora. O comando troca token e instância do tenant no Postgres **local**, com fetch injetável nos testes (nenhuma chamada real). A URL e o token vêm do prompt sem eco, ou de `UAZAPI_BASE_URL` e `UAZAPI_NEW_TOKEN`. Não vão na linha de comando. Não edita `.env` e não imprime o token.
 
 `UAZAPI_BASE_URL` e `WHATSAPP_PROVIDER` são do processo: mudá-los exige reinício do container ou nova env na Lambda/Terraform. Token, nome e id da instância ficam em `barbershop_whatsapp_connections` e são relidos a cada mensagem, sem reinício. O token é gravado com `encrypt` / `APP_ENCRYPTION_KEY`.
 
@@ -71,7 +71,7 @@ npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --dry-run
 npm run whatsapp:rotate -- --remote
 ```
 
-`--dry-run` não grava e não chama a Uazapi. `--remote` só imprime os passos da AWS. Sem `--remote`, `DATABASE_URL` tem que ser local. O passo a passo (webhook `POST /webhook`, túnel sem conta, como conferir `instance.status=connected`) está em `docs/qa/runbook-uazapi-instancia.md`. Os testes são `src/__tests__/whatsapp-rotate-uazapi.test.ts`.
+`--dry-run` não grava e não chama a Uazapi. `--remote` só imprime os passos da AWS e não pede token. Sem `--remote`, `DATABASE_URL` tem que ser local. O passo a passo (webhook `POST /webhook`, túnel nomeado da Cloudflare, como conferir `instance.status=connected`) está em `docs/qa/runbook-uazapi-instancia.md`. Esse runbook também registra a ordem de merge com o PR do contexto: `simulate:compare` e `whatsapp:rotate` ficam os dois no `package.json`. Os testes são `src/__tests__/whatsapp-rotate-uazapi.test.ts`.
 
 
 ## Preenchimento determinístico (fluxos básicos)

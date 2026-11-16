@@ -1,10 +1,18 @@
 import { spawn } from "node:child_process";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { pool } from "../db.js";
 import { decrypt } from "../integrations/encryption.js";
+import { instanceStatus } from "../integrations/uazapi/client.js";
+import { assertSafeOutboundUrl } from "../integrations/uazapi/safe-url.js";
 import { rotateUazapiInstance } from "../integrations/whatsapp/rotate-uazapi.js";
+
+const API = "https://uazapi.test";
+const HOOK = "https://hooks.example/api/webhooks/uazapi";
+const publicLookup = async () => ["1.1.1.1"];
 
 const ENC_KEY = "0123456789abcdef0123456789abcdef";
 const INSTANCE_TOKEN = "tok-rotate-teste-local";
@@ -95,10 +103,11 @@ describe("whatsapp:rotate com fetch fake", () => {
     const lines: string[] = [];
     const result = await rotateUazapiInstance({
       tenant: slug,
-      uazapiUrl: "http://uazapi.test",
+      uazapiUrl: API,
       token: INSTANCE_TOKEN,
-      webhookUrl: "http://127.0.0.1:3000/api/webhooks/uazapi",
+      webhookUrl: HOOK,
       fetchImpl: fakeFetch(calls),
+      lookup: publicLookup,
       print: (line) => lines.push(line),
     });
 
@@ -108,10 +117,10 @@ describe("whatsapp:rotate com fetch fake", () => {
     expect(lines.join("\n")).not.toContain(INSTANCE_TOKEN);
     expect(lines.join("\n")).not.toContain(WEBHOOK_SECRET);
 
-    expect(calls[0]?.url).toBe("http://uazapi.test/instance/status");
+    expect(calls[0]?.url).toBe("https://uazapi.test/instance/status");
     expect(calls[0]?.method).toBe("GET");
     expect(calls[0]?.headers.token).toBe(INSTANCE_TOKEN);
-    const webhook = calls.find((call) => call.url === "http://uazapi.test/webhook");
+    const webhook = calls.find((call) => call.url === "https://uazapi.test/webhook");
     expect(webhook?.method).toBe("POST");
     expect(webhook?.headers.token).toBe(INSTANCE_TOKEN);
     const body = JSON.parse(webhook?.body ?? "{}") as {
@@ -121,7 +130,7 @@ describe("whatsapp:rotate com fetch fake", () => {
       excludeMessages: string[];
     };
     expect(body.enabled).toBe(true);
-    expect(body.url).toBe(`http://127.0.0.1:3000/api/webhooks/uazapi?token=${WEBHOOK_SECRET}`);
+    expect(body.url).toBe(`https://hooks.example/api/webhooks/uazapi?token=${WEBHOOK_SECRET}`);
     expect(body.events).toEqual(["messages", "messages_update", "connection"]);
     expect(body.excludeMessages).toEqual(["wasSentByApi"]);
 
@@ -149,11 +158,12 @@ describe("whatsapp:rotate com fetch fake", () => {
     const lines: string[] = [];
     const result = await rotateUazapiInstance({
       tenant: "qualquer",
-      uazapiUrl: "http://uazapi.test",
+      uazapiUrl: API,
       token: INSTANCE_TOKEN,
-      webhookUrl: "http://127.0.0.1:3000/api/webhooks/uazapi",
+      webhookUrl: HOOK,
       dryRun: true,
       fetchImpl: fakeFetch(calls),
+      lookup: publicLookup,
       print: (line) => lines.push(line),
     });
     expect(result.wroteDatabase).toBe(false);
@@ -168,10 +178,11 @@ describe("whatsapp:rotate com fetch fake", () => {
     const lines: string[] = [];
     const result = await rotateUazapiInstance({
       tenant: "qualquer",
-      uazapiUrl: "http://uazapi.test",
+      uazapiUrl: API,
       token: INSTANCE_TOKEN,
       remote: true,
       fetchImpl: fakeFetch(calls),
+      lookup: publicLookup,
       print: (line) => lines.push(line),
     });
     expect(result.remote).toBe(true);
@@ -191,7 +202,7 @@ describe("whatsapp:rotate com fetch fake", () => {
       await expect(
         rotateUazapiInstance({
           tenant: "qualquer",
-          uazapiUrl: "http://uazapi.test",
+          uazapiUrl: "https://1.1.1.1",
           token: INSTANCE_TOKEN,
         }),
       ).rejects.toThrow(/não é local|recusada/);
@@ -200,36 +211,171 @@ describe("whatsapp:rotate com fetch fake", () => {
     }
   });
 
-  it("o CLI --remote sem TTY imprime os passos e não ecoa token", async () => {
-    const run = await runCli(["--remote", "--tenant", "lab", "--token", INSTANCE_TOKEN], {});
+  it("o CLI --remote sem TTY imprime os passos e não pede token", async () => {
+    const run = await runCli(["--remote", "--tenant", "lab"], { UAZAPI_NEW_TOKEN: INSTANCE_TOKEN });
     expect(run.code).toBe(0);
     expect(run.stdout).toMatch(/UAZAPI_BASE_URL/);
     expect(run.stdout).not.toContain(INSTANCE_TOKEN);
     expect(run.stderr).not.toContain(INSTANCE_TOKEN);
   });
 
-  it("o CLI --dry-run não grava e o help não anuncia --token", async () => {
-    const dry = await runCli(
-      ["--dry-run", "--tenant", "lab", "--uazapi-url", "http://uazapi.test", "--token", INSTANCE_TOKEN],
-      { DATABASE_URL: process.env.DATABASE_URL },
-    );
+  it("o CLI --dry-run lê o ambiente e o help não anuncia --token", async () => {
+    const dry = await runCli(["--dry-run", "--tenant", "lab"], {
+      DATABASE_URL: process.env.DATABASE_URL,
+      UAZAPI_BASE_URL: "https://1.1.1.1",
+      UAZAPI_NEW_TOKEN: INSTANCE_TOKEN,
+    });
     expect(dry.code).toBe(0);
     expect(dry.stdout).toMatch(/Dry-run/);
     expect(dry.stdout).not.toContain(INSTANCE_TOKEN);
+    expect(dry.stderr).not.toContain(INSTANCE_TOKEN);
     const help = await runCli(["--help"], {});
     expect(help.code).toBe(0);
     expect(help.stdout).not.toMatch(/--token/);
     expect(help.stdout).toMatch(/sem eco/);
+    expect(help.stdout).toMatch(/UAZAPI_NEW_TOKEN/);
+  });
+
+  it("o CLI recusa --token e --uazapi-url e não ecoa o valor", async () => {
+    const run = await runCli(
+      ["--dry-run", "--tenant", "lab", "--token", INSTANCE_TOKEN, "--uazapi-url", "https://evil.example"],
+      { UAZAPI_BASE_URL: "https://1.1.1.1", UAZAPI_NEW_TOKEN: "outro-token-ambiente" },
+    );
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toMatch(/linha de comando/);
+    const out = `${run.stdout}\n${run.stderr}`;
+    expect(out).not.toContain(INSTANCE_TOKEN);
+    expect(out).not.toContain("https://evil.example");
+    expect(out).not.toContain("outro-token-ambiente");
   });
 
   it("o CLI recusa DATABASE_URL remota sem --remote", async () => {
-    const run = await runCli(["--dry-run", "--tenant", "lab", "--uazapi-url", "http://uazapi.test", "--token", INSTANCE_TOKEN], {
+    const run = await runCli(["--dry-run", "--tenant", "lab"], {
       DATABASE_URL: "postgres://user:secret@db.example.com:5432/navalhia",
+      UAZAPI_BASE_URL: "https://1.1.1.1",
+      UAZAPI_NEW_TOKEN: INSTANCE_TOKEN,
     });
     expect(run.code).toBe(1);
     expect(run.stderr).toMatch(/recusada|não é local/);
     expect(run.stderr).not.toContain("db.example.com");
     expect(run.stderr).not.toContain(INSTANCE_TOKEN);
     expect(run.stdout).not.toContain(INSTANCE_TOKEN);
+  });
+
+  it("não segue redirect e não chama host interno sem --allow-http", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(String(input));
+      expect(init?.redirect).toBe("manual");
+      return new Response("token=tok-secreto ?token=segredo", {
+        status: 307,
+        headers: { location: "https://evil.example/steal?token=segredo" },
+      });
+    }) as typeof fetch;
+    let thrown = "";
+    try {
+      await instanceStatus(INSTANCE_TOKEN, { baseUrl: API, fetchImpl, lookup: publicLookup });
+    } catch (e) {
+      thrown = e instanceof Error ? e.message : String(e);
+    }
+    expect(thrown).toMatch(/HTTP 307/);
+    expect(thrown).not.toContain(INSTANCE_TOKEN);
+    expect(thrown).not.toContain("evil.example");
+    expect(thrown).not.toContain("?token=");
+    expect(calls).toEqual(["https://uazapi.test/instance/status"]);
+
+    const leak = `nao autorizado ${INSTANCE_TOKEN} ?token=${WEBHOOK_SECRET} Authorization: Bearer ${INSTANCE_TOKEN}`;
+    const fetch401 = (async () => new Response(leak, { status: 401, headers: { "X-Debug": INSTANCE_TOKEN } })) as typeof fetch;
+    try {
+      await instanceStatus(INSTANCE_TOKEN, { baseUrl: API, fetchImpl: fetch401, lookup: publicLookup });
+      thrown = "";
+    } catch (e) {
+      thrown = e instanceof Error ? e.message : String(e);
+    }
+    expect(thrown).toMatch(/HTTP 401/);
+    expect(thrown).not.toContain(INSTANCE_TOKEN);
+    expect(thrown).not.toContain(WEBHOOK_SECRET);
+    expect(thrown).not.toContain("?token=");
+    expect(thrown).not.toContain("Authorization");
+
+    calls.length = 0;
+    await expect(instanceStatus("t", { baseUrl: "http://127.0.0.1:9", fetchImpl })).rejects.toThrow(/localhost|allow-http/);
+    await expect(instanceStatus("t", { baseUrl: "http://169.254.169.254", fetchImpl })).rejects.toThrow(/metadata|privado|interno/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("resolve o DNS antes de aceitar o host e só libera localhost com a flag", async () => {
+    let looked = false;
+    await expect(
+      assertSafeOutboundUrl("https://publico.test/x", {
+        lookup: async (host) => {
+          looked = true;
+          expect(host).toBe("publico.test");
+          return ["10.1.2.3"];
+        },
+      }),
+    ).rejects.toThrow(/privado|interno/);
+    expect(looked).toBe(true);
+
+    await expect(assertSafeOutboundUrl("https://ok.test/x", { lookup: publicLookup })).resolves.toBeInstanceOf(URL);
+    await expect(assertSafeOutboundUrl("http://127.0.0.1:9")).rejects.toThrow(/localhost|allow-http/);
+    await expect(assertSafeOutboundUrl("http://169.254.169.254/")).rejects.toThrow(/metadata/);
+    await expect(assertSafeOutboundUrl("https://10.0.0.8/")).rejects.toThrow(/privado|interno/);
+    await expect(assertSafeOutboundUrl("https://192.168.1.9/")).rejects.toThrow(/privado|interno/);
+    await expect(assertSafeOutboundUrl("https://172.16.5.5/")).rejects.toThrow(/privado|interno/);
+    await expect(assertSafeOutboundUrl("https://[fc00::1]/")).rejects.toThrow(/privado|interno/);
+    await expect(assertSafeOutboundUrl("https://[::1]/")).rejects.toThrow(/privado|interno/);
+    await expect(assertSafeOutboundUrl("http://10.0.0.8/", { allowLocal: true })).rejects.toThrow(/HTTP/);
+    await expect(assertSafeOutboundUrl("https://10.0.0.8/", { allowLocal: true })).resolves.toBeInstanceOf(URL);
+    await expect(assertSafeOutboundUrl("http://127.0.0.1:9", { allowLocal: true })).resolves.toBeInstanceOf(URL);
+    await expect(assertSafeOutboundUrl("http://169.254.169.254/", { allowLocal: true })).rejects.toThrow(/metadata/);
+    await expect(
+      assertSafeOutboundUrl("http://hooks.example/api/webhooks/uazapi", { httpsOnly: true, lookup: publicLookup }),
+    ).rejects.toThrow(/https/);
+    await expect(assertSafeOutboundUrl("https://172.15.0.1/")).resolves.toBeInstanceOf(URL);
+    await expect(assertSafeOutboundUrl("https://[2001:4860:4860::8888]/")).resolves.toBeInstanceOf(URL);
+  });
+
+  it("erro HTTP do CLI não ecoa token, query, header nem corpo", async () => {
+    process.env.APP_ENCRYPTION_KEY = ENC_KEY;
+    process.env.WHATSAPP_WEBHOOK_SECRET = WEBHOOK_SECRET;
+    const slug = `rotate-err-${Date.now().toString(36)}`;
+    const shop = await pool.query<{ id: string }>(
+      `INSERT INTO public.barbershops (name, phone, billing_plan, slug, business_hours)
+       VALUES ($1, '5511999990002', 'pro', $2, '{"monday":{"start":"09:00","end":"19:00"}}'::jsonb)
+       RETURNING id`,
+      [`Rotate err ${slug}`, slug],
+    );
+    shopIds.push(shop.rows[0].id);
+
+    const leaked = `token=${INSTANCE_TOKEN} ?token=${WEBHOOK_SECRET} Authorization: Bearer ${INSTANCE_TOKEN}`;
+    const server = http.createServer((_req, res) => {
+      res.writeHead(401, { "Content-Type": "text/plain", "X-Debug": INSTANCE_TOKEN });
+      res.end(leaked);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const run = await runCli(
+        ["--tenant", slug, "--allow-http", "--webhook-url", "https://1.1.1.1/api/webhooks/uazapi"],
+        {
+          DATABASE_URL: process.env.DATABASE_URL,
+          APP_ENCRYPTION_KEY: ENC_KEY,
+          WHATSAPP_WEBHOOK_SECRET: WEBHOOK_SECRET,
+          UAZAPI_BASE_URL: `http://127.0.0.1:${port}`,
+          UAZAPI_NEW_TOKEN: INSTANCE_TOKEN,
+        },
+      );
+      expect(run.code).toBe(1);
+      const out = `${run.stdout}\n${run.stderr}`;
+      expect(out).toMatch(/HTTP 401/);
+      expect(out).not.toContain(INSTANCE_TOKEN);
+      expect(out).not.toContain(WEBHOOK_SECRET);
+      expect(out).not.toContain("?token=");
+      expect(out).not.toContain("Authorization");
+      expect(out).not.toContain(leaked);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

@@ -8,6 +8,7 @@ import { isLocalDatabaseUrl } from "../../db/local-database-url.js";
 import { config } from "../../config.js";
 import { encrypt } from "../encryption.js";
 import { instanceStatus, setWebhook, type InstanceStatusResult } from "../uazapi/client.js";
+import { assertSafeOutboundUrl, type HostLookup } from "../uazapi/safe-url.js";
 import { isValidUuid } from "../../lib/uuid.js";
 
 export type RotateUazapiOptions = {
@@ -21,6 +22,9 @@ export type RotateUazapiOptions = {
   dryRun?: boolean;
   /** Alvo AWS: só imprime os passos, não grava nada. */
   remote?: boolean;
+  /** Libera HTTP em localhost e host privado na URL da Uazapi. O webhook continua https público. */
+  allowLocal?: boolean;
+  lookup?: HostLookup;
   fetchImpl?: typeof fetch;
   print?: (line: string) => void;
 };
@@ -75,8 +79,8 @@ export function remoteRotateSteps(params: { webhookUrl?: string }): string[] {
     "Mantenha WHATSAPP_PROVIDER=uazapi no ambiente (Terraform: whatsapp_provider) para conexões novas. O provider da conexão já existente fica no banco (coluna provider).",
     "O token da instância, o nome e o id da instância moram no banco (barbershop_whatsapp_connections: uazapi_instance_token_encrypted, uazapi_instance_name, uazapi_instance_id). Não vá no .env. APP_ENCRYPTION_KEY precisa ser a mesma da API para criptografar o token.",
     params.webhookUrl
-      ? `Registre o webhook da instância nova com POST /webhook (header token, body enabled, url, events messages/messages_update/connection, excludeMessages wasSentByApi) para ${sanitizePublicUrl(params.webhookUrl)}?token=<segredo NavalhIA>. O backend recebe em POST /api/webhooks/uazapi.`
-      : "Registre o webhook da instância nova com POST /webhook (header token; body enabled, url, events messages/messages_update/connection, excludeMessages wasSentByApi) apontando para UAZAPI_WEBHOOK_PUBLIC_URL?token=<segredo NavalhIA> (deve terminar em /api/webhooks/uazapi).",
+      ? `Registre o webhook da instância nova com POST /webhook (header token da instância, body enabled, url, events messages/messages_update/connection, excludeMessages wasSentByApi) para ${sanitizePublicUrl(params.webhookUrl)}?token=<segredo NavalhIA>. A Uazapi não tem campo de cabeçalho na entrega; não cole o valor real. O backend recebe em POST /api/webhooks/uazapi.`
+      : "Registre o webhook da instância nova com POST /webhook (header token da instância; body enabled, url, events messages/messages_update/connection, excludeMessages wasSentByApi) apontando para UAZAPI_WEBHOOK_PUBLIC_URL?token=<segredo NavalhIA> (deve terminar em /api/webhooks/uazapi). A Uazapi não tem campo de cabeçalho na entrega; não cole o valor real.",
     "Confira: GET /instance/status (header token) deve vir connected; um evento de teste deve aparecer no log da API; depois fale no número de teste do Mateus ou use o simulador local.",
     "Para gravar o tenant, rode este comando contra o Postgres local (sem --remote) e replique o procedimento no Neon com aprovação — este modo não escreve em banco remoto.",
   ];
@@ -104,10 +108,21 @@ export async function rotateUazapiInstance(options: RotateUazapiOptions): Promis
   const print = options.print ?? ((line: string) => process.stdout.write(`${line}\n`));
   const dryRun = options.dryRun === true;
   const remote = options.remote === true;
-  const baseUrl = sanitizePublicUrl(options.uazapiUrl);
-  if (!baseUrl) throw new Error("Informe a URL do servidor Uazapi (sem credenciais).");
+  if (!options.uazapiUrl?.trim()) throw new Error("Informe a URL do servidor Uazapi (sem credenciais).");
   if (!options.token?.trim()) throw new Error("Informe o token da instância (digitado sem eco; o valor não é impresso).");
-  const webhookUrl = options.webhookUrl ? sanitizePublicUrl(options.webhookUrl) : "";
+  const parsedBase = await assertSafeOutboundUrl(options.uazapiUrl, {
+    allowLocal: options.allowLocal,
+    lookup: options.lookup,
+  });
+  const baseUrl = sanitizePublicUrl(parsedBase.toString());
+  let webhookUrl = "";
+  if (options.webhookUrl?.trim()) {
+    const parsedHook = await assertSafeOutboundUrl(options.webhookUrl, {
+      httpsOnly: true,
+      lookup: options.lookup,
+    });
+    webhookUrl = sanitizePublicUrl(parsedHook.toString());
+  }
 
   const envNamesToChange: string[] = [];
   const currentBase = sanitizePublicUrl(process.env.UAZAPI_BASE_URL ?? "");
@@ -168,7 +183,12 @@ export async function rotateUazapiInstance(options: RotateUazapiOptions): Promis
   const encKey = requireEncryptionKey();
   const encrypted = encrypt(options.token.trim(), encKey);
 
-  const httpOpts = { baseUrl, fetchImpl: options.fetchImpl };
+  const httpOpts = {
+    baseUrl,
+    fetchImpl: options.fetchImpl,
+    allowLocal: options.allowLocal,
+    lookup: options.lookup,
+  };
   const status = await instanceStatus(options.token.trim(), httpOpts);
   const state = mapInstanceState(status);
   const instanceName =
