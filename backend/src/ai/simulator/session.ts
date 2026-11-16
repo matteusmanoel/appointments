@@ -61,6 +61,8 @@ export type SimulatorTurnResult = {
 export type SimulatorRunResult = {
   barbershopId: string;
   conversationId: string;
+  /** Cada conversa aberta nesta execução, na ordem. */
+  conversationIds: string[];
   phone: string;
   phoneMasked: string;
   simulatedNow: string | null;
@@ -101,6 +103,26 @@ export async function ensureSimulatorConversation(
     [barbershopId, SIMULATOR_CHANNEL, threadId],
   );
   if (existing.rows[0]) return existing.rows[0].id;
+  const created = await pool.query<{ id: string }>(
+    `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox, updated_at)
+     VALUES ($1, $2, $3, true, now())
+     RETURNING id`,
+    [barbershopId, SIMULATOR_CHANNEL, threadId],
+  );
+  return created.rows[0]!.id;
+}
+
+/** Outra conversa do mesmo cliente. O contexto persistido no cliente é que atravessa. */
+export async function startFreshSimulatorConversation(barbershopId: string, phone: string): Promise<string> {
+  const digits = phone.replace(/\D/g, "");
+  const base = simulatorThreadId(digits);
+  const count = await pool.query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM public.ai_conversations
+     WHERE barbershop_id = $1 AND channel = $2 AND external_thread_id LIKE $3`,
+    [barbershopId, SIMULATOR_CHANNEL, `${base}%`],
+  );
+  const n = Number(count.rows[0]?.n ?? 0) + 1;
+  const threadId = `${base}:c${n}`;
   const created = await pool.query<{ id: string }>(
     `INSERT INTO public.ai_conversations (barbershop_id, channel, external_thread_id, is_sandbox, updated_at)
      VALUES ($1, $2, $3, true, now())
@@ -190,7 +212,9 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
   if (nowRaw && !parseSimulatedNow(nowRaw)) {
     throw new Error(`--now inválido (${nowRaw}). Use ISO, ex. 2026-11-14T18:08:00-03:00.`);
   }
-  const conversationId = await ensureSimulatorConversation(shop.id, phone);
+  let conversationId = await ensureSimulatorConversation(shop.id, phone);
+  const conversationIds = [conversationId];
+  let currentNow = nowRaw;
   const sandboxPhone = simulatorClientPhone(shop.id, phone);
   const openai =
     options.openai ??
@@ -211,7 +235,7 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
       conversationId,
       phone: sandboxPhone,
       userText: text,
-      now: nowRaw,
+      now: currentNow,
       openai,
       persistAssistantMessages: options.persistAssistantMessages,
       slotInterpreter: options.slotInterpreter,
@@ -231,7 +255,7 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
       barbershopId: shop.id,
       conversationId,
       phone: sandboxPhone,
-      now: nowRaw,
+      now: currentNow,
     });
     const body = sent.length ? sent.map((s) => s.body).join("\n\n") : NO_DUE_REMINDER_NOTICE;
     print(`── lembrete (noop, ${sent.length}):`);
@@ -242,7 +266,7 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
         barbershopId: shop.id,
         conversationId,
         turnIndex: results.length,
-        simulatedNow: nowRaw ?? null,
+        simulatedNow: currentNow ?? null,
         userMessage: "[event:reminders]",
         intent: { event: "reminders" },
         draft: null,
@@ -265,7 +289,20 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
     await playReminders();
   }
   for (const turn of seeded) {
+    if (turn.now) {
+      if (!parseSimulatedNow(turn.now)) {
+        throw new Error(`--now inválido (${turn.now}). Use ISO, ex. 2026-11-14T18:08:00-03:00.`);
+      }
+      currentNow = turn.now;
+    }
     if (turn.role === "system") {
+      if (turn.event === "new_conversation") {
+        conversationId = await startFreshSimulatorConversation(shop.id, phone);
+        conversationIds.push(conversationId);
+        print(`── nova conversa ${conversationId}${currentNow ? ` · relógio ${currentNow}` : ""}`);
+        print("");
+        continue;
+      }
       await playReminders();
       continue;
     }
@@ -299,9 +336,10 @@ export async function runSimulator(options: SimulatorOptions): Promise<Simulator
   return {
     barbershopId: shop.id,
     conversationId,
+    conversationIds,
     phone,
     phoneMasked,
-    simulatedNow: nowRaw ?? null,
+    simulatedNow: currentNow ?? null,
     turns: results,
   };
 }

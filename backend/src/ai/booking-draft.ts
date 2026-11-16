@@ -627,8 +627,10 @@ export function resolveUsualService(params: {
 }
 
 /** Sugere o serviço de sempre e espera o aceite. Sem a palavra "confirma", para não virar fechamento de agendamento. */
-export function composeSuggestUsualService(params: { usualName: string }): string {
-  return `Vai ser o de sempre, *${params.usualName.trim()}*?`;
+export function composeSuggestUsualService(params: { usualName: string; barberName?: string | null }): string {
+  const barber = (params.barberName ?? "").trim().split(/\s+/)[0];
+  const withBarber = barber ? `, com o ${barber}` : "";
+  return `Vai ser o de sempre, *${params.usualName.trim()}*${withBarber}?`;
 }
 
 /** A última fala do agente foi a sugestão do de sempre? O "sim" só vale para ela, nunca para outra pergunta. */

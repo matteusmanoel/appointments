@@ -538,6 +538,17 @@ export function buildTurnPlan(
     (intent) => intent === "payment" || intent === "location" || intent === "plan",
   );
   if (
+    routing.primaryIntent === "schedule" &&
+    !input.intentSet.service &&
+    !(input.carriedServiceIds?.length) &&
+    !input.intentSet.dateTime?.time &&
+    !input.carriedClock &&
+    Boolean(input.usualService?.service_ids.length) &&
+    !input.usualServiceAlreadySuggested
+  ) {
+    turnDirective = ASK_SERVICE;
+  }
+  if (
     (routing.primaryIntent === "schedule" || routing.primaryIntent === "reschedule") &&
     !input.intentSet.dateTime?.time &&
     !input.carriedClock &&

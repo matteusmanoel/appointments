@@ -108,6 +108,9 @@ export async function ensureCriticalSchema(): Promise<void> {
        ADD COLUMN IF NOT EXISTS pending_intents jsonb`
     )
     .catch(() => {});
+  await pool
+    .query(`ALTER TABLE public.client_ai_memory ADD COLUMN IF NOT EXISTS session_context jsonb`)
+    .catch(() => {});
 
   await pool
     .query(

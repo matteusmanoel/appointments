@@ -50,6 +50,7 @@ import {
 } from "./agent/language-rewrite.js";
 import type { ConversationState as CanonicalConversationState } from "./agent/types.js";
 import { buildAgentContext } from "./agent/context-builder.js";
+import { saveClientSessionContext } from "./agent/client-session-context.js";
 import type { AgentTurnTrace } from "./turn-trace.js";
 import { getSimulatedNow, runWithSimulatedNow } from "./simulator/clock.js";
 import type { SimulatorExposureTrace, SimulatorToolTrace, SimulatorTurnTrace } from "./simulator/trace.js";
@@ -2127,6 +2128,28 @@ export async function runAgent(
   let clientName = _ctx.clientName;
   let bookingDraft = _ctx.bookingDraft;
   const lastUserTextRaw = _ctx.lastUserTextRaw;
+
+  async function rememberVisit(data: {
+    eventType: "appointment_created" | "appointment_rescheduled" | "appointment_cancelled";
+    barberId?: string;
+    serviceNames?: string[];
+    time?: string;
+  }): Promise<void> {
+    const names = [...(data.serviceNames ?? []).filter(Boolean)];
+    if (!names.length && bookingDraft.service_name) names.push(bookingDraft.service_name);
+    try {
+      await updateClientMemoryFromAppointmentEvent({
+        eventType: data.eventType,
+        barbershopId: effectiveBarbershopId,
+        clientPhone,
+        ...(data.barberId ? { barberId: data.barberId } : {}),
+        ...(names.length ? { serviceNames: names } : {}),
+        ...(data.time ? { time: data.time.slice(0, 5) } : {}),
+      });
+    } catch (e) {
+      console.warn("[client-memory] rememberVisit failed:", e instanceof Error ? e.message : e);
+    }
+  }
   const clientFavorites = _ctx.clientFavorites as ClientFavoritesResult | null;
 
   // ── Derived constants (unchanged from original) ─────────────────────────
@@ -2608,12 +2631,12 @@ export async function runAgent(
       clockWindow.end,
     );
   }
-  bookingDraft = applyTurnToDraft(bookingDraft, turnFacts.patch, {
-    floorWithoutClock: turnFacts.floorWithoutClock,
-  });
   if (bookingDraft.status === "closed") {
     bookingDraft = emptyBookingDraft();
   }
+  bookingDraft = applyTurnToDraft(bookingDraft, turnFacts.patch, {
+    floorWithoutClock: turnFacts.floorWithoutClock,
+  });
   await saveBookingDraft(conversationId, bookingDraft);
 
   const userIsAffirmativeOnly = isClientConfirmation(lastUserText);
@@ -3208,11 +3231,7 @@ export async function runAgent(
     state = "appointment_cancelled";
     bookingDraft = draftKeptAfterCancel(bookingDraft, target, Boolean(bookingName));
     await saveBookingDraft(conversationId, bookingDraft);
-    updateClientMemoryFromAppointmentEvent({
-      eventType: "appointment_cancelled",
-      barbershopId: currentBarbershopId,
-      clientPhone,
-    }).catch(() => {});
+    await rememberVisit({ eventType: "appointment_cancelled" });
     return composeCancellationReply({
       serviceName: target.service_names,
       when: formatResumoWhen(String(target.date).slice(0, 10), String(target.time).slice(0, 5), dateOnlyStr),
@@ -3313,10 +3332,22 @@ export async function runAgent(
     return scrubbed;
   }
 
+  async function rememberClientContext(): Promise<void> {
+    const pending = await loadPendingIntents(conversationId);
+    await saveClientSessionContext({
+      barbershopId: effectiveBarbershopId,
+      clientPhone,
+      bookingDraft,
+      pendingIntents: pending,
+      lastIntent: routing.primaryIntent ?? null,
+    });
+  }
+
   async function finishTurn(reply: string, composed: boolean) {
     if (state === "handoff_requested") {
       const out = applyOutputGuard(reply, true);
       await persistAssistant(out);
+      await rememberClientContext();
       return withDebug({ reply: out, usage: totalUsage, state });
     }
     if (
@@ -3503,6 +3534,7 @@ export async function runAgent(
       messages: lastN.map((m) => ({ role: m.role, content: String(m.content ?? "") })),
       finalState: state,
     }).catch(() => {});
+    await rememberClientContext();
     return withDebug({ reply: out, usage: totalUsage, state });
   }
 
@@ -3774,11 +3806,23 @@ export async function runAgent(
               status: bookingName ? "offered" : "awaiting_name",
             });
             await saveBookingDraft(conversationId, bookingDraft);
+            const nextDate = String(snap.date || date).slice(0, 10);
+            const nextTime = (snap.time || picked).slice(0, 5);
+            if (moving) {
+              await stampConfirmCard("reschedule", moving.id);
+              return composeRescheduleAsk({
+                firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+                serviceName: moving.service_names || snap.serviceName || bookingDraft.service_name || "seu horário",
+                when: formatResumoWhen(String(moving.date).slice(0, 10), String(moving.time).slice(0, 5), dateOnlyStr),
+                barberName: moving.barber_name || snap.barberName,
+                nextWhen: formatResumoWhen(nextDate, nextTime, dateOnlyStr),
+              });
+            }
             return composeAvailableSlotConfirm({
               serviceName: snap.serviceName || bookingDraft.service_name || "Horário",
               barberName: snap.barberName || bookingDraft.barber_name || "o barbeiro",
-              dateIso: String(snap.date || date).slice(0, 10),
-              timeHHmm: (snap.time || picked).slice(0, 5),
+              dateIso: nextDate,
+              timeHHmm: nextTime,
               totalPrice: snap.totalPrice ?? bookingDraft.total_price ?? 0,
               firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
               todayIso: dateOnlyStr,
@@ -3909,13 +3953,23 @@ export async function runAgent(
     };
 
     const first = await readSlots(requestedDate);
-    if (!consider(requestedDate, first)) {
-      for (let i = 1; i <= 7; i++) {
+    let bestDate = requestedDate;
+    let best = first;
+    let bestRolled = false;
+    if (first.slots.length < 2) {
+      for (let i = 1; i <= 7 && best.slots.length < 2; i++) {
         const next = addDaysIso(requestedDate, i);
         const found = await readSlots(next);
-        if (consider(next, found, requestedDate === dateOnlyStr)) break;
+        if (found.error || found.slots.length <= best.slots.length) {
+          if (!found.error) anyToolOk = true;
+          continue;
+        }
+        bestDate = next;
+        best = found;
+        bestRolled = requestedDate === dateOnlyStr && first.slots.length === 0;
       }
     }
+    consider(bestDate, best, bestRolled);
 
     if (times.length) {
       bookingDraft = mergeBookingDraft(bookingDraft, {
@@ -4101,26 +4155,34 @@ export async function runAgent(
     bookingDraft.barber_id &&
     (bookingDraft.service_ids?.length ?? 0) > 0
   ) {
-    bookingDraft = lockOfferedSlot(bookingDraft, {
-      date: String(bookingDraft.date).slice(0, 10),
-      time: String(bookingDraft.time).slice(0, 5),
-      barber_id: bookingDraft.barber_id,
-      barber_name: bookingDraft.barber_name,
-      status: bookingName ? "offered" : "awaiting_name",
-    });
-    await saveBookingDraft(conversationId, bookingDraft);
-    return finishTurn(
-      composeAvailableSlotConfirm({
-        serviceName: bookingDraft.service_name || "Horário",
-        barberName: bookingDraft.barber_name || "o barbeiro",
-        dateIso: String(bookingDraft.date).slice(0, 10),
-        timeHHmm: String(bookingDraft.time).slice(0, 5),
-        totalPrice: bookingDraft.total_price ?? 0,
-        firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
-        todayIso: dateOnlyStr,
-      }),
-      true,
-    );
+    const movingRow =
+      resolveActiveMoving(bookingDraft.appointment_id) ??
+      (upcomingAppointments.length === 1 ? upcomingAppointments[0] : undefined);
+    if (!movingRow) {
+      /* sem alvo único, o fluxo de horário nomeado pergunta qual remarcar */
+    } else {
+      const nextDate = String(bookingDraft.date).slice(0, 10);
+      const nextTime = String(bookingDraft.time).slice(0, 5);
+      bookingDraft = lockOfferedSlot(bookingDraft, {
+        date: nextDate,
+        time: nextTime,
+        barber_id: bookingDraft.barber_id,
+        barber_name: bookingDraft.barber_name,
+        appointment_id: movingRow.id,
+        status: bookingName ? "offered" : "awaiting_name",
+      });
+      await stampConfirmCard("reschedule", movingRow.id);
+      return finishTurn(
+        composeRescheduleAsk({
+          firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+          serviceName: movingRow.service_names || bookingDraft.service_name || "seu horário",
+          when: formatResumoWhen(String(movingRow.date).slice(0, 10), String(movingRow.time).slice(0, 5), dateOnlyStr),
+          barberName: movingRow.barber_name || bookingDraft.barber_name,
+          nextWhen: formatResumoWhen(nextDate, nextTime, dateOnlyStr),
+        }),
+        true,
+      );
+    }
   }
 
   if (
@@ -4298,6 +4360,11 @@ export async function runAgent(
     turnTrace.toolsExecuted.push({ name: "reschedule_appointment", ok });
     if (ok) {
       state = "appointment_rescheduled";
+      await rememberVisit({
+        eventType: "appointment_rescheduled",
+        barberId: payload.barber_id,
+        time: payload.time,
+      });
       bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed" });
       await saveBookingDraft(conversationId, bookingDraft);
       return finishTurn("", true);
@@ -4326,6 +4393,11 @@ export async function runAgent(
     turnTrace.toolsExecuted.push({ name: "create_appointment", ok: Boolean(createdId) });
     if (createdId) {
       state = "appointment_created";
+      await rememberVisit({
+        eventType: "appointment_created",
+        barberId: payload.barber_id,
+        time: payload.time,
+      });
       bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed", appointment_id: createdId });
       await saveBookingDraft(conversationId, bookingDraft);
       return finishTurn("", true);
@@ -4468,7 +4540,14 @@ export async function runAgent(
         usualSuggested: true,
       });
       await saveBookingDraft(conversationId, bookingDraft);
-      return finishTurn(composeSuggestUsualService({ usualName: suggestion.service_name }), true);
+      const preferredBarber =
+        clientMemory && (clientMemory.preferred_barber_conf ?? 0) >= 0.5
+          ? clientMemory.preferred_barber_name
+          : null;
+      return finishTurn(
+        composeSuggestUsualService({ usualName: suggestion.service_name, barberName: preferredBarber }),
+        true,
+      );
     }
     if (routing.turnDirective === ASK_SERVICE && usualServiceRefused) {
       await saveBookingDraft(conversationId, bookingDraft);
@@ -4552,6 +4631,12 @@ export async function runAgent(
         ...(typeof moving.price === "number" ? { total_price: moving.price } : {}),
       });
     }
+    if (moving && !bookingDraft.date) {
+      bookingDraft = mergeBookingDraft(bookingDraft, {
+        date: String(moving.date).slice(0, 10),
+        appointment_id: moving.id,
+      });
+    }
     if (!(bookingDraft.service_ids?.length) || !bookingDraft.date) return null;
 
     if (rescheduling && moving) {
@@ -4594,11 +4679,23 @@ export async function runAgent(
         status: bookingName ? "offered" : "awaiting_name",
       });
       await saveBookingDraft(conversationId, bookingDraft);
+      const nextDate = String(snap.date || date).slice(0, 10);
+      const nextTime = (snap.time || timeHHmm).slice(0, 5);
+      if (moving) {
+        await stampConfirmCard("reschedule", moving.id);
+        return composeRescheduleAsk({
+          firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
+          serviceName: moving.service_names || snap.serviceName || bookingDraft.service_name || "seu horário",
+          when: formatResumoWhen(String(moving.date).slice(0, 10), String(moving.time).slice(0, 5), dateOnlyStr),
+          barberName: moving.barber_name || snap.barberName,
+          nextWhen: formatResumoWhen(nextDate, nextTime, dateOnlyStr),
+        });
+      }
       const card = composeAvailableSlotConfirm({
         serviceName: snap.serviceName || bookingDraft.service_name || "Horário",
         barberName: snap.barberName || bookingDraft.barber_name || "o barbeiro",
-        dateIso: String(snap.date || date).slice(0, 10),
-        timeHHmm: (snap.time || timeHHmm).slice(0, 5),
+        dateIso: nextDate,
+        timeHHmm: nextTime,
         totalPrice: snap.totalPrice ?? bookingDraft.total_price ?? 0,
         firstName: bookingName ? firstNameFromClientName(bookingName) : undefined,
         todayIso: dateOnlyStr,
@@ -4631,11 +4728,18 @@ export async function runAgent(
         ...(movingId ? { appointment_id: movingId } : {}),
       });
       await saveBookingDraft(conversationId, bookingDraft);
-      return composeNextAvailableOffer({
+      const offer = composeNextAvailableOffer({
         timesHHmm: altTimes,
         dateIso: date,
         todayIso: dateOnlyStr,
       });
+      const askedFor = (snap?.barberName || bookingDraft.barber_name || "").trim().split(/\s+/)[0];
+      if (askedFor && knownBarberId) {
+        return offer
+          .replace("Consigo te atender ", `Consigo te atender com o ${askedFor} `)
+          .replace("Tenho ", `Tenho com o ${askedFor} `);
+      }
+      return offer;
     }
 
     bookingDraft = mergeBookingDraft(bookingDraft, { after_time: timeHHmm, time: null });
@@ -5016,13 +5120,12 @@ export async function runAgent(
                       .filter(Boolean)
                   : []
               );
-              updateClientMemoryFromAppointmentEvent({
+              await rememberVisit({
                 eventType: "appointment_created",
-                barbershopId: currentBarbershopId,
-                clientPhone,
                 barberId: payload.barber_id,
                 serviceNames,
-              }).catch(() => {});
+                time: payload.time,
+              });
             } else if (payload.client_name?.trim()) {
               // Appointment failed but we have the name — persist it so the next
               // runAgent turn doesn't re-trigger the FECHAMENTO EM 2 MENSAGENS block.
@@ -5092,11 +5195,7 @@ export async function runAgent(
               state = "appointment_cancelled";
               bookingDraft = draftKeptAfterCancel(bookingDraft, upcomingAppointments[0]);
               await saveBookingDraft(conversationId, bookingDraft);
-              updateClientMemoryFromAppointmentEvent({
-                eventType: "appointment_cancelled",
-                barbershopId: currentBarbershopId,
-                clientPhone,
-              }).catch(() => {});
+              await rememberVisit({ eventType: "appointment_cancelled" });
             }
             return r;
           }
@@ -5120,7 +5219,7 @@ export async function runAgent(
                 deferred: true,
                 reason: "awaiting_client_confirmation",
                 instruction:
-                  "Não altere o horário neste turno. Envie um resumo do novo dia/hora e pergunte 'Posso confirmar?'. Só chame reschedule_appointment depois do sim. Não diga que houve falha.",
+                  "Não altere o horário neste turno. Diga que é uma mudança: 'Quer que eu mude para <novo horário>?'. Só chame reschedule_appointment depois do sim. Não diga que houve falha.",
               };
             }
             const offerMatches = rescheduleDraftMatchesOffer(bookingDraft.time, previousAssistant);
@@ -5133,7 +5232,7 @@ export async function runAgent(
                 deferred: true,
                 reason: "awaiting_offered_draft",
                 instruction: offerMatches
-                  ? "Só reagende a partir do rascunho já oferecido (check_availability + Posso confirmar?). Não invente data/hora e não diga que houve falha."
+                  ? "Só reagende a partir do rascunho já oferecido (check_availability + Quer que eu mude para?). Não invente data/hora e não diga que houve falha."
                   : "O rascunho não é o horário que o cliente acabou de aceitar. Chame check_availability desse horário. Não diga que está ocupado e não diga que houve falha.",
               };
             }
@@ -5157,12 +5256,11 @@ export async function runAgent(
               bookingDraft = mergeBookingDraft(bookingDraft, { status: "closed" });
               await saveBookingDraft(conversationId, bookingDraft);
               const barberIdOpt = (args.barber_id as string | undefined)?.trim();
-              updateClientMemoryFromAppointmentEvent({
+              await rememberVisit({
                 eventType: "appointment_rescheduled",
-                barbershopId: currentBarbershopId,
-                clientPhone,
                 ...(barberIdOpt ? { barberId: barberIdOpt } : {}),
-              }).catch(() => {});
+                time: bookingDraft.time,
+              });
             }
             return r;
           }
@@ -5511,16 +5609,29 @@ export async function runAgent(
     if (lastCheckThisTurn?.available && lastCheckThisTurn.barberName && lastCheckThisTurn.serviceName) {
       const alreadyConfirmed = isAffirmativeOnly && assistantAskedConfirmation;
       if (!alreadyConfirmed) {
-        reply = composeAvailableSlotConfirm({
-          serviceName: lastCheckThisTurn.serviceName,
-          barberName: lastCheckThisTurn.barberName,
-          dateIso: lastCheckThisTurn.date,
-          timeHHmm: lastCheckThisTurn.time,
-          totalPrice: lastCheckThisTurn.totalPrice,
-          timeZone,
-            firstName: clientName ? firstNameFromClientName(clientName) : undefined,
-            todayIso: dateOnlyStr,
-          });
+        const movingRow = resolveActiveMoving(movingAppointmentId);
+        reply = movingRow
+          ? composeRescheduleAsk({
+              firstName: clientName ? firstNameFromClientName(clientName) : undefined,
+              serviceName: movingRow.service_names || lastCheckThisTurn.serviceName,
+              when: formatResumoWhen(
+                String(movingRow.date).slice(0, 10),
+                String(movingRow.time).slice(0, 5),
+                dateOnlyStr,
+              ),
+              barberName: movingRow.barber_name || lastCheckThisTurn.barberName,
+              nextWhen: formatResumoWhen(lastCheckThisTurn.date, lastCheckThisTurn.time, dateOnlyStr),
+            })
+          : composeAvailableSlotConfirm({
+              serviceName: lastCheckThisTurn.serviceName,
+              barberName: lastCheckThisTurn.barberName,
+              dateIso: lastCheckThisTurn.date,
+              timeHHmm: lastCheckThisTurn.time,
+              totalPrice: lastCheckThisTurn.totalPrice,
+              timeZone,
+              firstName: clientName ? firstNameFromClientName(clientName) : undefined,
+              todayIso: dateOnlyStr,
+            });
         const recentUserTurnsForDisclosure = lastN
           .filter((m) => m.role === "user")
           .slice(-4, -1) // up to 3 previous user messages, excluding the current

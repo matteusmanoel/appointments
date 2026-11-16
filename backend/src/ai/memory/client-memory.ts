@@ -98,6 +98,8 @@ export interface AppointmentEventData {
   serviceNames?: string[];
   barberId?: string;
   date?: string;
+  /** HH:mm do horário marcado. A faixa preferida sai daqui, não da data. */
+  time?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -450,6 +452,21 @@ export async function updateClientMemoryFromAppointmentEvent(
       );
     }
 
+    const clock = (data.time ?? "").slice(0, 5);
+    const timeRange = scheduledTimeToTimeRange(clock);
+    if (timeRange) {
+      const timeConf = isCompleted ? 0.6 : 0.5;
+      await pool.query(
+        `UPDATE public.client_ai_memory
+         SET preferred_time_start = $1,
+             preferred_time_end   = $2,
+             preferred_time_conf  = GREATEST(preferred_time_conf, $3),
+             updated_at           = now()
+         WHERE client_id = $4 AND barbershop_id = $5`,
+        [timeRange.start, timeRange.end, timeConf, clientId, barbershopId]
+      );
+    }
+
     if (isCompleted) {
       await pool.query(
         `UPDATE public.client_ai_memory
@@ -460,22 +477,6 @@ export async function updateClientMemoryFromAppointmentEvent(
          WHERE client_id = $2 AND barbershop_id = $3`,
         [JSON.stringify(data.serviceNames ?? []), clientId, barbershopId]
       );
-
-      // Derive time preference from the completed appointment's scheduled_time
-      if (data.date) {
-        const timeRange = scheduledTimeToTimeRange(data.date);
-        if (timeRange) {
-          await pool.query(
-            `UPDATE public.client_ai_memory
-             SET preferred_time_start = $1,
-                 preferred_time_end   = $2,
-                 preferred_time_conf  = GREATEST(preferred_time_conf, $3),
-                 updated_at           = now()
-             WHERE client_id = $4 AND barbershop_id = $5`,
-            [timeRange.start, timeRange.end, 0.5, clientId, barbershopId]
-          );
-        }
-      }
 
       // After a completed event, run the full history-based reinforcement
       // This is the most impactful call — builds confidence from multiple appointments

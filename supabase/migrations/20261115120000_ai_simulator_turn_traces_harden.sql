@@ -21,11 +21,11 @@ BEGIN
 
   CREATE INDEX IF NOT EXISTS ai_simulator_turn_traces_created_at_idx
     ON public.ai_simulator_turn_traces (created_at);
+
+  EXECUTE $c$COMMENT ON TABLE public.ai_simulator_turn_traces IS
+    'Traces do simulador CLI. Sem FKs para tabelas quentes. Escrita só com AI_SIMULATOR_TRACE_ENABLED (default off). TTL por created_at.'$c$;
 END
 $$;
 
 RESET statement_timeout;
 RESET lock_timeout;
-
-COMMENT ON TABLE public.ai_simulator_turn_traces IS
-  'Traces do simulador CLI. Sem FKs para tabelas quentes. Escrita só com AI_SIMULATOR_TRACE_ENABLED (default off). TTL por created_at.';

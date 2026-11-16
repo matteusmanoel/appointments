@@ -4,11 +4,14 @@ import { parseSimulatedNow } from "./clock.js";
 export type ReplayUserTurn = {
   role: "user" | "assistant";
   text: string;
+  /** Avança o relógio antes deste turno. */
+  now?: string;
 };
 
 export type ReplaySystemTurn = {
   role: "system";
-  event: "reminders";
+  event: "reminders" | "new_conversation";
+  now?: string;
 };
 
 export type ReplayTurn = ReplayUserTurn | ReplaySystemTurn;
@@ -49,16 +52,21 @@ function normalizeScript(raw: unknown, path: string): ReplayScript {
     const t = item as Record<string, unknown>;
     const eventRaw = String(t.event ?? "").trim().toLowerCase();
     const roleRaw = String(t.role ?? (t.user || t.assistant == null ? "user" : "assistant")).toLowerCase();
-    if (roleRaw === "system" || eventRaw === "reminders") {
-      if (eventRaw && eventRaw !== "reminders") {
+    const now = typeof t.now === "string" ? t.now.trim() : undefined;
+    if (now && !parseSimulatedNow(now)) {
+      throw new Error(`Turno ${i + 1} em ${path}: "now" inválido (${now}).`);
+    }
+    if (roleRaw === "system" || eventRaw === "reminders" || eventRaw === "new_conversation") {
+      if (eventRaw && eventRaw !== "reminders" && eventRaw !== "new_conversation") {
         throw new Error(`Turno ${i + 1} em ${path}: evento de sistema desconhecido (${eventRaw}).`);
       }
-      return { role: "system", event: "reminders" };
+      const event = eventRaw === "new_conversation" ? "new_conversation" : "reminders";
+      return { role: "system", event, ...(now ? { now } : {}) };
     }
     const text = String(t.text ?? t.user ?? t.content ?? "").trim();
     if (!text) throw new Error(`Turno ${i + 1} sem texto em ${path}.`);
     const role: "user" | "assistant" = roleRaw === "assistant" ? "assistant" : "user";
-    return { role, text };
+    return { role, text, ...(now ? { now } : {}) };
   });
   if (!turns.length) throw new Error(`Replay ${path} não tem turnos.`);
   const now = typeof r.now === "string" ? r.now : typeof r.simulatedNow === "string" ? r.simulatedNow : undefined;
@@ -100,7 +108,7 @@ export function parseSimpleYaml(source: string): unknown {
       current = null;
       continue;
     }
-    const itemKey = line.match(/^\s*-\s+(?:(user|assistant|role|text|content|event):\s*)?(.*)$/);
+    const itemKey = line.match(/^\s*-\s+(?:(user|assistant|role|text|content|event|now):\s*)?(.*)$/);
     if (itemKey && turns) {
       const key = itemKey[1];
       const rest = unquote(itemKey[2] ?? "");
@@ -122,7 +130,7 @@ export function parseSimpleYaml(source: string): unknown {
       }
       continue;
     }
-    const nested = line.match(/^\s{2,}(user|assistant|role|text|content|event):\s*(.*)$/);
+    const nested = line.match(/^\s{2,}(user|assistant|role|text|content|event|now):\s*(.*)$/);
     if (nested && current) {
       const key = nested[1];
       const val = unquote(nested[2] ?? "");

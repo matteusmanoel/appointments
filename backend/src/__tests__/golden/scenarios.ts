@@ -85,6 +85,28 @@ export const SCENARIOS: GoldenScenario[] = [
     ],
   },
   {
+    // Sem relógio: "quero agendar" também sugere o de sempre, antes de pedir a hora.
+    id: "recurring_client_suggests_usual_without_clock",
+    client: { name: "Mateus", pastVisit: true },
+    turns: [
+      {
+        user: "Quero agendar",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "intent_primary", equals: "schedule" },
+          { kind: "intent_field", field: "service", equals: null },
+          { kind: "tools_executed", equals: [] },
+          { kind: "draft_service_ids", equals: [] },
+          { kind: "draft_proposal_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_last_question", equals: "usual_service" },
+          { kind: "reply_includes", value: "Vai ser o de sempre, *Corte masculino*?" },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "not_silenced" },
+        ],
+      },
+    ],
+  },
+  {
     // "Não" ao de sempre: pergunta qual serviço (sem sugerir de novo, sem preencher nada); o serviço dito depois segue o fluxo.
     id: "recurring_client_refuses_usual_service_picks_another",
     client: { name: "Mateus", pastVisit: true },
@@ -858,7 +880,8 @@ export const SCENARIOS: GoldenScenario[] = [
           { kind: "tools_executed_includes", value: { name: "check_availability", ok: true } },
           { kind: "tools_executed_excludes", value: "reschedule_appointment" },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
-          { kind: "reply_includes", value: "Posso confirmar?" },
+          { kind: "reply_includes", value: "Quer que eu mude para" },
+          { kind: "reply_excludes", value: "Posso confirmar?" },
           { kind: "state", equals: null },
         ],
       },
