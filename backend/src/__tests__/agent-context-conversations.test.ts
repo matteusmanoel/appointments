@@ -834,5 +834,19 @@ describe("contexto do cliente entre turnos e conversas", () => {
     expect(chat.tools.at(-1) ?? []).toContain("send_shop_pix");
     expect(flatten(pix)).toMatch(/85,00/);
     expect(flatten(pix)).not.toMatch(/25,00/);
+
+    // Com o botão nativo ligado, o PIX sai como botão com o valor gravado e o texto não repete a chave.
+    const { config } = await import("../config.js");
+    const { listWhatsAppOutboundAttempts } = await import("../integrations/whatsapp/noop-outbound.js");
+    config.whatsappPixButton = true;
+    try {
+      const button = await say(chat, "manda o pix de novo?");
+      const attempt = listWhatsAppOutboundAttempts().find((row) => row.method === "sendPixRequest");
+      expect(attempt?.text).toMatch(/Corte e Barba/);
+      expect(flatten(button)).toMatch(/85,00/);
+      expect(flatten(button)).not.toMatch(/pix@navalhia\.test/);
+    } finally {
+      config.whatsappPixButton = false;
+    }
   }, 90_000);
 });

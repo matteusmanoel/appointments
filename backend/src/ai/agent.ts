@@ -68,6 +68,8 @@ import {
 } from "./memory/client-memory.js";
 import type { ClientMemoryRow } from "./memory/client-memory.js";
 import { sendBarbershopLocationToClient } from "../lib/send-barbershop-location.js";
+import { sendShopPixButton } from "../lib/send-shop-pix-button.js";
+import { config } from "../config.js";
 import { sendStickerToClient } from "../lib/send-sticker-to-client.js";
 import { isValidUuid } from "../lib/uuid.js";
 import { addDaysIso, alignSpokenHour, capitalizeFirst, describeShopOpenStatus, formatDateBr, formatResumoWhen, formatTimePt, formatWeekCalendarForTools, parseClientTime, pickExecutedToolDate, pickExecutedToolTime, shopOpenStatusNow, shopWindowOnIso, weekdayPtFromIso, weekdayShortPtFromIso } from "./date-calendar.js";
@@ -1189,6 +1191,15 @@ export function composeShopPixReply(params: {
   const card = [lead, pixKeyChip(key)];
   if (meta) card.push(`_ (${meta})_`);
   return `${card.join("\n\n")}[[MSG]]${PIX_RECEIPT_BUBBLE}`;
+}
+
+/** The native PIX button already went out with key and amount; the text does not repeat the key. */
+export function composeShopPixButtonSent(params: { serviceName?: string | null; price: number }): string {
+  const service = params.serviceName?.trim();
+  const lead = service
+    ? `Te mandei o PIX de ${formatBrl(params.price)} do ${service} 👆`
+    : `Te mandei o PIX de ${formatBrl(params.price)} 👆`;
+  return `${lead}[[MSG]]${PIX_RECEIPT_BUBBLE}`;
 }
 
 /** The pin already went out; the text only acknowledges it. */
@@ -3661,14 +3672,27 @@ export async function runAgent(
     }
     if (shopPixThisTurn) {
       const booked = upcomingAppointments[0];
-      out = composeShopPixReply({
-        pixKey: shopPixThisTurn.key,
-        keyType: shopPixThisTurn.keyType,
-        holderName: shopPixThisTurn.holderName,
-        shopName: shopPixThisTurn.shopName,
-        serviceName: writtenThisTurn?.serviceNames ?? booked?.service_names ?? null,
-        price: writtenThisTurn?.price ?? booked?.price ?? null,
-      });
+      const pixService = writtenThisTurn?.serviceNames ?? booked?.service_names ?? null;
+      const pixPrice = writtenThisTurn?.price ?? booked?.price ?? null;
+      const button =
+        config.whatsappPixButton && pixPrice != null && pixPrice > 0
+          ? await sendShopPixButton(effectiveBarbershopId, clientPhone, {
+              amount: pixPrice,
+              description: [pixService, shopPixThisTurn.shopName].filter(Boolean).join(" — ") || "Pagamento",
+            })
+          : null;
+      turnTrace.toolsExecuted.push(...(button ? [{ name: "send_pix_button", ok: button.sent }] : []));
+      out =
+        button?.sent && pixPrice != null
+          ? composeShopPixButtonSent({ serviceName: pixService, price: pixPrice })
+          : composeShopPixReply({
+              pixKey: shopPixThisTurn.key,
+              keyType: shopPixThisTurn.keyType,
+              holderName: shopPixThisTurn.holderName,
+              shopName: shopPixThisTurn.shopName,
+              serviceName: pixService,
+              price: pixPrice,
+            });
     }
     const locationReplied = locationPinSentThisTurn && !shopPixThisTurn && !consultRecap && !composed && !state;
     if (locationReplied) out = composeLocationSent();
