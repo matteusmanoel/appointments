@@ -63,19 +63,24 @@ export function narrowSessionForHydration(
     return { bookingDraft: emptyBookingDraft(), pendingIntents: emptyPendingIntents(), fresh: false };
   }
   let bookingDraft: BookingDraft = { ...session.bookingDraft };
+  const slotMs = bookingDraft.date
+    ? slotStartsAtMs(bookingDraft.date, bookingDraft.time ?? "23:59")
+    : NaN;
+  if (Number.isFinite(slotMs) && slotMs <= nowMs) {
+    // A day or clock that already went by is not a request anymore: it would come back as a past offer.
+    const rest = { ...bookingDraft };
+    delete rest.date;
+    delete rest.time;
+    delete rest.after_time;
+    delete rest.offeredTimes;
+    delete rest.confirmCard;
+    delete rest.confirmCardReplay;
+    if (rest.status === "offered" || rest.status === "awaiting_name") rest.status = "collecting";
+    bookingDraft = rest;
+  }
   const card = bookingDraft.confirmCard;
-  if (card && card.kind !== "reminder") {
-    const slotMs =
-      bookingDraft.date && bookingDraft.time ? slotStartsAtMs(bookingDraft.date, bookingDraft.time) : NaN;
-    const passed = Number.isFinite(slotMs) && slotMs <= nowMs;
-    if (passed) {
-      const rest = { ...bookingDraft };
-      delete rest.confirmCard;
-      delete rest.confirmCardReplay;
-      bookingDraft = rest;
-    } else if (isLiveConfirmCard(card, new Date(nowMs))) {
-      bookingDraft = { ...bookingDraft, confirmCardReplay: true };
-    }
+  if (card && card.kind !== "reminder" && isLiveConfirmCard(card, new Date(nowMs))) {
+    bookingDraft = { ...bookingDraft, confirmCardReplay: true };
   }
   return { bookingDraft, pendingIntents: session.pendingIntents, fresh: true };
 }

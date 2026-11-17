@@ -103,7 +103,33 @@ describe("contexto de sessão", () => {
     expect(narrowed.fresh).toBe(true);
     expect(narrowed.bookingDraft.confirmCard).toBeUndefined();
     expect(narrowed.bookingDraft.confirmCardReplay).toBeUndefined();
-    expect(narrowed.bookingDraft.date).toBe("2026-11-16");
+    expect(narrowed.bookingDraft.date).toBeUndefined();
+    expect(narrowed.bookingDraft.time).toBeUndefined();
+    expect(narrowed.bookingDraft.status).toBe("collecting");
+    expect(narrowed.bookingDraft.service_name).toBe("Corte");
+  });
+
+  it("dia que já passou sai do rascunho mesmo sem card", () => {
+    const now = Date.parse("2026-11-17T10:25:00-03:00");
+    const narrowed = narrowSessionForHydration(
+      session(
+        { status: "collecting", date: "2026-11-14", time: "10:30", service_name: "Barba completa" },
+        "2026-11-16T22:00:00-03:00",
+      ),
+      now,
+    );
+    expect(narrowed.bookingDraft.date).toBeUndefined();
+    expect(narrowed.bookingDraft.time).toBeUndefined();
+    expect(narrowed.bookingDraft.service_name).toBe("Barba completa");
+  });
+
+  it("dia de hoje sem relógio continua valendo", () => {
+    const now = Date.parse("2026-11-17T10:25:00-03:00");
+    const narrowed = narrowSessionForHydration(
+      session({ status: "collecting", date: "2026-11-17" }, "2026-11-17T09:00:00-03:00"),
+      now,
+    );
+    expect(narrowed.bookingDraft.date).toBe("2026-11-17");
   });
 
   it("rascunho e intenções expiram depois de 24 h; rascunho fechado não leva o serviço", () => {
