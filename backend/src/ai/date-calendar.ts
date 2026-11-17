@@ -296,17 +296,23 @@ export function formatTimePt(timeHHmm: string): string {
   return m === 0 ? `${h}h` : `${h}h${pad2(m)}`;
 }
 
-/** Aceite summary: Hoje/Amanhã + weekday + dd/MM + time; from day 3 only weekday. */
+/**
+ * The one conversational when: "hoje às 15h", "amanhã às 10h30", "quinta, 20/11 às 15h".
+ * Lowercase so it reads mid-sentence; a card line capitalizes it with capitalizeFirst.
+ */
 export function formatResumoWhen(dateIso: string, timeHHmm: string, todayIso: string): string {
   const short = weekdayShortPtFromIso(dateIso);
   const br = formatDateBr(dateIso);
   const ddmm = br.length >= 5 ? br.slice(0, 5) : br;
   const timePt = formatTimePt(timeHHmm);
   const tomorrowIso = addDaysIso(todayIso, 1);
-  if (dateIso === todayIso) return `Hoje, ${short} ${ddmm} às ${timePt}`;
-  if (dateIso === tomorrowIso) return `Amanhã, ${short} ${ddmm} às ${timePt}`;
-  const cap = short ? short.charAt(0).toUpperCase() + short.slice(1) : dateIso;
-  return `${cap}, ${ddmm} às ${timePt}`;
+  if (dateIso === todayIso) return `hoje às ${timePt}`;
+  if (dateIso === tomorrowIso) return `amanhã às ${timePt}`;
+  return `${short || dateIso}, ${ddmm} às ${timePt}`;
+}
+
+export function capitalizeFirst(text: string): string {
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
 /** Strip a single period ending a bubble; keep ? ! and ellipsis. */
@@ -366,6 +372,9 @@ export function parseClientTime(text: string): string | null {
   // "18 horas" / "18 hora" without "às" — restrict to 7–22 to avoid "em 2 horas" ambiguity
   const horasOnly = raw.match(/\b([7-9]|1\d|2[0-2])\s+horas?\b/i);
   if (horasOnly?.[1]) return normalizeHHmm(horasOnly[1], "0");
+
+  const noon = raw.match(/\bmeio[\s-]?dia(\s+e\s+meia)?\b/i);
+  if (noon) return noon[1] ? "12:30" : "12:00";
 
   return null;
 }

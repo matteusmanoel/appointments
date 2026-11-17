@@ -112,7 +112,7 @@ describe("available slot confirmation copy", () => {
     expect(looksLikeBookingConfirmationAsk(out)).toBe(true);
   });
 
-  it("12:53 close uses Amanhã + weekday + dd/MM for Monday combo 17h", () => {
+  it("12:53 close: card line reads Amanhã às 17h, without the weekday and date repeated", () => {
     const out = composeAvailableSlotConfirm({
       firstName: "Eduardo",
       serviceName: "Corte e Barba",
@@ -122,7 +122,7 @@ describe("available slot confirmation copy", () => {
       totalPrice: 55,
       todayIso: "2026-09-20",
     });
-    expect(out).toMatch(/Amanhã, segunda 21\/09 às 17h/);
+    expect(out).toMatch(/📅 Amanhã às 17h/);
     expect(out).toMatch(/\[\[MSG\]\]Posso confirmar\?/);
     expect(out).not.toMatch(/de setembro de 2026/);
     expect(containsAiExposure(out)).toBe(false);
@@ -257,25 +257,26 @@ describe("booking accept is not presence", () => {
     const far = composeBookingCreated({
       firstName: "Mateus",
       serviceName: "Corte e Barba",
-      when: "amanhã, segunda-feira (28/09) às 15h",
+      when: "amanhã às 15h",
       barberName: "Lucas Lima",
       remindBefore: true,
     });
     expect(far).toMatch(/Agendado, Mateus!/);
-    expect(far).toMatch(/está marcado para amanhã, segunda-feira \(28\/09\) às 15h, com o profissional Lucas/);
+    expect(far).toMatch(/está marcado para amanhã às 15h, com o Lucas/);
     expect(far).toContain("[[MSG]]");
     expect(far).toMatch(/lembrete 2h antes/);
     const soon = composeBookingCreated({
       firstName: "Mateus",
       serviceName: "Corte e Barba",
-      when: "hoje, domingo (27/09) às 12h",
+      when: "hoje às 12h",
       barberName: "Lucas Lima",
       remindBefore: false,
     });
     expect(soon).not.toContain("[[MSG]]");
     expect(soon).not.toMatch(/lembrete 2h/);
     const when = formatMarkedWhen("2026-09-28", "15:00", "2026-09-27");
-    expect(when).toBe("amanhã, segunda-feira (28/09) às 15h");
+    expect(when).toBe("amanhã às 15h");
+    expect(formatMarkedWhen("2026-10-01", "15:00", "2026-09-27")).toBe("quinta, 01/10 às 15h");
     const mins = minutesUntilAppointment({
       dateIso: "2026-09-28",
       timeHHmm: "15:00",
@@ -527,11 +528,10 @@ describe("reschedule must not narrate a failure the tools did not return", () =>
 });
 
 describe("location action text", () => {
-  it("acknowledges the pin and offers help as two bubbles", () => {
-    expect(splitOutgoingBubbles(composeLocationSent())).toEqual([
-      "Enviei nossa localização",
-      "Se precisar de mais alguma coisa, é só avisar!",
-    ]);
+  it("acknowledges the pin in one bubble, without a stock closer", () => {
+    const bubbles = splitOutgoingBubbles(composeLocationSent());
+    expect(bubbles).toHaveLength(1);
+    expect(bubbles[0]).not.toMatch(/se precisar de mais alguma coisa/i);
   });
 });
 
@@ -551,7 +551,8 @@ describe("pix answer keeps the price", () => {
         "`\u2060\u202F45988432998\u202F\u2060`\n\n" +
         "_ (Chave tipo Celular • Nome: Mateus / Cavalier Barbearia)_",
     );
-    expect(receipt).toMatch(/^Assim que realizar o pagamento/);
+    expect(receipt).toMatch(/comprovante/);
+    expect(receipt).not.toMatch(/qualquer outra d[uú]vida/i);
     expect(card).not.toMatch(/comprovante/);
   });
 
