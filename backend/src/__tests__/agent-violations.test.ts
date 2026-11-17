@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectViolations, sanitizeClientFacingReply, composeAvailableSlotConfirm, composeUnwrittenSlotCard, looksLikeBookingConfirmationAsk, containsAiExposure, assistantMessageAskedForName, isUsableClientName, withBarberSubstitutionDisclosure, allowedConfirmAppointmentIds, guardClientReply, SAFE_CLIENT_FALLBACK, resolveServiceForTurn, composePresenceConfirmed, resolveToolClientPhone, confirmedPersonName, bookingDraftBlocksPresence, replyDeniesUpcoming, replyWithoutPixEcho, replyAfterPixCard, composeUpcomingRecap, looksLikeHallucinatedBookingClaim, composeBookingCreated, composeRemarcarFromLast, replyNegotiatesUnverifiedSlots, composeShopPixReply, formatMarkedWhen, minutesUntilAppointment, REMINDER_BUBBLE_LEAD_MINUTES, composeRescheduleDone, rescheduleDraftMatchesOffer, replyNarratesBookingFailure, replyClaimsPresenceConfirmed, barberIdForAvailability, pendingMoveSlot, affirmedUnverifiedClock, replyClaimsOtherClock, replyClaimsSlotIsFree, composeLocationSent, composeCancellationReply } from "../ai/agent.js";
+import { detectViolations, sanitizeClientFacingReply, composeAvailableSlotConfirm, composeUnwrittenSlotCard, looksLikeBookingConfirmationAsk, containsAiExposure, assistantMessageAskedForName, isUsableClientName, withBarberSubstitutionDisclosure, allowedConfirmAppointmentIds, guardClientReply, SAFE_CLIENT_FALLBACK, resolveServiceForTurn, composePresenceConfirmed, resolveToolClientPhone, confirmedPersonName, bookingDraftBlocksPresence, replyDeniesUpcoming, replyWithoutPixEcho, replyAfterPixCard, composeUpcomingRecap, looksLikeHallucinatedBookingClaim, composeBookingCreated, composeRemarcarFromLast, replyNegotiatesUnverifiedSlots, composeShopPixReply, formatMarkedWhen, minutesUntilAppointment, REMINDER_BUBBLE_LEAD_MINUTES, composeRescheduleDone, rescheduleDraftMatchesOffer, replyNarratesBookingFailure, replyClaimsPresenceConfirmed, barberIdForAvailability, pendingMoveSlot, affirmedUnverifiedClock, replyClaimsOtherClock, replyClaimsSlotIsFree, composeLocationSent, composeCancellationReply, writtenFromToolResult } from "../ai/agent.js";
 import { splitOutgoingBubbles } from "../ai/date-calendar.js";
 import { understandTurn } from "../ai/agent/understanding.js";
 
@@ -714,5 +714,35 @@ describe("done and cancel copy", () => {
     expect(text.startsWith("❌")).toBe(true);
     expect(text).toContain("cancelado");
     expect(text).not.toMatch(/posso confirmar/i);
+  });
+});
+
+describe("writtenFromToolResult", () => {
+  it("lê serviço, preço e horário do que a ferramenta gravou", () => {
+    expect(
+      writtenFromToolResult({
+        ok: true,
+        date: "2026-11-17",
+        time: "12:00:00",
+        service_names: "Corte e Barba",
+        price: 85,
+        barber_name: "Eduardo",
+      }),
+    ).toMatchObject({ date: "2026-11-17", time: "12:00", serviceNames: "Corte e Barba", price: 85 });
+  });
+  it("create devolve services[] e total_price", () => {
+    expect(
+      writtenFromToolResult({
+        id: "x",
+        date: "2026-11-17",
+        time: "15:00",
+        services: [{ name: "Corte" }, { name: "Barba" }],
+        total_price: 75,
+      }),
+    ).toMatchObject({ serviceNames: "Corte, Barba", price: 75 });
+  });
+  it("falha não vira fato gravado", () => {
+    expect(writtenFromToolResult({ error: "SLOT_TAKEN" })).toBeNull();
+    expect(writtenFromToolResult(null)).toBeNull();
   });
 });

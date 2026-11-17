@@ -1297,6 +1297,7 @@ export type WrittenAppointment = {
 export function writtenFromToolResult(result: unknown): WrittenAppointment | null {
   if (!result || typeof result !== "object") return null;
   const r = result as Record<string, unknown>;
+  if (r.error != null || r.ok === false) return null;
   const fromList = Array.isArray(r.services)
     ? (r.services as Array<{ name?: unknown }>)
         .map((s) => (typeof s?.name === "string" ? s.name.trim() : ""))
@@ -4731,6 +4732,34 @@ export async function runAgent(
 
   if (routing.turnDirective === PLAN_CHARGE_ACK) {
     return finishTurn(PLAN_CHARGE_ACK, true);
+  }
+
+  // Services named with no day and no clock, and one appointment ahead: the change is to that appointment at the
+  // same slot (the agent never books a second one for this client). The card asks before anything is written.
+  const serviceOnlyTarget = upcomingAppointments.length === 1 ? upcomingAppointments[0] : undefined;
+  if (
+    serviceOnlyTarget &&
+    turnFacts.patch.service_ids?.length &&
+    !parseClientTime(lastUserTextRaw) &&
+    !desired.currentTurnDate &&
+    serviceChangeFor(serviceOnlyTarget, turnFacts.patch.service_ids) &&
+    slotIsAhead(String(serviceOnlyTarget.date).slice(0, 10), String(serviceOnlyTarget.time).slice(0, 5)) &&
+    !looksLikeCancelIntent(lastUserTextRaw) &&
+    !looksLikeConsultIntent(lastUserTextRaw)
+  ) {
+    bookingDraft = mergeBookingDraft(bookingDraft, {
+      appointment_id: serviceOnlyTarget.id,
+      date: String(serviceOnlyTarget.date).slice(0, 10),
+      time: null,
+      offeredTimes: null,
+      ...(serviceOnlyTarget.barber_id
+        ? { barber_id: serviceOnlyTarget.barber_id, barber_name: serviceOnlyTarget.barber_name }
+        : {}),
+      status: "collecting",
+    });
+    await saveBookingDraft(conversationId, bookingDraft);
+    const asked = await tryConfirmNamedHour(String(serviceOnlyTarget.time).slice(0, 5));
+    if (asked) return finishTurn(withRobotPrefix(asked), true);
   }
 
   const confirmingOfferedSlot =
