@@ -13,6 +13,7 @@ import {
   SLOT_MINUTES,
   formatMinutes,
   nowOffsetPx,
+  parseTimeToMinutes,
   placeBlocks,
   placeUnavailability,
   rangeFromSlots,
@@ -64,7 +65,7 @@ function halfHourMarks(startMin: number, endMin: number): number[] {
 export function DayTimelineSkeleton({ barberCount }: { barberCount: number }) {
   const cols = Math.max(barberCount, 1);
   return (
-    <div className="stat-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden p-0 max-md:h-[calc(100dvh-20rem)]">
+    <div className="stat-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden p-0 max-md:h-auto max-md:min-h-[16rem] max-md:flex-1">
       <div
         className="grid shrink-0 border-b border-border"
         style={{ gridTemplateColumns: `${GUTTER_PX}px repeat(${cols}, minmax(7rem, 1fr))` }}
@@ -128,6 +129,16 @@ export function DayTimeline({
       pxPerMinute,
     });
   }, [appointments, pxPerMinute, range]);
+
+  const openSlots = useMemo(() => {
+    if (!range) return [];
+    const seen = new Set<number>();
+    for (const slot of slots) {
+      const mins = parseTimeToMinutes(slot);
+      if (Number.isFinite(mins) && mins >= range.startMin && mins < range.endMin) seen.add(mins);
+    }
+    return [...seen].sort((a, b) => a - b);
+  }, [range, slots]);
 
   const bands = useMemo(() => {
     if (!range) return [];
@@ -195,7 +206,7 @@ export function DayTimeline({
   };
 
   return (
-    <div className="stat-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden p-0 max-md:h-[calc(100dvh-20rem)]">
+    <div className="stat-card flex h-[calc(100dvh-14rem)] min-h-[24rem] flex-col overflow-hidden p-0 max-md:h-auto max-md:min-h-[16rem] max-md:flex-1">
       <div
         ref={scrollerRef}
         className="scrollbar-thin min-h-0 flex-1 overflow-auto"
@@ -278,6 +289,25 @@ export function DayTimeline({
                     style={{ top: (mins - range.startMin) * pxPerMinute }}
                   />
                 ))}
+                {openSlots.map((mins) => {
+                  const time = formatMinutes(mins);
+                  return (
+                    <button
+                      key={mins}
+                      type="button"
+                      className="absolute inset-x-0 z-0 cursor-pointer transition-colors hover:bg-primary/10 focus-visible:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      style={{
+                        top: (mins - range.startMin) * pxPerMinute,
+                        height: SLOT_MINUTES * pxPerMinute,
+                      }}
+                      aria-label={`Agendar às ${time} com ${barber.name}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onCreate(time, barber.id);
+                      }}
+                    />
+                  );
+                })}
                 {bands.map((band) => (
                   <div
                     key={`${band.startMin}-${band.endMin}`}
@@ -309,7 +339,7 @@ export function DayTimeline({
                       key={block.id}
                       type="button"
                       className={cn(
-                        "absolute z-10 overflow-hidden rounded-md border px-1.5 text-left shadow-sm transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        "absolute z-10 cursor-pointer overflow-hidden rounded-md border px-1.5 text-left shadow-sm transition-[box-shadow,filter] hover:shadow-md hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                         style.block,
                         apt.status === "completed" && "opacity-70",
                         compact ? "py-0.5" : "py-1",

@@ -493,6 +493,15 @@
     animation: checkout-step-prev 280ms ease-out;
   }
 
+  @keyframes booking-field-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .booking-field-in {
+    animation: booking-field-in 180ms ease-out;
+  }
+
   @keyframes checkout-risk-shake {
     0%,
     100% {
@@ -565,6 +574,7 @@
 
     .checkout-step-next,
     .checkout-step-prev,
+    .booking-field-in,
     .checkout-risk-shake,
     .checkout-send-pulse {
       animation: none;

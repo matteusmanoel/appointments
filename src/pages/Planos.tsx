@@ -11,9 +11,12 @@ import { ChargesTable } from "@/components/plans/ChargesTable";
 import { ConfirmDialog } from "@/components/shared";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { LoadingState } from "@/components/LoadingState";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
+import { MobileCreateButton } from "@/components/layout/MobileCreateButton";
 
 export default function Planos() {
   const queryClient = useQueryClient();
+  useMobilePageTitle("Planos");
   const [formOpen, setFormOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<BarbershopPlan | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<BarbershopPlan | null>(null);
@@ -66,7 +69,7 @@ export default function Planos() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="hidden items-center justify-between md:flex">
         <div>
           <h1 className="text-2xl font-bold">Planos</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -176,6 +179,7 @@ export default function Planos() {
           setDeactivateTarget(null);
         }}
       />
+      <MobileCreateButton label="Novo plano" onClick={handleNewPlan} />
     </div>
   );
 }

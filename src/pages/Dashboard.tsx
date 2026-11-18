@@ -39,6 +39,7 @@ import {
 import { getTimeSlotsForDay } from "@/lib/slots";
 import { useAuth } from "@/contexts/AuthContext";
 import { SetupChecklist } from "@/components/SetupChecklist";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 import { nativeAiUiEnabled } from "@/lib/native-ai-ui";
 
 function todayISO() {
@@ -46,6 +47,7 @@ function todayISO() {
 }
 
 export default function Dashboard() {
+  useMobilePageTitle("Início");
   const { data: barbershop } = useQuery({
     queryKey: ["barbershop"],
     queryFn: () => barbershopsApi.get(),
@@ -191,7 +193,7 @@ export default function Dashboard() {
         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="page-title">Salve, {greetingName}! 👋</h1>
-            <p className="page-subtitle">
+            <p className="page-subtitle max-md:hidden">
               {isRange
                 ? "Resumo do período selecionado."
                 : "Agenda organizada para hoje."}{" "}

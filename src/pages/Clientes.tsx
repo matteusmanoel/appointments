@@ -16,6 +16,7 @@ import {
   LayoutGrid,
   LayoutList,
   AlertTriangle,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   Table,
@@ -57,6 +58,16 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { ClientDrawer } from "@/components/clients/ClientDrawer";
+import { Label } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
+import { MobileCreateButton } from "@/components/layout/MobileCreateButton";
 
 const clientSchema = z.object({
   name: z.string().min(1, "Nome é obrigatório"),
@@ -122,6 +133,8 @@ export default function Clientes() {
   const search = useDebouncedValue(searchInput, 300);
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const [reactivationFilter, setReactivationFilter] = useState<string>("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  useMobilePageTitle("Clientes");
   const [drawerClient, setDrawerClient] = useState<Client | null>(null);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -252,7 +265,7 @@ export default function Clientes() {
   return (
     <>
       <div className="animate-fade-in">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div className="mb-8 hidden flex-col gap-4 md:flex md:flex-row md:items-center md:justify-between">
           <div className="page-header mb-0">
             <h1 className="page-title">Clientes</h1>
             <p className="page-subtitle">Histórico e relacionamento com clientes</p>
@@ -277,6 +290,17 @@ export default function Clientes() {
                 aria-label="Buscar por nome ou telefone"
               />
             </div>
+            <button
+              type="button"
+              className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted md:hidden"
+              onClick={() => setFiltersOpen(true)}
+              aria-label={reactivationFilter ? "Filtros ativos" : "Filtros"}
+            >
+              <SlidersHorizontal className="h-5 w-5" />
+              {reactivationFilter ? (
+                <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary" aria-hidden />
+              ) : null}
+            </button>
             <div className="flex items-center border border-border rounded-lg overflow-hidden shrink-0">
               <button
                 type="button"
@@ -309,7 +333,7 @@ export default function Clientes() {
         </div>
 
         {/* Reactivation filter pills */}
-        <div className="flex flex-wrap gap-2 mb-6">
+        <div className="mb-6 hidden flex-wrap gap-2 md:flex">
           {FILTER_PILLS.map((pill) => (
             <button
               key={pill.value}
@@ -624,6 +648,53 @@ export default function Clientes() {
           onConfirm={handleDelete}
         />
       )}
+      <MobileCreateButton label="Adicionar cliente" onClick={openCreate} />
+      <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <SheetContent
+          side="bottom"
+          className="rounded-t-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <SheetHeader className="text-left">
+            <SheetTitle>Filtros</SheetTitle>
+            <SheetDescription className="sr-only">Situação dos clientes</SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-2">
+            <Label>Situação</Label>
+            <div className="flex flex-wrap gap-2">
+              {FILTER_PILLS.map((pill) => (
+                <button
+                  key={pill.value}
+                  type="button"
+                  onClick={() => setReactivationFilter(pill.value)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-sm font-medium transition-colors",
+                    reactivationFilter === pill.value
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:bg-muted",
+                  )}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-6 flex gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 flex-1"
+              onClick={() => setReactivationFilter("")}
+              disabled={!reactivationFilter}
+            >
+              Limpar
+            </Button>
+            <Button type="button" className="h-11 flex-1" onClick={() => setFiltersOpen(false)}>
+              Ver resultados
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

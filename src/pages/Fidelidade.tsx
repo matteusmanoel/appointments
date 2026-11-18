@@ -23,10 +23,12 @@ import {
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { withToast } from "@/lib/toast-helpers";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export default function Fidelidade() {
+  useMobilePageTitle("Fidelidade");
   const queryClient = useQueryClient();
   const [redeemService, setRedeemService] = useState<{
     id: string;
@@ -96,7 +98,7 @@ export default function Fidelidade() {
   return (
     <>
       <div className="animate-fade-in">
-        <div className="page-header">
+        <div className="page-header max-md:hidden">
           <h1 className="page-title">Programa de Fidelidade</h1>
           <p className="page-subtitle">
             Pontos por serviço e recompensas para seus clientes
