@@ -1,12 +1,15 @@
 name: CI
 
+# Pausado: a conta do GitHub está bloqueada por billing. Cada execução morre
+# antes de começar ("The job was not started because your account is locked
+# due to a billing issue"), em pull_request e em push, na main e na develop.
+# Os gatilhos automáticos foram removidos para o Actions parar de enfileirar
+# job. O conteúdo dos jobs fica aqui. Para religar, restaure:
+#   pull_request:
+#     branches: [main, develop]
+#   push:
+#     branches: [main, develop]
 on:
-  pull_request:
-    # `develop` é a branch de integração (base dos PRs de correção): sem ela, o CI só rodava ao abrir PR para a main.
-    branches: [main, develop]
-  push:
-    # O que entra por merge também é revalidado (um merge que quebra o develop aparece no próprio push, não no PR seguinte).
-    branches: [main, develop]
   workflow_dispatch:
 
 # O CI só lê o repositório; nada aqui escreve em PR, issue ou pacote.
