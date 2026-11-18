@@ -1029,4 +1029,68 @@ export const SCENARIOS: GoldenScenario[] = [
       },
     ],
   },
+  {
+    // Contrato (CONTEXT.md, "Remarcação"): o horário dito que é o já marcado é o que o cliente não pode; a troca de
+    // serviço é remarcação do mesmo registro, com check antes do card; repetir o card vivo aceita e grava.
+    id: "reschedule_refuse_current_then_change_service",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Não vou conseguir às 18h, tem outro horário nesse dia?",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "tools_executed_excludes", value: "check_availability" },
+          { kind: "tools_executed_excludes", value: "reschedule_appointment" },
+          { kind: "draft_time_not", value: "18:00" },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: null },
+          { kind: "not_silenced" },
+        ],
+      },
+      {
+        user: "às 15h então",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "draft_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_barber_id", equals: fx.barbers.eduardo },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "pode ser",
+        llm: () => [],
+        contracts: () => [
+          { kind: "tools_executed", equals: [{ name: "reschedule_appointment", ok: true }] },
+          { kind: "state", equals: "appointment_rescheduled" },
+        ],
+      },
+      {
+        user: "na real quero corte e barba",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_service_ids", equals: [fx.services.corteBarba] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "Sim, corte e barba nesse horário",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed", equals: [{ name: "reschedule_appointment", ok: true }] },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: "appointment_rescheduled" },
+        ],
+      },
+    ],
+  },
 ];

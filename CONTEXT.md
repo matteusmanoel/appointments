@@ -139,8 +139,9 @@ Acordo em construção na conversa (serviço, barbeiro, data, hora). Cobre um ú
 _Avoid_: estado da IA, memória, contexto, serviço inferido no check, confundir com Plano
 
 **Remarcar**:
-Pedido de outro relógio para o horário que a pessoa já tem, ou para o que acabou de ser cancelado nesta conversa. Leva o serviço e o barbeiro desse horário. Esse serviço fica até a pessoa nomear outro do catálogo. “Meu corte”, com o horário já sendo o combo, mantém o combo. O sim a esse combo pergunta o dia e a hora. Não cria enquanto o dia não for dito. Pode dizer que o relógio antigo foi cancelado.
-_Avoid_: recomeçar perguntando o serviço, tratar como cliente novo, criar sem dia, partir o combo, perguntar combo ou só o corte
+Pedido de outro relógio ou de outro serviço para o horário que a pessoa já tem, ou para o que acabou de ser cancelado nesta conversa. Leva o serviço e o barbeiro desse horário. Esse serviço fica até a pessoa nomear outro do catálogo. “Meu corte”, com o horário já sendo o combo, mantém o combo. O sim a esse combo pergunta o dia e a hora. Não cria enquanto o dia não for dito. Pode dizer que o relógio antigo foi cancelado.
+Quem tem um único horário futuro e nomeia outro serviço, sem dia e sem hora, está mudando esse horário: o check usa a duração do serviço novo e o card diz o serviço e o valor novos. O sim grava serviço, preço e duração no mesmo registro. O relógio dito que é o do horário atual é o que a pessoa não pode: o agente oferece outros horários, não um card para ele. Dia que já passou nunca é oferecido nem fica no rascunho herdado. A confirmação e o PIX dizem o que foi gravado.
+_Avoid_: recomeçar perguntando o serviço, tratar como cliente novo, criar sem dia, partir o combo, perguntar combo ou só o corte, criar um segundo horário para incluir serviço, card com o relógio que a pessoa recusou, confirmar pelo rascunho
 
 **Nome da pessoa**:
 Nome que a pessoa disse na conversa. Só esse aparece na resposta. O nome do contato no WhatsApp não é nome da pessoa. Se o cadastro só tem o contato, a frase sai sem nome.

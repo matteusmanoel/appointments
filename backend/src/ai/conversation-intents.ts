@@ -64,6 +64,17 @@ export function isClientConfirmation(text: string): boolean {
 }
 
 /**
+ * The message opens with a yes ("Sim, ...", "Pode sim! ...") and goes on. Whether the rest changed the
+ * offer is decided by the draft, not here. Any "não" keeps it from being a yes.
+ */
+export function opensWithConfirmation(text: string): boolean {
+  const t = fold(text);
+  if (!t || /\bnao\b/.test(t)) return false;
+  const lead = t.split(/[,!.;?]/)[0]?.trim() ?? "";
+  return isShortConfirmation(lead);
+}
+
+/**
  * Recusa curta ("não", "dessa vez não", "quero outro"): a pessoa não aceitou o que foi sugerido.
  * "Não" seguido de um horário ou de um serviço nomeado não é só recusa: o fato novo vale mais.
  */

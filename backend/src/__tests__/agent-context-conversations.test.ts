@@ -721,4 +721,132 @@ describe("contexto do cliente entre turnos e conversas", () => {
       true,
     );
   }, 60_000);
+
+  it("13. remarca, inclui serviço e paga: nada de dia passado, serviço gravado e PIX do valor gravado", async () => {
+    const fx = await shop("c13");
+    await pool.query(`UPDATE public.barbershops SET pix_key = 'pix@navalhia.test', pix_key_type = 'email' WHERE id = $1`, [
+      fx.barbershopId,
+    ]);
+    const barbaCompleta = await pool.query<{ id: string }>(
+      `INSERT INTO public.services (barbershop_id, name, price, duration_minutes, is_active, category)
+       VALUES ($1, 'Barba completa', 25, 30, true, 'barba') RETURNING id`,
+      [fx.barbershopId],
+    );
+    const combo = await pool.query<{ id: string }>(
+      `INSERT INTO public.services (barbershop_id, name, price, duration_minutes, is_active, category)
+       VALUES ($1, 'Corte e Barba', 85, 60, true, 'combo') RETURNING id`,
+      [fx.barbershopId],
+    );
+    const comboId = combo.rows[0]!.id;
+    const now = "2026-11-17T10:24:00-03:00";
+    const chat = await openChat(fx, "5511900001013", now);
+    const client = await pool.query<{ id: string }>(
+      `INSERT INTO public.clients (barbershop_id, name, phone) VALUES ($1, 'Mateus Manoel', $2) RETURNING id`,
+      [fx.barbershopId, chat.sandboxPhone],
+    );
+    const appt = await pool.query<{ id: string }>(
+      `INSERT INTO public.appointments
+         (barbershop_id, client_id, barber_id, service_id, scheduled_date, scheduled_time, duration_minutes, price, commission_amount, status)
+       VALUES ($1, $2, $3, $4, '2026-11-17'::date, '10:30'::time, 30, 25, 10, 'pending') RETURNING id`,
+      [fx.barbershopId, client.rows[0]!.id, fx.eduardoId, barbaCompleta.rows[0]!.id],
+    );
+    const apptId = appt.rows[0]!.id;
+    await pool.query(
+      `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
+       VALUES ($1, $2, 25, 30, 'Barba completa', 0)`,
+      [apptId, barbaCompleta.rows[0]!.id],
+    );
+    // Rascunho de uma conversa anterior com um dia que já passou (como o sábado 14/11 do teste real).
+    const { saveClientSessionContext } = await import("../ai/agent/client-session-context.js");
+    const { emptyPendingIntents } = await import("../ai/agent/pending-intents.js");
+    const { parseBookingDraft } = await import("../ai/booking-draft.js");
+    await saveClientSessionContext({
+      barbershopId: fx.barbershopId,
+      clientPhone: chat.sandboxPhone,
+      bookingDraft: parseBookingDraft({
+        status: "collecting",
+        date: "2026-11-14",
+        time: "10:30",
+        service_ids: [barbaCompleta.rows[0]!.id],
+        service_name: "Barba completa",
+        barber_id: fx.eduardoId,
+        barber_name: "Eduardo",
+        appointment_id: apptId,
+      }),
+      pendingIntents: emptyPendingIntents(),
+      lastIntent: "reschedule",
+      updatedAt: "2026-11-17T09:30:00-03:00",
+    });
+    await fresh(chat, now);
+
+    const pastDay = /s[aá]bado|14\/11/i;
+
+    // Não dá no horário marcado: o agente oferece outros horários do mesmo barbeiro, não um card para 10h30.
+    const offer = await say(chat, "Bom dia, não vou conseguir chegar às 10h30, teria outro horário?");
+    expect(flatten(offer)).not.toMatch(pastDay);
+    expect(chat.tools.at(-1) ?? []).not.toContain("reschedule_appointment");
+    expect(flatten(offer)).not.toMatch(/mude para hoje às 10h30/i);
+    expect([...flatten(offer).matchAll(/às\s+\d{1,2}h/gi)].length).toBeGreaterThanOrEqual(2);
+    const offerSession = (await loadMemory(chat))?.session?.bookingDraft as { date?: string; time?: string | null };
+    expect(offerSession?.date).toBe("2026-11-17");
+    expect(offerSession?.time ?? null).toBeNull();
+
+    // Hora nomeada: card de remarcação do mesmo agendamento, com check antes e nada gravado.
+    const card = await say(chat, "e às 15h hoje, tem?");
+    expect(chat.tools.at(-1) ?? []).toContain("check_availability");
+    expect(chat.tools.at(-1) ?? []).not.toContain("reschedule_appointment");
+    expect(flatten(card)).toMatch(/Quer que eu mude para/i);
+    expect(flatten(card)).not.toMatch(pastDay);
+    expect((await listAppts(chat))[0]!.time).toBe("10:30");
+
+    await say(chat, "pode ser, perfeito");
+    let live = (await listAppts(chat)).filter((row) => row.status !== "cancelled");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ id: apptId, date: "2026-11-17", time: "15:00", service: "Barba completa", barber: "Eduardo" });
+
+    // Inclui o corte no mesmo horário: card com o serviço novo, checado com a duração do combo, nada gravado ainda.
+    const change = await say(chat, "quero fazer corte e barba");
+    expect(chat.tools.at(-1) ?? []).toContain("check_availability");
+    expect(chat.tools.at(-1) ?? []).not.toContain("reschedule_appointment");
+    expect(flatten(change)).toMatch(/Corte e Barba/);
+    live = (await listAppts(chat)).filter((row) => row.status !== "cancelled");
+    expect(live[0]!.service).toBe("Barba completa");
+
+    // Emenda o horário (meio dia) e depois aceita repetindo o card: grava combo às 12h no mesmo agendamento.
+    const amended = await say(chat, "Show! Mas se der ao meio dia é melhor, consegue?");
+    expect(chat.tools.at(-1) ?? []).toContain("check_availability");
+    expect(flatten(amended)).toMatch(/12h/);
+    expect(flatten(amended)).toMatch(/Corte e Barba/);
+    await say(chat, "Isso, corte e barba hoje ao meio dia");
+    expect(chat.tools.at(-1) ?? []).toContain("reschedule_appointment");
+    live = (await listAppts(chat)).filter((row) => row.status !== "cancelled");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ id: apptId, date: "2026-11-17", time: "12:00", service: "Corte e Barba" });
+    const stored = await pool.query<{ service_id: string; price: string; duration_minutes: number }>(
+      `SELECT service_id, price::text, duration_minutes FROM public.appointments WHERE id = $1`,
+      [apptId],
+    );
+    expect(stored.rows[0]).toMatchObject({ service_id: comboId, duration_minutes: 60 });
+    expect(Number(stored.rows[0]!.price)).toBe(85);
+
+    // PIX cobra o que está gravado.
+    const pix = await say(chat, "me passa o pix por favor");
+    expect(chat.tools.at(-1) ?? []).toContain("send_shop_pix");
+    expect(flatten(pix)).toMatch(/85,00/);
+    expect(flatten(pix)).not.toMatch(/25,00/);
+
+    // Com o botão nativo ligado, o PIX sai como botão com o valor gravado e o texto não repete a chave.
+    const { config } = await import("../config.js");
+    const { listWhatsAppOutboundAttempts } = await import("../integrations/whatsapp/noop-outbound.js");
+    config.whatsappPixButton = true;
+    try {
+      const button = await say(chat, "manda o pix de novo?");
+      const attempt = listWhatsAppOutboundAttempts().find((row) => row.method === "sendPixRequest");
+      expect(attempt?.text).toMatch(/Corte e Barba/);
+      expect(flatten(button)).toMatch(/85,00/);
+      expect(flatten(button)).not.toMatch(/pix@navalhia\.test/);
+    } finally {
+      config.whatsappPixButton = false;
+    }
+  }, 90_000);
 });
