@@ -50,6 +50,10 @@ describe("isClientConfirmation", () => {
     expect(isClientConfirmation("boa")).toBe(false);
     expect(isClientConfirmation("Quero reagendar meu corte para terça as 13h")).toBe(false);
     expect(isClientConfirmation("pode ser terça")).toBe(false);
+    expect(isClientConfirmation("Correto")).toBe(true);
+    expect(isClientConfirmation("Certo")).toBe(true);
+    expect(isClientConfirmation("Prossiga")).toBe(true);
+    expect(isClientConfirmation("Pode prosseguir")).toBe(true);
     expect(isClientConfirmation("Pode ser as 17")).toBe(false);
     expect(isClientConfirmation("pode ser as 18:30")).toBe(false);
     expect(isClientConfirmation("Perfeito, pode agendar")).toBe(true);

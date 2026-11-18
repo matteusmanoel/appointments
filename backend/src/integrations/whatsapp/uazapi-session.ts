@@ -4,6 +4,7 @@ import {
   instanceDisconnect,
   instanceStatus,
   sendLocation as uazapiSendLocation,
+  sendMenu as uazapiSendMenu,
   sendPixRequest,
   sendSticker as uazapiSendSticker,
   sendText as uazapiSendText,
@@ -96,6 +97,16 @@ export class UazapiSession implements WhatsAppSession {
   async sendSticker(to: string, url: string): Promise<SendResult> {
     const sent = await uazapiSendSticker({ token: this.token, number: to, url });
     return { providerMessageId: extractMessageId(sent) };
+  }
+
+  async sendMenu(params: { to: string; text: string; choices: string[]; footerText?: string }): Promise<void> {
+    await uazapiSendMenu({
+      token: this.token,
+      number: params.to,
+      text: params.text,
+      choices: params.choices,
+      footerText: params.footerText,
+    });
   }
 
   async sendPixRequest(params: {

@@ -12,10 +12,11 @@ import type {
 
 export type WhatsAppOutboundAttempt = {
   at: string;
-  method: "sendText" | "sendLocation" | "sendSticker" | "sendPixRequest" | "connect" | "disconnect";
+  method: "sendText" | "sendLocation" | "sendSticker" | "sendPixRequest" | "sendMenu" | "connect" | "disconnect";
   to?: string;
   text?: string;
   url?: string;
+  choices?: string[];
   location?: SendLocationParams;
 };
 
@@ -61,6 +62,9 @@ export function createNoopWhatsAppSession(): WhatsAppSession {
     },
     async sendPixRequest(params): Promise<void> {
       record({ method: "sendPixRequest", to: params.to, text: params.description });
+    },
+    async sendMenu(params): Promise<void> {
+      record({ method: "sendMenu", to: params.to, text: params.text, choices: params.choices });
     },
     async connect(): Promise<ConnectResult> {
       record({ method: "connect" });

@@ -373,6 +373,39 @@ export async function sendSticker(params: {
   return res.json();
 }
 
+/** Botão que copia a chave. Não cobra: o cliente cola no app do banco. POST /send/menu. */
+export async function sendMenu(params: {
+  token: string;
+  number: string;
+  text: string;
+  choices: string[];
+  footerText?: string;
+}): Promise<unknown> {
+  const base = getBaseUrl();
+  const normalized = params.number.replace(/\D/g, "");
+  const res = await fetchWithTimeout(`${base}/send/menu`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      token: params.token,
+    },
+    body: JSON.stringify({
+      number: normalized,
+      type: "button",
+      text: params.text,
+      choices: params.choices,
+      ...(params.footerText ? { footerText: params.footerText } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    await discardBody(res);
+    throw uazapiHttpError("send/menu", res.status);
+  }
+
+  return res.json();
+}
+
 /** Envia botão de pagamento PIX nativo — POST /send/request-payment. */
 export async function sendPixRequest(params: {
   token: string;

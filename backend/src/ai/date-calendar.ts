@@ -237,7 +237,7 @@ export function resolveClientDateFromText(text: string, todayIso: string): { dat
   // instead of +2 days.
   if (/\bdepois\s+de\s+amanha\b/.test(t)) return { date: addDaysIso(todayIso, 2), source: "depois_de_amanha" };
   if (/\bamanha\b/.test(t)) return { date: addDaysIso(todayIso, 1), source: "amanha" };
-  if (/\bhoje\b/.test(t) || /\bagora\b/.test(t)) return { date: todayIso, source: "hoje" };
+  if (/\bhoje\b/.test(t) || /\bhj\b/.test(t) || /\bagora\b/.test(t)) return { date: todayIso, source: "hoje" };
 
   const forceNextWeek = /\bproxim[oa]\b|\bque vem\b/.test(t);
   for (const { re, dow } of WEEKDAY_PATTERNS) {

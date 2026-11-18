@@ -32,6 +32,7 @@ export type GoldenFixture = {
   barbers: { lucas: string; eduardo: string };
   services: { corte: string; barba: string; corteBarba: string };
   upcomingAppointmentId: string | null;
+  todayIso: string;
   tomorrowIso: string;
 };
 
@@ -251,6 +252,7 @@ export async function createGoldenFixture(scenarioId: string, client: GoldenClie
     barbers,
     services,
     upcomingAppointmentId,
+    todayIso: isoDateInTimezone(0),
     tomorrowIso: isoDateInTimezone(1),
   };
 }
