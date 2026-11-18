@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import OpenAI from "openai";
+import { DEFAULT_CHAT_MODEL, createChatCompletion } from "../ai/models.js";
 import { pool } from "../db.js";
 import { getBarbershopId } from "../middleware/auth.js";
 import { config } from "../config.js";
@@ -1405,7 +1406,7 @@ whatsappRouter.get("/ai-settings", async (req: Request, res: Response): Promise<
       res.json({
         enabled: true,
         timezone: "America/Sao_Paulo",
-        model: "gpt-4o-mini",
+        model: DEFAULT_CHAT_MODEL,
         model_premium: null,
         temperature: 0.3,
         system_prompt_override: null,
@@ -1531,7 +1532,7 @@ whatsappRouter.put("/ai-settings", async (req: Request, res: Response): Promise<
     const current = cur.rows[0] ?? {
       enabled: true,
       timezone: "America/Sao_Paulo",
-      model: "gpt-4o-mini",
+      model: DEFAULT_CHAT_MODEL,
       model_premium: null as string | null,
       temperature: 0.3,
       system_prompt_override: null as string | null,
@@ -1625,7 +1626,7 @@ whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response):
     let knowledgeSnapshot: Record<string, unknown> | null = null;
     try {
       settingsSnapshot = {
-        model: row?.model ?? "gpt-4o-mini",
+        model: row?.model ?? DEFAULT_CHAT_MODEL,
         model_premium: row?.model_premium ?? null,
         temperature: row?.temperature ?? 0.3,
         max_output_tokens: row?.max_output_tokens ?? null,
@@ -1677,7 +1678,7 @@ whatsappRouter.post("/ai-settings/publish", async (req: Request, res: Response):
     const versionIds: string[] = [];
     const defaultEnabled = row?.enabled ?? true;
     const defaultTimezone = row?.timezone ?? "America/Sao_Paulo";
-    const defaultModel = row?.model ?? "gpt-4o-mini";
+    const defaultModel = row?.model ?? DEFAULT_CHAT_MODEL;
     const defaultTemperature = row?.temperature ?? 0.3;
     const defaultSystemPromptOverride = row?.system_prompt_override ?? null;
     const defaultMaxOutputTokens = row?.max_output_tokens ?? null;
@@ -2397,8 +2398,8 @@ async function runIncidentCorrectorLlm(params: {
     (toolTraceText ? `Últimas chamadas de ferramentas:\n${toolTraceText}\n\n` : "") +
     "Gere a correção (summary, question_to_confirm e patches recomendados).";
 
-  const completion = await openai.chat.completions.create({
-    model: params.model || "gpt-4o-mini",
+  const completion = await createChatCompletion(openai, {
+    model: params.model || DEFAULT_CHAT_MODEL,
     temperature: 0.2,
     response_format: { type: "json_object" },
     messages: [
@@ -2472,8 +2473,8 @@ async function runDiagnosticWithLlm(params: {
     .join("\n\n---\n\n")
     .slice(0, 40_000);
 
-  const completion = await openai.chat.completions.create({
-    model: params.model || "gpt-4o-mini",
+  const completion = await createChatCompletion(openai, {
+    model: params.model || DEFAULT_CHAT_MODEL,
     temperature: 0.2,
     response_format: { type: "json_object" },
     messages: [
@@ -2636,7 +2637,7 @@ whatsappRouter.post("/ai-analyze-chat", async (req: Request, res: Response): Pro
     const profile = normalizeProfile(currentProfile);
     const diagnostic = await runDiagnosticWithLlm({
       barbershopId,
-      model: cur.rows[0]?.model ?? "gpt-4o-mini",
+      model: cur.rows[0]?.model ?? DEFAULT_CHAT_MODEL,
       currentProfile,
       currentAdditionalInstructions: cur.rows[0]?.additional_instructions ?? null,
       messages: [{ role: "user", content: chat_text.trim() }],
@@ -2678,7 +2679,7 @@ whatsappRouter.post("/ai-diagnostic-chat", async (req: Request, res: Response): 
     const profile = normalizeProfile(currentProfile);
     const diagnostic = await runDiagnosticWithLlm({
       barbershopId,
-      model: cur.rows[0]?.model ?? "gpt-4o-mini",
+      model: cur.rows[0]?.model ?? DEFAULT_CHAT_MODEL,
       currentProfile,
       currentAdditionalInstructions: cur.rows[0]?.additional_instructions ?? null,
       messages,
@@ -2717,7 +2718,7 @@ whatsappRouter.post("/ai-incidents/diagnose", async (req: Request, res: Response
       `SELECT model FROM public.barbershop_ai_settings WHERE barbershop_id = $1`,
       [barbershopId]
     );
-    const model = cur.rows[0]?.model ?? "gpt-4o-mini";
+    const model = cur.rows[0]?.model ?? DEFAULT_CHAT_MODEL;
     const result = await runIncidentCorrectorLlm({
       barbershopId,
       model,

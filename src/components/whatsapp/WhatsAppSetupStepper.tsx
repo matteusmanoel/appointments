@@ -1770,7 +1770,7 @@ export function WhatsAppSetupStepper({
                         <div className="space-y-2">
                           <Label className="text-xs font-medium text-muted-foreground">Modelo padrão</Label>
                           <Select
-                            value={aiSettings.model ?? "gpt-4o-mini"}
+                            value={aiSettings.model ?? "gpt-6-luna"}
                             onValueChange={(v) =>
                               updateSettingsMutation.mutate({ model: v })
                             }
@@ -1780,9 +1780,7 @@ export function WhatsAppSetupStepper({
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="gpt-4o-mini">GPT-4o mini</SelectItem>
-                              <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                              <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
+                              <SelectItem value="gpt-6-luna">GPT-6 Luna</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1802,9 +1800,7 @@ export function WhatsAppSetupStepper({
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="none">Nenhum</SelectItem>
-                              <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                              <SelectItem value="gpt-4-turbo">GPT-4 Turbo</SelectItem>
-                              <SelectItem value="gpt-4o-mini">GPT-4o mini</SelectItem>
+                              <SelectItem value="gpt-6-luna">GPT-6 Luna</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>

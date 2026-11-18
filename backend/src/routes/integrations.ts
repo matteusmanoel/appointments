@@ -224,7 +224,7 @@ integrationsRouter.patch("/n8n-webhook", async (req: Request, res: Response): Pr
       `INSERT INTO public.barbershop_ai_settings (
          barbershop_id, enabled, timezone, model, temperature, n8n_chat_webhook_url, updated_at
        )
-       VALUES ($1, true, 'America/Sao_Paulo', 'gpt-4o-mini', 0.3, $2, now())
+       VALUES ($1, true, 'America/Sao_Paulo', 'gpt-6-luna', 0.3, $2, now())
        ON CONFLICT (barbershop_id) DO UPDATE SET
          n8n_chat_webhook_url = EXCLUDED.n8n_chat_webhook_url,
          updated_at = now()`,

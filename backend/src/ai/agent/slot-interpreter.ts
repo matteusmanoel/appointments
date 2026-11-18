@@ -7,6 +7,7 @@
  * aumentar o custo. Testes usam --llm none e um intérprete fake determinístico.
  */
 import type OpenAI from "openai";
+import { DEFAULT_CHAT_MODEL, createChatCompletion } from "../models.js";
 import {
   resolveBarberFromText,
   resolveServiceFromText,
@@ -251,11 +252,12 @@ export async function interpretSlotsWithOpenAI(
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const completion = await openai.chat.completions.create(
+    const completion = await createChatCompletion(
+      openai,
       {
-        model: "gpt-4o-mini",
+        model: DEFAULT_CHAT_MODEL,
         temperature: 0,
-        max_tokens: 200,
+        max_completion_tokens: 200,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: INTERPRET_SYSTEM },

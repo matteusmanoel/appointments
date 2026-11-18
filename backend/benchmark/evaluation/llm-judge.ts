@@ -11,13 +11,14 @@
  */
 
 import OpenAI from "openai";
+import { DEFAULT_CHAT_MODEL, createChatCompletion } from "../../src/ai/models.js";
 import type { JudgeMetric, JudgeResult, TurnResult } from "../types.js";
 
 /** Increment this whenever the judge prompt changes. Used to invalidate stale comparisons. */
 export const JUDGE_VERSION = "v2.0.0";
 
 /** Model used for judging. Deliberately pinned and not tenant-configurable. */
-const JUDGE_MODEL = "gpt-4o-mini";
+const JUDGE_MODEL = DEFAULT_CHAT_MODEL;
 
 // ---------------------------------------------------------------------------
 // Fixed rubric prompt — NEVER change without bumping JUDGE_VERSION
@@ -121,11 +122,12 @@ export async function judgeConversation(
   const model = options.model ?? JUDGE_MODEL;
   const conversationText = formatConversation(turns);
 
-  const response = await client.chat.completions.create(
+  const response = await createChatCompletion(
+    client,
     {
       model,
       temperature: 0,
-      max_tokens: 600,
+      max_completion_tokens: 600,
       messages: [
         { role: "system", content: JUDGE_SYSTEM_PROMPT },
         {

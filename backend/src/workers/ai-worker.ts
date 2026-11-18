@@ -420,7 +420,7 @@ async function callN8nAgent(
 async function ensureAiSettingsRow(barbershopId: string): Promise<void> {
   await pool.query(
     `INSERT INTO public.barbershop_ai_settings (barbershop_id, enabled, timezone, model, temperature, updated_at)
-     VALUES ($1, true, 'America/Sao_Paulo', 'gpt-4o-mini', 0.3, now())
+     VALUES ($1, true, 'America/Sao_Paulo', 'gpt-6-luna', 0.3, now())
      ON CONFLICT (barbershop_id) DO NOTHING`,
     [barbershopId]
   );
