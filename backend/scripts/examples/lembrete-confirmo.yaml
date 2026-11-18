@@ -1,0 +1,8 @@
+# Exige um agendamento futuro do cliente do simulador com lembrete 24h devido no --now.
+# O turno system/reminders roda o mesmo código do job real, pelo provider noop.
+#   npm run simulate:agent -- --tenant <slug> --phone 5500000000001 --now 2026-11-16T18:00:00-03:00 --replay scripts/examples/lembrete-confirmo.yaml --llm none
+now: 2026-11-16T18:00:00-03:00
+turns:
+  - role: system
+    event: reminders
+  - user: Confirmo

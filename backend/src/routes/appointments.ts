@@ -96,7 +96,7 @@ appointmentsRouter.get("/", async (req: Request, res: Response): Promise<void> =
   if (barber_id && !(await requireTenantRefs(res, barbershopIds, { barbers: [barber_id] }))) return;
 
   let query = `
-    SELECT a.id, a.barbershop_id, a.client_id, a.barber_id, a.service_id, a.scheduled_date, a.scheduled_time,
+    SELECT a.id, a.barbershop_id, a.client_id, a.barber_id, a.service_id, a.scheduled_date::text AS scheduled_date, a.scheduled_time,
            a.duration_minutes, a.price, a.commission_amount, a.status, a.notes, a.created_at, a.updated_at,
            a.completed_time, a.completed_at,
            c.name AS client_name, c.phone AS client_phone,

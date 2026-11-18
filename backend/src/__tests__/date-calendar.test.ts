@@ -94,6 +94,13 @@ describe("resolveClientDateFromText", () => {
     expect(resolveClientDateFromText("amanhã às 10h", "2026-09-19")?.date).toBe("2026-09-20");
   });
 
+  it("treats hj as today", () => {
+    expect(resolveClientDateFromText("corte hj as 18h", "2026-09-19")).toEqual({
+      date: "2026-09-19",
+      source: "hoje",
+    });
+  });
+
   it("does not infer a date from time-only phrasing", () => {
     expect(resolveClientDateFromText("as 10h", "2026-09-19")).toBeNull();
     expect(resolveClientDateFromText("quero agendar um corte", "2026-09-19")).toBeNull();
@@ -178,10 +185,16 @@ describe("parseClientTime", () => {
 });
 
 describe("formatResumoWhen and bubbles", () => {
-  it("prefixes Hoje and Amanhã with weekday + dd/MM", () => {
-    expect(formatResumoWhen("2026-09-20", "17:00", "2026-09-20")).toBe("Hoje, domingo 20/09 às 17h");
-    expect(formatResumoWhen("2026-09-21", "17:00", "2026-09-20")).toBe("Amanhã, segunda 21/09 às 17h");
-    expect(formatResumoWhen("2026-09-22", "13:00", "2026-09-20")).toBe("Terça, 22/09 às 13h");
+  it("hoje e amanhã dispensam dia da semana e data; depois disso, dia da semana + dd/MM", () => {
+    expect(formatResumoWhen("2026-09-20", "17:00", "2026-09-20")).toBe("hoje às 17h");
+    expect(formatResumoWhen("2026-09-21", "10:30", "2026-09-20")).toBe("amanhã às 10h30");
+    expect(formatResumoWhen("2026-09-22", "13:00", "2026-09-20")).toBe("terça, 22/09 às 13h");
+  });
+
+  it("meio dia é 12:00; número dito vale mais", () => {
+    expect(parseClientTime("se tiver ao meio dia é melhor")).toBe("12:00");
+    expect(parseClientTime("meio-dia e meia")).toBe("12:30");
+    expect(parseClientTime("às 15h ou meio dia")).toBe("15:00");
   });
 
   it("strips a trailing period and caps [[MSG]] at 3 bubbles", () => {

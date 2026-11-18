@@ -30,7 +30,7 @@ export type BookingDraft = {
   /** Last service/barber the agent suggested to the client. Resolved when client affirms. */
   pendingProposal?: PendingProposal | null;
   /** What the agent asked in its last turn. Used to resolve bare affirmations. */
-  lastAgentQuestion?: "service" | "usual_service" | "datetime" | "confirm" | null;
+  lastAgentQuestion?: "service" | "usual_service" | "datetime" | "confirm" | "barber" | null;
   /** Previous turn offered the waitlist for the clock already on this draft. */
   waitlistOffer?: boolean;
   /** "Vai ser o de sempre, X?" já foi dito neste agendamento: não sugerir de novo (aceito, recusado ou ignorado). */
@@ -39,6 +39,11 @@ export type BookingDraft = {
   offeredTimes?: string[];
   /** Card de confirmação/cancelamento/lembrete ainda no ar, com TTL. */
   confirmCard?: ConfirmCard | null;
+  /**
+   * Card copiado de outra conversa. O «sim» não executa: o agente reapresenta
+   * o card se o horário ainda for futuro e estiver livre.
+   */
+  confirmCardReplay?: boolean;
 };
 
 /** Falha da tool de horários: fala segura, sem expor automação nem se passar por humano. */
@@ -81,7 +86,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
   const total = Number(r.total_price);
   const PHASES = new Set<BookingDraftPhase>(["idle", "collecting", "rebook_eligible", "confirming"]);
   const phase = PHASES.has(r.phase as BookingDraftPhase) ? (r.phase as BookingDraftPhase) : undefined;
-  const QUESTIONS = new Set(["service", "usual_service", "datetime", "confirm"]);
+  const QUESTIONS = new Set(["service", "usual_service", "datetime", "confirm", "barber"]);
   const lastAgentQuestion = QUESTIONS.has(r.lastAgentQuestion as string)
     ? (r.lastAgentQuestion as BookingDraft["lastAgentQuestion"])
     : undefined;
@@ -133,6 +138,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
           const card = parseConfirmCard(r.confirmCard);
           return card ? { confirmCard: card } : {};
         })()),
+    ...(r.confirmCardReplay === true ? { confirmCardReplay: true } : {}),
   };
 }
 
@@ -170,6 +176,7 @@ export function mergeBookingDraft(
     "usualSuggested",
     "offeredTimes",
     "confirmCard",
+    "confirmCardReplay",
   ];
   let materialChanged = false;
   for (const key of keys) {
@@ -210,6 +217,11 @@ export function mergeBookingDraft(
         const card = parseConfirmCard(value);
         if (card) next.confirmCard = card;
       }
+      continue;
+    }
+    if (key === "confirmCardReplay") {
+      if (value === true) next.confirmCardReplay = true;
+      else if (value === false) delete next.confirmCardReplay;
       continue;
     }
     if (value === undefined || value === null || value === "") continue;
@@ -627,8 +639,10 @@ export function resolveUsualService(params: {
 }
 
 /** Sugere o serviço de sempre e espera o aceite. Sem a palavra "confirma", para não virar fechamento de agendamento. */
-export function composeSuggestUsualService(params: { usualName: string }): string {
-  return `Vai ser o de sempre, *${params.usualName.trim()}*?`;
+export function composeSuggestUsualService(params: { usualName: string; barberName?: string | null }): string {
+  const barber = (params.barberName ?? "").trim().split(/\s+/)[0];
+  const withBarber = barber ? `, com o ${barber}` : "";
+  return `Vai ser o de sempre, *${params.usualName.trim()}*${withBarber}?`;
 }
 
 /** A última fala do agente foi a sugestão do de sempre? O "sim" só vale para ela, nunca para outra pergunta. */

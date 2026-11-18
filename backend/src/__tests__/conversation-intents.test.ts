@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   composeHumanConsult,
   isClientConfirmation,
+  opensWithConfirmation,
   isShopHoursQuestion,
   looksLikeCancelIntent,
   looksLikeConsultIntent,
@@ -49,6 +50,10 @@ describe("isClientConfirmation", () => {
     expect(isClientConfirmation("boa")).toBe(false);
     expect(isClientConfirmation("Quero reagendar meu corte para terça as 13h")).toBe(false);
     expect(isClientConfirmation("pode ser terça")).toBe(false);
+    expect(isClientConfirmation("Correto")).toBe(true);
+    expect(isClientConfirmation("Certo")).toBe(true);
+    expect(isClientConfirmation("Prossiga")).toBe(true);
+    expect(isClientConfirmation("Pode prosseguir")).toBe(true);
     expect(isClientConfirmation("Pode ser as 17")).toBe(false);
     expect(isClientConfirmation("pode ser as 18:30")).toBe(false);
     expect(isClientConfirmation("Perfeito, pode agendar")).toBe(true);
@@ -534,5 +539,19 @@ describe("looksLikeRobotQuestion", () => {
     expect(looksLikeRobotQuestion("você é um robô?")).toBe(true);
     expect(looksLikeRobotQuestion("vc é um bot?")).toBe(true);
     expect(looksLikeRobotQuestion("quero agendar um corte")).toBe(false);
+  });
+});
+
+describe("opensWithConfirmation", () => {
+  it("abre com aceite e segue repetindo a oferta", () => {
+    expect(opensWithConfirmation("Sim, se possível o corte e barba hj ao meio dia")).toBe(true);
+    expect(opensWithConfirmation("Isso! corte e barba nesse horário")).toBe(true);
+  });
+  it("negação em qualquer parte não abre com aceite", () => {
+    expect(opensWithConfirmation("Sim, mas não nesse horário")).toBe(false);
+    expect(opensWithConfirmation("não, prefiro amanhã")).toBe(false);
+  });
+  it("pedido sem aceite na abertura não conta", () => {
+    expect(opensWithConfirmation("quero corte e barba ao meio dia")).toBe(false);
   });
 });

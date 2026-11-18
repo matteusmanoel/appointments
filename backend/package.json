@@ -30,7 +30,9 @@
     "benchmark:list": "tsx benchmark/cli.ts list",
     "test": "vitest run",
     "test:watch": "vitest",
-    "simulate:agent": "tsx src/scripts/agent-simulator.ts"
+    "simulate:agent": "tsx src/scripts/agent-simulator.ts",
+    "simulate:compare": "tsx src/scripts/agent-simulator-compare.ts",
+    "whatsapp:rotate": "tsx src/scripts/whatsapp-rotate-uazapi.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.998.0",

@@ -125,6 +125,14 @@ describe("orchestrate: sugestão do serviço de sempre", () => {
     expect(r.allowedTools).not.toContain("create_appointment");
   });
 
+  it("sem relógio, quem já tem de sempre ainda ouve a sugestão", () => {
+    const noClock: IntentSet = { ...schedule, dateTime: null } as IntentSet;
+    const r = orchestrate({ ...base, intentSet: noClock, usualService: usual });
+    expect(r.turnDirective).toBe(ASK_SERVICE);
+    expect(r.usualServiceSuggestion).toEqual(usual);
+    expect(r.allowedTools).not.toContain("create_appointment");
+  });
+
   it("sem histórico, ou depois da recusa, pergunta simples sem sugestão", () => {
     expect(orchestrate({ ...base, intentSet: schedule }).usualServiceSuggestion).toBeNull();
     expect(orchestrate({ ...base, intentSet: schedule, usualService: usual, usualServiceAlreadySuggested: true }).usualServiceSuggestion).toBeNull();

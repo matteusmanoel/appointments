@@ -59,6 +59,43 @@ export interface ClientMemoryRow {
   updated_at: Date;
 }
 
+/** Colunas da memória expostas na API. `session_context` fica de fora: é estado do agente. */
+export const CLIENT_MEMORY_PUBLIC_COLUMNS = [
+  "id",
+  "client_id",
+  "barbershop_id",
+  "preferred_services",
+  "preferred_services_conf",
+  "preferred_barber_id",
+  "preferred_barber_conf",
+  "preferred_days",
+  "preferred_days_conf",
+  "preferred_time_start",
+  "preferred_time_end",
+  "preferred_time_conf",
+  "last_completed_services",
+  "last_completed_at",
+  "communication_style",
+  "communication_style_conf",
+  "reactivation_status",
+  "payment_pending",
+  "payment_pending_amount",
+  "last_no_show_at",
+  "no_show_count",
+  "notes_safe",
+  "overall_confidence",
+  "created_at",
+  "updated_at",
+] as const;
+
+export function clientMemorySelect(alias = "m"): string {
+  return CLIENT_MEMORY_PUBLIC_COLUMNS.map((column) => `${alias}.${column}`).join(", ");
+}
+
+export function clientMemoryReturning(): string {
+  return CLIENT_MEMORY_PUBLIC_COLUMNS.join(", ");
+}
+
 export interface MemoryPatch {
   preferred_services?: string[];
   preferred_services_conf?: number;
@@ -98,6 +135,8 @@ export interface AppointmentEventData {
   serviceNames?: string[];
   barberId?: string;
   date?: string;
+  /** HH:mm do horário marcado. A faixa preferida sai daqui, não da data. */
+  time?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +155,7 @@ export async function getClientMemory(
   try {
     const digits = clientPhone.replace(/\D/g, "");
     const r = await pool.query<ClientMemoryRow & { preferred_barber_name: string | null }>(
-      `SELECT m.*,
+      `SELECT ${clientMemorySelect("m")},
               b.name AS preferred_barber_name
        FROM public.client_ai_memory m
        JOIN public.clients c ON c.id = m.client_id
@@ -450,6 +489,21 @@ export async function updateClientMemoryFromAppointmentEvent(
       );
     }
 
+    const clock = (data.time ?? "").slice(0, 5);
+    const timeRange = scheduledTimeToTimeRange(clock);
+    if (timeRange) {
+      const timeConf = isCompleted ? 0.6 : 0.5;
+      await pool.query(
+        `UPDATE public.client_ai_memory
+         SET preferred_time_start = $1,
+             preferred_time_end   = $2,
+             preferred_time_conf  = GREATEST(preferred_time_conf, $3),
+             updated_at           = now()
+         WHERE client_id = $4 AND barbershop_id = $5`,
+        [timeRange.start, timeRange.end, timeConf, clientId, barbershopId]
+      );
+    }
+
     if (isCompleted) {
       await pool.query(
         `UPDATE public.client_ai_memory
@@ -460,22 +514,6 @@ export async function updateClientMemoryFromAppointmentEvent(
          WHERE client_id = $2 AND barbershop_id = $3`,
         [JSON.stringify(data.serviceNames ?? []), clientId, barbershopId]
       );
-
-      // Derive time preference from the completed appointment's scheduled_time
-      if (data.date) {
-        const timeRange = scheduledTimeToTimeRange(data.date);
-        if (timeRange) {
-          await pool.query(
-            `UPDATE public.client_ai_memory
-             SET preferred_time_start = $1,
-                 preferred_time_end   = $2,
-                 preferred_time_conf  = GREATEST(preferred_time_conf, $3),
-                 updated_at           = now()
-             WHERE client_id = $4 AND barbershop_id = $5`,
-            [timeRange.start, timeRange.end, 0.5, clientId, barbershopId]
-          );
-        }
-      }
 
       // After a completed event, run the full history-based reinforcement
       // This is the most impactful call — builds confidence from multiple appointments

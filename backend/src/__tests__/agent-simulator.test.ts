@@ -151,9 +151,11 @@ describe("simulador — parser e relógio", () => {
     const fromJson = parseReplayFile(jsonPath);
     const fromYaml = parseReplayFile(yamlPath);
     expect(fromJson.now).toBe("2026-11-14T18:08:00-03:00");
-    expect(fromJson.turns[0]?.text).toBe("Pode ser o próximo");
+    expect(fromJson.turns[0]?.role).toBe("user");
+    expect(fromJson.turns[0] && fromJson.turns[0].role !== "system" ? fromJson.turns[0].text : undefined).toBe("Pode ser o próximo");
     expect(fromYaml.now).toBe("2026-11-14T18:08:00-03:00");
-    expect(fromYaml.turns[0]?.text).toBe("Pode ser o próximo");
+    expect(fromYaml.turns[0]?.role).toBe("user");
+    expect(fromYaml.turns[0] && fromYaml.turns[0].role !== "system" ? fromYaml.turns[0].text : undefined).toBe("Pode ser o próximo");
     expect((parseSimpleYaml("turns:\n  - user: oi") as { turns: Array<{ text: string }> }).turns[0].text).toBe("oi");
   });
 

@@ -35,6 +35,7 @@ O backend persiste o evento, resolve o `barbershop_id` pelo `instanceId`/instân
 | `UAZAPI_WEBHOOK_PUBLIC_URL` | Sim | URL pública que receberá os eventos (ex.: `https://api.seudominio.com/api/webhooks/uazapi`). HTTPS obrigatório. |
 | `APP_ENCRYPTION_KEY` | Sim | Chave para criptografar/descriptografar o token da instância no banco (`uazapi_instance_token_encrypted`). |
 | `UAZAPI_REQUIRE_WEBHOOK` | Não | Se `true`, falha ao conectar quando o webhook não for configurado com sucesso. |
+| `WHATSAPP_PIX_BUTTON` | Não | Se `true`, o PIX da barbearia tenta o botão nativo (`/send/request-payment`) com o valor gravado. Servidor que recusa (ex.: plano grátis) registra `[shop-pix-button] ... HTTP <status>` e a chave sai em texto. |
 
 ## Fluxo resumido (usuário no painel)
 

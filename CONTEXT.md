@@ -135,12 +135,13 @@ _Avoid_: repetir o nome em todo slot, omitir a troca de barbeiro
 ## Atendimento
 
 **Rascunho**:
-Acordo em construção na conversa (serviço, barbeiro, data, hora). Cobre um único slot. Omissão do turno não apaga campos já preenchidos. Close só com aceite de slot ou nome pedido. Check de horário só com serviço já no acordo (dito agora ou já no rascunho). Cliente que volta e dá dia/hora sem serviço recebe a sugestão do de sempre ("Vai ser o de sempre, X?"): o serviço só entra no rascunho no sim. O não pergunta qual serviço, sem sugerir de novo; outro serviço dito vale no lugar da sugestão.
-_Avoid_: estado da IA, memória, contexto, serviço inferido no check, confundir com Plano
+Acordo em construção na conversa (serviço, barbeiro, data, hora). Cobre um único slot. Omissão do turno não apaga campos já preenchidos. Close só com aceite de slot ou nome pedido. Check de horário só com serviço já no acordo (dito agora ou já no rascunho). Cliente que volta e dá dia/hora sem serviço recebe a sugestão do de sempre ("Vai ser o de sempre, X?"): o serviço só entra no rascunho no sim. O não pergunta qual serviço, sem sugerir de novo; outro serviço dito vale no lugar da sugestão. Agendamento novo com dois ou mais livres guarda data, hora e serviço sem barbeiro e pergunta com quem. Um só livre segue no card com esse nome.
+_Avoid_: estado da IA, memória, contexto, serviço inferido no check, confundir com Plano, travar o primeiro profissional quando há mais de um livre
 
 **Remarcar**:
-Pedido de outro relógio para o horário que a pessoa já tem, ou para o que acabou de ser cancelado nesta conversa. Leva o serviço e o barbeiro desse horário. Esse serviço fica até a pessoa nomear outro do catálogo. “Meu corte”, com o horário já sendo o combo, mantém o combo. O sim a esse combo pergunta o dia e a hora. Não cria enquanto o dia não for dito. Pode dizer que o relógio antigo foi cancelado.
-_Avoid_: recomeçar perguntando o serviço, tratar como cliente novo, criar sem dia, partir o combo, perguntar combo ou só o corte
+Pedido de outro relógio ou de outro serviço para o horário que a pessoa já tem, ou para o que acabou de ser cancelado nesta conversa. Leva o serviço e o barbeiro desse horário. Esse serviço fica até a pessoa nomear outro do catálogo. “Meu corte”, com o horário já sendo o combo, mantém o combo. O sim a esse combo pergunta o dia e a hora. Não cria enquanto o dia não for dito. Pode dizer que o relógio antigo foi cancelado.
+Quem tem um único horário futuro e nomeia outro serviço, sem dia e sem hora, está mudando esse horário: o check usa a duração do serviço novo e o card diz o serviço e o valor novos. O sim grava serviço, preço e duração no mesmo registro. O relógio dito que é o do horário atual é o que a pessoa não pode: o agente oferece outros horários, não um card para ele. Hora que está na lista oferecida, inclusive a primeira quando a pessoa pede o mais cedo, grava neste turno. Hora que a pessoa traz e que não estava na lista continua no card e espera o sim. Correto, certo, prossiga e prosseguir fecham o card aberto. Com o card de remarcação aberto o turno não entra no modelo e não vira cancelamento. Cancelar só com o card de cancelamento. Dia que já passou nunca é oferecido nem fica no rascunho herdado. A confirmação e o PIX dizem o que foi gravado. "hj" é hoje.
+_Avoid_: recomeçar perguntando o serviço, tratar como cliente novo, criar sem dia, partir o combo, perguntar combo ou só o corte, criar um segundo horário para incluir serviço, card com o relógio que a pessoa recusou, confirmar pelo rascunho, segundo card para hora já listada, cancelar quando o card é de remarcação
 
 **Nome da pessoa**:
 Nome que a pessoa disse na conversa. Só esse aparece na resposta. O nome do contato no WhatsApp não é nome da pessoa. Se o cadastro só tem o contato, a frase sai sem nome.
@@ -175,14 +176,14 @@ Antes do create, o cliente vê dia da semana + data + hora. **Hoje** e **amanhã
 _Avoid_: só “amanhã às 17h”, omitir a data no fechamento, relativo além de amanhã
 
 **Preferência de barbeiro**:
-Escolha explícita de que aquele profissional vale mais que o relógio. Fica no cliente (não só no rascunho) até ele aceitar outro ou dizer qualquer um. Enquanto vale, as ofertas são outros horários desse barbeiro. Horário dele ocupado oferece outro horário dele. A fila desse relógio só entra se não houver outro, ou se ele recusar a alternativa e ficar nesse.
-_Avoid_: inferência de histórico como se fosse esta escolha, pin só do turno, store paralelo, trocar de profissional no mesmo relógio sem o cliente nomear outro
+Escolha explícita de que aquele profissional vale mais que o relógio. Fica no cliente (não só no rascunho) até ele aceitar outro ou dizer qualquer um. Enquanto vale, as ofertas são outros horários desse barbeiro. Horário dele ocupado oferece outro horário dele. A fila desse relógio só entra se não houver outro, ou se ele recusar a alternativa e ficar nesse. Preferência explícita (confiança 0,99 ou mais) dispensa a pergunta. Sem ela, e sem nome neste turno, agendamento novo com dois ou mais livres pergunta o barbeiro antes de travar o rascunho. Remarcação mantém o profissional do horário, salvo se este turno nomear outro.
+_Avoid_: inferência de histórico como se fosse esta escolha, pin só do turno, store paralelo, trocar de profissional no mesmo relógio sem o cliente nomear outro, travar o primeiro livre num agendamento novo
 
 ## Pagamento
 
 **PIX da loja**:
-Envio da chave da barbearia no chat, independente de agendamento, serviço ou valor. Nativo se o provedor tiver; senão texto. Cobre débito, plano ou acerto avulso. Sem envio nativo, a chave sai em texto e a resposta não diz que o PIX falhou. Sem cobrança de plano em aberto, a chave sai e nada é marcado. A resposta não diz que um mês foi cobrado. O mês do plano só fecha quando o operador lança o recebimento.
-_Avoid_: PIX do horário, send_pix_plan_charge como único caminho, acoplar ao slot, dizer que não conseguiu mandar, inventar cobrança, dizer que um mês foi cobrado sem cobrança em aberto
+Envio da chave da barbearia no chat para colar no app do banco. Um botão de copiar (`/send/menu`, choice `copy:`), com o valor e o serviço no texto. Sem botão de resposta no mesmo menu. Se o servidor recusar, a chave sai em texto puro, numa linha só. Não cobra dentro do WhatsApp. A flag de botão de cobrança não decide este envio. Sem cobrança de plano em aberto, a chave sai e nada é marcado. A resposta não diz que um mês foi cobrado. O mês do plano só fecha quando o operador lança o recebimento.
+_Avoid_: PIX do horário, cobrança nativa no lugar da cópia, chip com crase, send_pix_plan_charge como único caminho, acoplar ao slot, dizer que não conseguiu mandar, inventar cobrança, dizer que um mês foi cobrado sem cobrança em aberto
 
 **Pagamento reconhecido**:
 Só vira fato no sistema se destinatário e data do comprovante estão completos e consistentes. Valor lido é informativo no feed, não critério de aceite. Sem consistência: agradecimento genérico, sem escrita.

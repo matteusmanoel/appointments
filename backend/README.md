@@ -25,6 +25,25 @@ Opções:
 | `--interactive`, `-i` | Lê mensagens do cliente no terminal |
 | `--llm none\|openai` | Padrão `none` (sem chamada de modelo). `openai` só se o turno cair no LLM |
 | `--trace` | Grava um trace por turno no Postgres local. **Padrão: desligado.** |
+| `--run-reminders` | Roda o job de lembrete 24h no relógio (`--now` ou `now` do arquivo), pelo provider **noop**. A mensagem entra na conversa `sim:…` para o cliente responder no turno seguinte. Não enfileira `scheduled_messages` e nada é enviado. Também dá para colocar o turno `{"role":"system","event":"reminders"}` no roteiro. |
+
+### Roteiros de exemplo
+
+Em `scripts/examples/` (validados por `src/__tests__/simulator-replay-examples.test.ts`). Sempre com `--llm none` e Postgres `127.0.0.1:55432`:
+
+| Arquivo | O que cobre |
+| --- | --- |
+| `cavalier-proximo-horario.yaml` (e `.json`) | Agendar pedindo o próximo horário |
+| `cliente-decidido.yaml` | Cliente já chega com serviço, dia e hora, e confirma |
+| `cliente-indeciso.yaml` | «Quero agendar um corte amanhã» — o agente oferece 2 a 3 opções |
+| `fora-do-horario.yaml` | Perto do fechamento; fala «Já estamos encerrando por hoje, mas podemos encontrar um horário pra você amanhã» (não troca «amanhã» pelo nome do dia) |
+| `voce-e-robo.yaml` | «você é robô?» no meio do agendamento: desvia e segue o card, sem revelar IA |
+| `lembrete-confirmo.yaml` | Turno `system`/`reminders` + «Confirmo». Exige um agendamento do cliente do simulador com lembrete 24h devido no `--now` |
+
+```bash
+npm run simulate:agent -- --tenant <slug-ou-uuid> --replay scripts/examples/cliente-decidido.yaml --llm none
+npm run simulate:agent -- --tenant <slug-ou-uuid> --phone 5500000000001 --now 2026-11-16T18:00:00-03:00 --replay scripts/examples/lembrete-confirmo.yaml --llm none
+```
 
 Exemplo de replay (JSON):
 
@@ -39,9 +58,29 @@ Exemplo de replay (JSON):
 }
 ```
 
-Há um YAML equivalente em `scripts/examples/cavalier-proximo-horario.yaml`. Turnos com `"role": "assistant"` só entram no histórico, sem chamar o agente.
+Há um YAML equivalente em `scripts/examples/cavalier-proximo-horario.yaml`. Turnos com `"role": "assistant"` só entram no histórico, sem chamar o agente. O turno `{"role":"system","event":"reminders"}` dispara o job de lembrete no relógio simulado (mesmo código do job real, provider noop).
+
+### Comparação none vs openai (`simulate:compare`)
+
+Roda os 5 roteiros de `scripts/examples/` e os goldens **duas vezes** ( `--llm none` e `--llm openai` ), com `AI_AGENT_SLOT_INTERPRET=true` e `AI_AGENT_LANGUAGE_REWRITE=true` **somente neste processo**. Modelo padrão: `gpt-4o-mini` (`--model` só aceita modelos mini). A tabela de preços (USD por 1M de tokens) fica em `src/ai/simulator/compare-pricing.ts` e pode ser atualizada ali.
+
+O comando **não lê `.env`**. Exporte `OPENAI_API_KEY` e `DATABASE_URL` (Postgres local `127.0.0.1:55432`) no terminal. A guarda de banco local continua valendo. `--max-runs` (padrão 1 por roteiro) e `--max-tokens` (padrão 300000) abortam se o teto de tokens for ultrapassado.
+
+No Mac do Mateus:
+
+```bash
+cd backend
+export DATABASE_URL='postgresql://USER:SENHA@127.0.0.1:55432/navalhia'
+export OPENAI_API_KEY='sk-...'   # só no terminal; este comando não lê .env
+npm run simulate:compare -- --tenant <slug-da-barbearia-local> --out /tmp/navalhia-simulate-compare.md --model gpt-4o-mini --max-runs 1 --max-tokens 300000
+```
+
+`--skip-examples` ou `--skip-goldens` e `--only <id>` restringem o lote. O relatório (terminal e Markdown) traz, por roteiro: resposta final de cada modo, passou/falhou nos contratos do golden, se a fala mudou, se o filtro `ai_exposure` ou o fallback agiram, latência, tokens de entrada e de saída, e o custo estimado.
+
+Os testes de `simulate:compare` usam um cliente OpenAI **fake** — nenhuma chamada real.
 
 ### Trace no Postgres local
+
 
 A migration `supabase/migrations/20261114210000_ai_simulator_turn_traces.sql` cria `public.ai_simulator_turn_traces`. Cada linha guarda: mensagem, intent, rascunho, tool calls (args e resultado), resposta final, o que o filtro `ai_exposure` alterou, latência e tokens.
 
@@ -58,6 +97,20 @@ O CLI e os testes recusam `DATABASE_URL` cujo host não seja local (`localhost`,
 ### Migration da tabela de trace
 
 A criação `20261114210000_ai_simulator_turn_traces.sql` **não entra no `migrate:all`**, para não criar a tabela em produção. O follow-up `20261115120000_ai_simulator_turn_traces_harden.sql` permanece no `migrate:all` e é inofensivo: só roda se a tabela já existir, usa `lock_timeout`/`statement_timeout` curtos, remove FKs para tabelas quentes (`barbershops`, `ai_conversations`) e cria o índice de TTL. Testes e o CLI criam a tabela localmente, sem FKs.
+
+## Trocar a instância Uazapi (`whatsapp:rotate`)
+
+O servidor grátis da Uazapi cai depois de mais ou menos uma hora. O comando troca token e instância do tenant no Postgres **local**, com fetch injetável nos testes (nenhuma chamada real). A URL e o token vêm do prompt sem eco, ou de `UAZAPI_BASE_URL` e `UAZAPI_NEW_TOKEN`. Não vão na linha de comando. Não edita `.env` e não imprime o token.
+
+`UAZAPI_BASE_URL` e `WHATSAPP_PROVIDER` são do processo: mudá-los exige reinício do container ou nova env na Lambda/Terraform. Token, nome e id da instância ficam em `barbershop_whatsapp_connections` e são relidos a cada mensagem, sem reinício. O token é gravado com `encrypt` / `APP_ENCRYPTION_KEY`.
+
+```bash
+npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --webhook-url https://<publico>/api/webhooks/uazapi
+npm run whatsapp:rotate -- --tenant <slug-ou-uuid> --dry-run
+npm run whatsapp:rotate -- --remote
+```
+
+`--dry-run` não grava e não chama a Uazapi. `--remote` só imprime os passos da AWS e não pede token. Sem `--remote`, `DATABASE_URL` tem que ser local. O passo a passo (webhook `POST /webhook`, túnel nomeado da Cloudflare, como conferir `instance.status=connected`) está em `docs/qa/runbook-uazapi-instancia.md`. Esse runbook também registra a ordem de merge com o PR do contexto: `simulate:compare` e `whatsapp:rotate` ficam os dois no `package.json`. Os testes são `src/__tests__/whatsapp-rotate-uazapi.test.ts`.
 
 
 ## Preenchimento determinístico (fluxos básicos)

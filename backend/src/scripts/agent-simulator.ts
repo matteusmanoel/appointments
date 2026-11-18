@@ -22,6 +22,8 @@ Opções:
   --llm none|openai   Padrão: none (sem custo de API). openai só interpreta se o turno cair no modelo.
   --trace               Grava trace no Postgres local (flag AI_SIMULATOR_TRACE_ENABLED; padrão: desligado)
   --no-trace            Mantém o trace desligado (padrão)
+  --run-reminders       Roda o job de lembrete 24h no relógio (--now), no provider noop,
+                        e deixa a mensagem na conversa sim:… (não enfileira scheduled_messages)
 
 Nada é enviado pelo WhatsApp (provider noop). Não use este comando contra clientes reais.
 A tabela de trace só é escrita com a flag ligada (desligada por padrão na API/produção).`;
@@ -68,6 +70,7 @@ async function main() {
       interactive: has(args, ["--interactive", "-i"]),
       llm,
       trace: has(args, ["--trace"]) && !has(args, ["--no-trace"]),
+      runReminders: has(args, ["--run-reminders"]),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
