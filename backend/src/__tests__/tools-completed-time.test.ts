@@ -161,4 +161,20 @@ describe("completed_time occupancy", () => {
 
     expect(result.requested?.available).toBe(true);
   });
+
+  it("checkAvailability nunca dá como livre um dia que já passou", async () => {
+    if (!barbershopId || !barberId || !serviceId) return;
+    const past = await pool.query<{ d: string }>(`SELECT (CURRENT_DATE - 3)::text AS d`);
+
+    const result = (await checkAvailability(barbershopId, {
+      date: past.rows[0]!.d,
+      time: "13:30",
+      barber_id: barberId,
+      service_id: serviceId,
+    })) as { requested?: { available?: boolean }; unavailable_reason?: string; alternatives?: unknown[] };
+
+    expect(result.requested?.available).toBe(false);
+    expect(result.unavailable_reason).toBe("past");
+    expect(result.alternatives ?? []).toHaveLength(0);
+  });
 });

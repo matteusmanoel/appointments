@@ -25,10 +25,10 @@ function fold(text: string): string {
 }
 
 const CONFIRMATION_TOKEN =
-  /^(sim|s|pode|podes|ok|okay|beleza|boa|bom|confirmo|isso|mesmo|fechado|combinado|manda|ver|top|show|claro|excelente|perfeito|otimo|fica|ta|entao|por|gentileza|favor|obrigado|obrigada|agendar|marcar|confirmar|ser|contar|comigo|estarei|ai|la|presente|vou|compareco|comparecerei|irei|ate)$/;
+  /^(sim|s|pode|podes|ok|okay|beleza|boa|bom|confirmo|isso|mesmo|fechado|combinado|manda|ver|top|show|claro|excelente|perfeito|otimo|certo|correto|prossiga|prosseguir|fica|ta|entao|por|gentileza|favor|obrigado|obrigada|agendar|marcar|confirmar|ser|contar|comigo|estarei|ai|la|presente|vou|compareco|comparecerei|irei|ate)$/;
 
 const CONFIRMATION_CLAIM =
-  /^(sim|s|pode|podes|ok|okay|beleza|confirmo|isso|fechado|combinado|top|show|claro|excelente|perfeito|otimo|fica|estarei|compareco|comparecerei|vou|obrigado|obrigada|gentileza|favor)$/;
+  /^(sim|s|pode|podes|ok|okay|beleza|confirmo|isso|fechado|combinado|top|show|claro|excelente|perfeito|otimo|certo|correto|prossiga|prosseguir|fica|estarei|compareco|comparecerei|vou|obrigado|obrigada|gentileza|favor)$/;
 
 /**
  * The whole message is a short yes: affirmative words and courtesy only.
@@ -61,6 +61,17 @@ export function isClientConfirmation(text: string): boolean {
   if (/^ate\s+la$/.test(t)) return true;
   if (/^pode\s+contar\s+comigo$/.test(t)) return true;
   return isShortConfirmation(t);
+}
+
+/**
+ * The message opens with a yes ("Sim, ...", "Pode sim! ...") and goes on. Whether the rest changed the
+ * offer is decided by the draft, not here. Any "não" keeps it from being a yes.
+ */
+export function opensWithConfirmation(text: string): boolean {
+  const t = fold(text);
+  if (!t || /\bnao\b/.test(t)) return false;
+  const lead = t.split(/[,!.;?]/)[0]?.trim() ?? "";
+  return isShortConfirmation(lead);
 }
 
 /**

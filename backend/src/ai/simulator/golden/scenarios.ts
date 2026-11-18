@@ -732,8 +732,10 @@ export const SCENARIOS: GoldenScenario[] = [
           { kind: "intent_primary", equals: "schedule" },
           { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
           { kind: "openai_rounds", equals: 0 },
-          { kind: "draft_status", equals: "offered" },
-          { kind: "reply_includes", value: "Posso confirmar?" },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "draft_barber_id", equals: null },
+          { kind: "reply_includes", value: "Com quem você prefere?" },
+          { kind: "reply_excludes", value: "Posso confirmar?" },
           { kind: "reply_excludes", value: "Não temos" },
           { kind: "state", equals: null },
         ],
@@ -816,8 +818,57 @@ export const SCENARIOS: GoldenScenario[] = [
         llm: () => [],
         contracts: () => [
           { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "create_appointment", ok: true } },
+          { kind: "tools_executed_excludes", value: "reschedule_appointment" },
+          { kind: "state", equals: "appointment_created" },
+          { kind: "draft_status", equals: "closed" },
+          { kind: "reply_excludes", value: "Posso confirmar?" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "hj_counts_as_today",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero um corte masculino hj",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "intent_field", field: "date", equals: fx.todayIso },
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "not_silenced" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "new_booking_asks_barber",
+    client: { name: "Mateus" },
+    turns: [
+      {
+        user: "Quero um corte masculino amanhã às 16h",
+        llm: () => [],
+        contracts: () => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "check_availability", ok: true } },
+          { kind: "tools_executed_excludes", value: "create_appointment" },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "draft_barber_id", equals: null },
+          { kind: "draft_last_question", equals: "barber" },
+          { kind: "reply_includes", value: "Com quem você prefere?" },
+          { kind: "reply_excludes", value: "Posso confirmar?" },
+        ],
+      },
+      {
+        user: "Eduardo",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "draft_barber_id", equals: fx.barbers.eduardo },
           { kind: "draft_status", equals: "offered" },
           { kind: "reply_includes", value: "Posso confirmar?" },
+          { kind: "tools_executed_excludes", value: "create_appointment" },
         ],
       },
     ],
@@ -827,11 +878,12 @@ export const SCENARIOS: GoldenScenario[] = [
     client: { name: "Mateus" },
     turns: [
       {
-        user: "Quero um corte masculino amanhã às 15h",
+        user: "Quero um corte masculino amanhã às 15h com o Lucas",
         llm: () => [],
-        contracts: () => [
+        contracts: (fx) => [
           { kind: "openai_rounds", equals: 0 },
           { kind: "draft_status", equals: "offered" },
+          { kind: "draft_barber_id", equals: fx.barbers.lucas },
           { kind: "reply_includes", value: "Posso confirmar?" },
         ],
       },
@@ -863,6 +915,68 @@ export const SCENARIOS: GoldenScenario[] = [
           { kind: "tools_executed_excludes", value: "reschedule_appointment" },
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
           { kind: "not_silenced" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "listed_hour_writes_reschedule",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Quero remarcar meu horário para amanhã",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "tools_executed_excludes", value: "reschedule_appointment" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "Serve às 10",
+        llm: () => [{ content: "não deveria chamar o modelo" }],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "reschedule_appointment", ok: true } },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
+          { kind: "state", equals: "appointment_rescheduled" },
+          { kind: "draft_status", equals: "closed" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "reply_excludes", value: "Quer que eu mude" },
+          { kind: "reply_excludes", value: "cancelar" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "correto_closes_reschedule_card",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Dá para mudar para amanhã às 11h?",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_excludes", value: "reschedule_appointment" },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
+          { kind: "reply_includes", value: "Quer que eu mude para" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "Correto",
+        llm: () => [{ content: "Vou precisar cancelar esse horário." }],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "reschedule_appointment", ok: true } },
+          { kind: "tools_executed_excludes", value: "cancel_appointment" },
+          { kind: "state", equals: "appointment_rescheduled" },
+          { kind: "draft_status", equals: "closed" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "reply_excludes", value: "cancelar" },
         ],
       },
     ],
@@ -1025,6 +1139,70 @@ export const SCENARIOS: GoldenScenario[] = [
           { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "cancelled" },
           { kind: "reply_includes", value: "Não encontrei um horário ativo pra remarcar" },
           { kind: "state", equals: null },
+        ],
+      },
+    ],
+  },
+  {
+    // Contrato (CONTEXT.md, "Remarcação"): o horário dito que é o já marcado é o que o cliente não pode; a troca de
+    // serviço é remarcação do mesmo registro, com check antes do card; repetir o card vivo aceita e grava.
+    id: "reschedule_refuse_current_then_change_service",
+    client: { name: "Mateus", upcoming: true },
+    turns: [
+      {
+        user: "Não vou conseguir às 18h, tem outro horário nesse dia?",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed_includes", value: { name: "get_next_slots", ok: true } },
+          { kind: "tools_executed_excludes", value: "check_availability" },
+          { kind: "tools_executed_excludes", value: "reschedule_appointment" },
+          { kind: "draft_time_not", value: "18:00" },
+          { kind: "draft_status", equals: "collecting" },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: null },
+          { kind: "not_silenced" },
+        ],
+      },
+      {
+        user: "às 15h então",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "draft_service_ids", equals: [fx.services.corte] },
+          { kind: "draft_barber_id", equals: fx.barbers.eduardo },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "pode ser",
+        llm: () => [],
+        contracts: () => [
+          { kind: "tools_executed", equals: [{ name: "reschedule_appointment", ok: true }] },
+          { kind: "state", equals: "appointment_rescheduled" },
+        ],
+      },
+      {
+        user: "na real quero corte e barba",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed", equals: [{ name: "check_availability", ok: true }] },
+          { kind: "draft_service_ids", equals: [fx.services.corteBarba] },
+          { kind: "draft_status", equals: "offered" },
+          { kind: "state", equals: null },
+        ],
+      },
+      {
+        user: "Sim, corte e barba nesse horário",
+        llm: () => [],
+        contracts: (fx) => [
+          { kind: "openai_rounds", equals: 0 },
+          { kind: "tools_executed", equals: [{ name: "reschedule_appointment", ok: true }] },
+          { kind: "appointment_status", appointmentId: fx.upcomingAppointmentId!, equals: "pending" },
+          { kind: "state", equals: "appointment_rescheduled" },
         ],
       },
     ],

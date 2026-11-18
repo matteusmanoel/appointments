@@ -17,7 +17,7 @@ describe("registro do webhook: payload de setInstanceWebhook / setWebhook", () =
     process.env.EVOLUTION_API_KEY = MASTER;
     process.env.WHATSAPP_WEBHOOK_SECRET = DEDICATED;
     delete process.env.EVOLUTION_WEBHOOK_TOKEN_IN_URL;
-    process.env.UAZAPI_BASE_URL = "http://uazapi.test";
+    process.env.UAZAPI_BASE_URL = "https://uazapi.test";
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init: RequestInit) => {
@@ -87,7 +87,12 @@ describe("registro do webhook: payload de setInstanceWebhook / setWebhook", () =
   });
 
   it("Uazapi: segredo dedicado em ?token= na URL registrada (não há cabeçalho próprio)", async () => {
-    await setWebhook({ token: "inst-token", url: "https://api.test/api/webhooks/uazapi" });
+    await setWebhook({
+      token: "inst-token",
+      url: "https://api.test/api/webhooks/uazapi",
+      baseUrl: "https://uazapi.test",
+      lookup: async () => ["1.1.1.1"],
+    });
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.url).toBe(`https://api.test/api/webhooks/uazapi?token=${DEDICATED}`);
     expect(JSON.stringify(body)).not.toContain(MASTER);
@@ -99,10 +104,11 @@ describe("registro do webhook: payload de setInstanceWebhook / setWebhook", () =
       return new Response("Method Not Allowed", { status: 405 });
     });
     const publicUrl = "https://api.test/api/webhooks/uazapi";
-    await expect(setWebhook({ token: "inst-token", url: publicUrl })).rejects.toThrow(/405/);
+    const opts = { token: "inst-token", url: publicUrl, baseUrl: "https://uazapi.test", lookup: async () => ["1.1.1.1"] };
+    await expect(setWebhook(opts)).rejects.toThrow(/405/);
     let thrown: unknown;
     try {
-      await setWebhook({ token: "inst-token", url: publicUrl });
+      await setWebhook(opts);
     } catch (e) {
       thrown = e;
     }

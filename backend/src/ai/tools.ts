@@ -62,8 +62,9 @@ async function getBookingBufferMinutes(barbershopId: string): Promise<number> {
   return Math.min(30, Math.max(0, Number(v) || 0));
 }
 
-function truncateForLlm(obj: unknown): unknown {
+export function truncateForLlm(obj: unknown): unknown {
   if (typeof obj === "string") return obj.slice(0, MAX_TEXT_LENGTH);
+  if (obj instanceof Date && !Number.isNaN(obj.getTime())) return obj.toISOString().slice(0, 10);
   if (Array.isArray(obj)) return obj.map(truncateForLlm);
   if (obj !== null && typeof obj === "object") {
     const out: Record<string, unknown> = {};
@@ -295,7 +296,8 @@ export async function checkAvailability(
     params.date === todayStr
       ? Math.max(afterMins ?? 0, nowMins + MIN_TRAVEL_BUFFER_MINS)
       : (afterMins ?? null);
-  if (effectiveAfterMins != null && requestedStart < effectiveAfterMins) {
+  const pastDay = params.date < todayStr;
+  if (pastDay || (effectiveAfterMins != null && requestedStart < effectiveAfterMins)) {
     return truncateForLlm({
       date: params.date,
       time: timeNorm,
@@ -1373,7 +1375,7 @@ export async function createAppointment(
 
   const bufferMins = await getBookingBufferMinutes(barbershopId);
   const { todayStr, nowMins } = await getNowInBarbershopTz(barbershopId);
-  if (params.date === todayStr && startMins < Math.ceil(nowMins / 5) * 5) {
+  if (params.date < todayStr || (params.date === todayStr && startMins < Math.ceil(nowMins / 5) * 5)) {
     return {
       error:
         "Horário no passado. Use get_next_slots ou check_availability para obter horários válidos.",
@@ -1896,12 +1898,14 @@ export async function cancelAppointmentByAgent(
 
 /**
  * Reschedule an appointment to a new date/time. Only allowed if the appointment's client phone matches client_phone. Checks conflicts.
+ * With service_ids, the same record also takes the new services: appointment_services, price, duration and commission
+ * are rewritten in the same transaction as the move.
  */
 export async function rescheduleAppointmentByAgent(
   barbershopId: string,
   appointmentId: string,
   clientPhone: string,
-  params: { date: string; time: string; barber_id?: string },
+  params: { date: string; time: string; barber_id?: string; service_ids?: string[] },
   conversationId?: string | null,
 ): Promise<unknown> {
   if (!isValidUuid(appointmentId))
@@ -1953,13 +1957,42 @@ export async function rescheduleAppointmentByAgent(
   const nextStatus = previousStatus;
   const barberId = params.barber_id ?? currentBarberId;
 
+  const requestedServiceIds = (params.service_ids ?? []).map((id) => String(id).trim()).filter(Boolean);
+  let newServices: { service_id: string; name: string; price: number; duration_minutes: number }[] | null = null;
+  if (requestedServiceIds.length > 0) {
+    const uuidErr = validateUuidIds(requestedServiceIds, "service_id");
+    if (uuidErr) return { error: uuidErr };
+    const rows = await pool.query<{ id: string; name: string | null; price: unknown; duration_minutes: unknown }>(
+      "SELECT id, name, price, duration_minutes FROM public.services WHERE id = ANY($1::uuid[]) AND barbershop_id = $2",
+      [requestedServiceIds, barbershopId],
+    );
+    const byId = new Map(rows.rows.map((r) => [r.id, r]));
+    const missing = requestedServiceIds.filter((id) => !byId.has(id));
+    if (missing.length > 0) return { error: "Service(s) not found", ids: missing };
+    newServices = requestedServiceIds.map((id) => {
+      const r = byId.get(id)!;
+      return {
+        service_id: r.id,
+        name: r.name ?? "",
+        price: Number(r.price ?? 0),
+        duration_minutes: Number(r.duration_minutes ?? 0),
+      };
+    });
+    const badDuration = newServices.some((s) => !Number.isFinite(s.duration_minutes) || s.duration_minutes <= 0);
+    if (badDuration) return { error: "Invalid service duration" };
+  }
+  const nextDuration = newServices
+    ? newServices.reduce((sum, s) => sum + s.duration_minutes, 0)
+    : duration;
+  const nextPrice = newServices ? newServices.reduce((sum, s) => sum + s.price, 0) : null;
+
   const bufferMins = await getBookingBufferMinutes(barbershopId);
   const startMins =
     parseInt(timeNorm.slice(0, 2), 10) * 60 +
     parseInt(timeNorm.slice(3, 5), 10);
-  const endMins = startMins + duration;
+  const endMins = startMins + nextDuration;
   const { todayStr, nowMins } = await getNowInBarbershopTz(barbershopId);
-  if (params.date === todayStr && startMins < Math.ceil(nowMins / 5) * 5) {
+  if (params.date < todayStr || (params.date === todayStr && startMins < Math.ceil(nowMins / 5) * 5)) {
     return {
       error: "Horário no passado.",
       code: "PAST_TIME" as const,
@@ -2007,6 +2040,28 @@ export async function rescheduleAppointmentByAgent(
      WHERE id = $4 AND barbershop_id = $6`,
       [params.date, timeNorm, barberId, appointmentId, nextStatus, barbershopId],
     );
+    if (newServices && nextPrice != null) {
+      const pctRow = await txc.query<{ commission_percentage: unknown }>(
+        "SELECT commission_percentage FROM public.barbers WHERE id = $1 AND barbershop_id = $2",
+        [barberId, barbershopId],
+      );
+      const pct = Number(pctRow.rows[0]?.commission_percentage ?? 40);
+      await txc.query(
+        `UPDATE public.appointments
+         SET service_id = $1, duration_minutes = $2, price = $3, commission_amount = $4, updated_at = now()
+         WHERE id = $5 AND barbershop_id = $6`,
+        [newServices[0]!.service_id, nextDuration, nextPrice, nextPrice * (pct / 100), appointmentId, barbershopId],
+      );
+      await txc.query("DELETE FROM public.appointment_services WHERE appointment_id = $1", [appointmentId]);
+      for (let pos = 0; pos < newServices.length; pos++) {
+        const s = newServices[pos]!;
+        await txc.query(
+          `INSERT INTO public.appointment_services (appointment_id, service_id, price, duration_minutes, service_name, position)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [appointmentId, s.service_id, s.price, s.duration_minutes, s.name || null, pos],
+        );
+      }
+    }
     await txc.query("COMMIT");
   } catch (e) {
     await txc.query("ROLLBACK").catch(() => undefined);
@@ -2083,7 +2138,29 @@ export async function rescheduleAppointmentByAgent(
     actor: "ai",
     conversationId: conversationId ?? null,
   });
-  return { ok: true, date: params.date, time: timeNorm };
+  const stored = await pool.query<{ price: unknown; service_names: string | null; barber_name: string | null }>(
+    `SELECT a.price,
+            (SELECT string_agg(COALESCE(aps.service_name, s.name), ', ' ORDER BY aps.position)
+               FROM public.appointment_services aps
+               LEFT JOIN public.services s ON s.id = aps.service_id
+              WHERE aps.appointment_id = a.id) AS service_names,
+            b.name AS barber_name
+       FROM public.appointments a
+       JOIN public.barbers b ON b.id = a.barber_id
+      WHERE a.id = $1 AND a.barbershop_id = $2`,
+    [appointmentId, barbershopId],
+  );
+  const row = stored.rows[0];
+  const storedPrice = Number(row?.price);
+  return {
+    ok: true,
+    date: params.date,
+    time: timeNorm,
+    service_names: row?.service_names ?? null,
+    price: Number.isFinite(storedPrice) ? storedPrice : null,
+    barber_name: row?.barber_name ?? null,
+    services_changed: Boolean(newServices),
+  };
 }
 
 /**

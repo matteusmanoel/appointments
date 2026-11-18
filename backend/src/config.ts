@@ -45,6 +45,8 @@ export const config = {
   evolutionWebhookPublicUrl: optional("EVOLUTION_WEBHOOK_PUBLIC_URL", ""),
   whatsappProvider: optional("WHATSAPP_PROVIDER", "evolution"),
   whatsappInstancePrefix: optional("WHATSAPP_INSTANCE_PREFIX", "navalhia"),
+  /** PIX da barbearia como botão nativo (send/request-payment). Sem suporte ou com falha, a chave sai em texto. */
+  whatsappPixButton: optional("WHATSAPP_PIX_BUTTON", "").toLowerCase() === "true",
   appEncryptionKey: optional("APP_ENCRYPTION_KEY", ""),
   n8nChatTriggerUrl: optional("N8N_CHAT_TRIGGER_URL", ""),
   /** Timeout (ms) for POST ao n8n quando NATIVE_AI_DISABLED + N8N_CHAT_TRIGGER_URL. */
