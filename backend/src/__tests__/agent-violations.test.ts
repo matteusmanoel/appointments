@@ -547,10 +547,12 @@ describe("pix answer keeps the price", () => {
     });
     const [card, receipt] = out.split("[[MSG]]");
     expect(card).toBe(
-      "Fica em R$ 55,00 o Corte e Barba. Segue a nossa chave PIX:\n\n" +
-        "`\u2060\u202F45988432998\u202F\u2060`\n\n" +
-        "_ (Chave tipo Celular • Nome: Mateus / Cavalier Barbearia)_",
+      "Fica em R$ 55,00 o Corte e Barba.\n\n" +
+        "45988432998\n\n" +
+        "Chave tipo Celular • Nome: Mateus / Cavalier Barbearia",
     );
+    expect(card).not.toMatch(/`/);
+    expect(card).not.toMatch(/\u2060/);
     expect(receipt).toMatch(/comprovante/);
     expect(receipt).not.toMatch(/qualquer outra d[uú]vida/i);
     expect(card).not.toMatch(/comprovante/);

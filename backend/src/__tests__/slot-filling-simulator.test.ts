@@ -318,7 +318,8 @@ describe("fluxos básicos pelo simulador", () => {
       print: () => {},
     });
     const turn = result.turns[0]!;
-    expect(turn.reply).toMatch(/Posso confirmar\?/);
+    expect(turn.reply).toMatch(/Com quem você prefere\?/);
+    expect(turn.reply).not.toMatch(/Posso confirmar\?/);
     expect(turn.trace.tools.some((t) => t.name === "check_availability" && t.ok)).toBe(true);
     expect(turn.trace.totalTokens).toBe(0);
   });
@@ -405,7 +406,8 @@ describe("fluxos básicos pelo simulador", () => {
       print: () => {},
     });
     expect(result.turns[0]!.reply).toMatch(/Qual prefere\?/);
-    expect(result.turns[1]!.reply).toMatch(/Posso confirmar\?/);
+    expect(result.turns[1]!.reply).toMatch(/qual seu nome/i);
+    expect(result.turns[1]!.reply).not.toMatch(/Posso confirmar\?/);
     expect(result.turns[1]!.trace.totalTokens).toBe(0);
     expect((result.turns[1]!.trace.draft as { time?: string | null } | null)?.time).toBeTruthy();
   });
@@ -423,7 +425,7 @@ describe("fluxos básicos pelo simulador", () => {
       phone,
       now: "2026-11-16T10:00:00-03:00",
       turns: [
-        { role: "user", text: "Quero um corte amanhã às 16h" },
+        { role: "user", text: "Quero um corte amanhã às 16h com o Lucas" },
         { role: "user", text: "você é robô?" },
       ],
       llm: "none",

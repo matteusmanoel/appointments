@@ -30,7 +30,7 @@ export type BookingDraft = {
   /** Last service/barber the agent suggested to the client. Resolved when client affirms. */
   pendingProposal?: PendingProposal | null;
   /** What the agent asked in its last turn. Used to resolve bare affirmations. */
-  lastAgentQuestion?: "service" | "usual_service" | "datetime" | "confirm" | null;
+  lastAgentQuestion?: "service" | "usual_service" | "datetime" | "confirm" | "barber" | null;
   /** Previous turn offered the waitlist for the clock already on this draft. */
   waitlistOffer?: boolean;
   /** "Vai ser o de sempre, X?" já foi dito neste agendamento: não sugerir de novo (aceito, recusado ou ignorado). */
@@ -86,7 +86,7 @@ export function parseBookingDraft(raw: unknown): BookingDraft {
   const total = Number(r.total_price);
   const PHASES = new Set<BookingDraftPhase>(["idle", "collecting", "rebook_eligible", "confirming"]);
   const phase = PHASES.has(r.phase as BookingDraftPhase) ? (r.phase as BookingDraftPhase) : undefined;
-  const QUESTIONS = new Set(["service", "usual_service", "datetime", "confirm"]);
+  const QUESTIONS = new Set(["service", "usual_service", "datetime", "confirm", "barber"]);
   const lastAgentQuestion = QUESTIONS.has(r.lastAgentQuestion as string)
     ? (r.lastAgentQuestion as BookingDraft["lastAgentQuestion"])
     : undefined;

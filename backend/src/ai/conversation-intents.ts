@@ -25,10 +25,10 @@ function fold(text: string): string {
 }
 
 const CONFIRMATION_TOKEN =
-  /^(sim|s|pode|podes|ok|okay|beleza|boa|bom|confirmo|isso|mesmo|fechado|combinado|manda|ver|top|show|claro|excelente|perfeito|otimo|fica|ta|entao|por|gentileza|favor|obrigado|obrigada|agendar|marcar|confirmar|ser|contar|comigo|estarei|ai|la|presente|vou|compareco|comparecerei|irei|ate)$/;
+  /^(sim|s|pode|podes|ok|okay|beleza|boa|bom|confirmo|isso|mesmo|fechado|combinado|manda|ver|top|show|claro|excelente|perfeito|otimo|certo|correto|prossiga|prosseguir|fica|ta|entao|por|gentileza|favor|obrigado|obrigada|agendar|marcar|confirmar|ser|contar|comigo|estarei|ai|la|presente|vou|compareco|comparecerei|irei|ate)$/;
 
 const CONFIRMATION_CLAIM =
-  /^(sim|s|pode|podes|ok|okay|beleza|confirmo|isso|fechado|combinado|top|show|claro|excelente|perfeito|otimo|fica|estarei|compareco|comparecerei|vou|obrigado|obrigada|gentileza|favor)$/;
+  /^(sim|s|pode|podes|ok|okay|beleza|confirmo|isso|fechado|combinado|top|show|claro|excelente|perfeito|otimo|certo|correto|prossiga|prosseguir|fica|estarei|compareco|comparecerei|vou|obrigado|obrigada|gentileza|favor)$/;
 
 /**
  * The whole message is a short yes: affirmative words and courtesy only.

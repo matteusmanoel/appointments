@@ -62,8 +62,9 @@ async function getBookingBufferMinutes(barbershopId: string): Promise<number> {
   return Math.min(30, Math.max(0, Number(v) || 0));
 }
 
-function truncateForLlm(obj: unknown): unknown {
+export function truncateForLlm(obj: unknown): unknown {
   if (typeof obj === "string") return obj.slice(0, MAX_TEXT_LENGTH);
+  if (obj instanceof Date && !Number.isNaN(obj.getTime())) return obj.toISOString().slice(0, 10);
   if (Array.isArray(obj)) return obj.map(truncateForLlm);
   if (obj !== null && typeof obj === "object") {
     const out: Record<string, unknown> = {};

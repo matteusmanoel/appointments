@@ -94,6 +94,13 @@ describe("resolveClientDateFromText", () => {
     expect(resolveClientDateFromText("amanhã às 10h", "2026-09-19")?.date).toBe("2026-09-20");
   });
 
+  it("treats hj as today", () => {
+    expect(resolveClientDateFromText("corte hj as 18h", "2026-09-19")).toEqual({
+      date: "2026-09-19",
+      source: "hoje",
+    });
+  });
+
   it("does not infer a date from time-only phrasing", () => {
     expect(resolveClientDateFromText("as 10h", "2026-09-19")).toBeNull();
     expect(resolveClientDateFromText("quero agendar um corte", "2026-09-19")).toBeNull();

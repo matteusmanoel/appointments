@@ -42,6 +42,8 @@ export interface WhatsAppSession {
     name: string;
     city: string;
   }): Promise<void>;
+  /** Copy button. Not a charge. */
+  sendMenu?(params: { to: string; text: string; choices: string[]; footerText?: string }): Promise<void>;
   /** Creates/ensures instance, sets webhook, returns QR / pairing. */
   connect(opts?: { phone?: string }): Promise<ConnectResult>;
   status(): Promise<StatusResult>;

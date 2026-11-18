@@ -420,13 +420,15 @@ describe("agente — 'Pode ser o próximo' oferece horários concretos", () => {
     expect((draft.offeredTimes ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
-  it("«o mais cedo» depois da oferta trava o primeiro horário e não refaz a busca", async () => {
+  it("«o mais cedo» depois da oferta grava o primeiro horário e não refaz a busca", async () => {
     const result = await runUser(loopFx, "o mais cedo");
-    expect(result.reply).toMatch(/Posso confirmar\?/);
-    expect(result.reply).toMatch(/14h/);
+    expect(result.reply).toMatch(/qual seu nome/i);
+    expect(result.reply).not.toMatch(/Posso confirmar\?/);
     expect(result.turnTrace?.toolsExecuted?.some((t) => t.name === "check_availability")).toBe(true);
+    expect(result.turnTrace?.toolsExecuted?.some((t) => t.name === "get_next_slots")).toBeFalsy();
     const draft = await loadDraft(loopFx.conversationId);
     expect(draft.time).toBe("14:00");
+    expect(draft.status).toBe("awaiting_name");
     expect(draft.offeredTimes).toBeUndefined();
   });
 

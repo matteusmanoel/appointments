@@ -486,10 +486,10 @@ describe("contexto do cliente entre turnos e conversas", () => {
     expect(hours.length, flatten(offer)).toBeGreaterThanOrEqual(2);
     expect(hours.length).toBeLessThanOrEqual(3);
 
-    const card = await say(chat, choice!);
-    expect(flatten(card)).toMatch(/Quer que eu mude para/i);
-    expect(flatten(card)).not.toMatch(/Posso confirmar\?/i);
-    await say(chat, "sim");
+    const moved = await say(chat, choice!);
+    expect(flatten(moved)).toMatch(/Pronto/i);
+    expect(flatten(moved)).not.toMatch(/Quer que eu mude para/i);
+    expect(flatten(moved)).not.toMatch(/cancelar/i);
     expect(chat.tools.at(-1) ?? []).toContain("reschedule_appointment");
 
     const rows = await listAppts(chat);
@@ -829,24 +829,15 @@ describe("contexto do cliente entre turnos e conversas", () => {
     expect(stored.rows[0]).toMatchObject({ service_id: comboId, duration_minutes: 60 });
     expect(Number(stored.rows[0]!.price)).toBe(85);
 
-    // PIX cobra o que está gravado.
+    // PIX da loja copia a chave. O valor gravado vai no texto do botão, não numa cobrança.
+    const { listWhatsAppOutboundAttempts } = await import("../integrations/whatsapp/noop-outbound.js");
     const pix = await say(chat, "me passa o pix por favor");
     expect(chat.tools.at(-1) ?? []).toContain("send_shop_pix");
-    expect(flatten(pix)).toMatch(/85,00/);
+    const menu = listWhatsAppOutboundAttempts().filter((row) => row.method === "sendMenu").at(-1);
+    expect(menu?.text).toMatch(/85,00/);
+    expect(menu?.text).toMatch(/Corte e Barba/);
+    expect(menu?.choices?.[0]).toMatch(/^Copiar chave\|copy:/);
+    expect(flatten(pix)).not.toMatch(/pix@navalhia\.test/);
     expect(flatten(pix)).not.toMatch(/25,00/);
-
-    // Com o botão nativo ligado, o PIX sai como botão com o valor gravado e o texto não repete a chave.
-    const { config } = await import("../config.js");
-    const { listWhatsAppOutboundAttempts } = await import("../integrations/whatsapp/noop-outbound.js");
-    config.whatsappPixButton = true;
-    try {
-      const button = await say(chat, "manda o pix de novo?");
-      const attempt = listWhatsAppOutboundAttempts().find((row) => row.method === "sendPixRequest");
-      expect(attempt?.text).toMatch(/Corte e Barba/);
-      expect(flatten(button)).toMatch(/85,00/);
-      expect(flatten(button)).not.toMatch(/pix@navalhia\.test/);
-    } finally {
-      config.whatsappPixButton = false;
-    }
   }, 90_000);
 });
