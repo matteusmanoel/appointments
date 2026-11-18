@@ -1155,6 +1155,7 @@ export type PublicAppointment = {
   barbershop_name: string;
   slug: string | null;
   service_names: string;
+  created_at?: string;
 };
 
 export type AppointmentListItem = {

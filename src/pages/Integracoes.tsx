@@ -23,6 +23,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/shared";
 import { toastError, toastSuccess } from "@/lib/toast-helpers";
 import { UpgradeGate } from "@/components/UpgradeGate";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 import { WhatsAppSetupStepper, TAB_CONFIG } from "@/components/whatsapp/WhatsAppSetupStepper";
 import { ConnectTab } from "@/components/whatsapp/ConnectTab";
 import { nativeAiUiEnabled, NATIVE_AI_ONLY_STEPS } from "@/lib/native-ai-ui";
@@ -344,6 +345,7 @@ function ApiKeysTab() {
 }
 
 export default function Integracoes() {
+  useMobilePageTitle("Integrações");
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -615,7 +617,7 @@ export default function Integracoes() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="max-md:hidden">
         <h1 className="text-2xl font-semibold text-foreground">
           Integrações
         </h1>

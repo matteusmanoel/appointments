@@ -38,6 +38,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
+import { MobileCreateButton } from "@/components/layout/MobileCreateButton";
 const categoryColors: Record<string, string> = {
   corte: "bg-primary/10 text-primary border-primary/20",
   combo: "bg-accent/10 text-accent border-accent/20",
@@ -91,6 +93,7 @@ export default function Servicos() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Service | null>(null);
+  useMobilePageTitle("Serviços");
 
   const {
     data: services = [],
@@ -252,7 +255,7 @@ export default function Servicos() {
   return (
     <>
       <div className="animate-fade-in">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div className="mb-8 hidden flex-col gap-4 md:flex md:flex-row md:items-center md:justify-between">
           <div className="page-header mb-0">
             <h1 className="page-title">Serviços</h1>
             <p className="page-subtitle">Gerencie seus serviços e preços</p>
@@ -702,6 +705,7 @@ export default function Servicos() {
           onConfirm={handleDelete}
         />
       )}
+      <MobileCreateButton label="Adicionar serviço" onClick={openCreate} />
     </>
   );
 }

@@ -1,29 +1,20 @@
 import { useState, useEffect, useRef, type FocusEvent } from "react";
+import { flushSync } from "react-dom";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, startOfToday } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { publicApi } from "@/lib/api";
 import { getTimeSlotsForDay, isPastDay, isSlotBookable, isSlotConflictError, type BarberSchedule } from "@/lib/slots";
 import { formatPhoneAsTyped } from "@/lib/input-masks";
 import { cn } from "@/lib/utils";
 import { DatePicker } from "@/components/ui/date-picker";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { LoadingState } from "@/components/LoadingState";
+import { useIsMobile } from "@/hooks/use-mobile";
 import {
   ChevronLeft,
   ChevronRight,
@@ -50,14 +41,23 @@ function getWhatsAppUrl(phone: string | undefined, message?: string): string {
 const BOOKING_STEPS = [
   { id: "service", label: "Serviço", question: "Escolha o serviço.", incentive: "Pode marcar mais de um." },
   { id: "barber", label: "Barbeiro", question: "Escolha o barbeiro.", incentive: "Sem preferência também funciona." },
-  { id: "time", label: "Horário", question: "Escolha o dia e o horário.", incentive: "Esse horário fica reservado para você." },
+  {
+    id: "time",
+    label: "Horário",
+    question: "Escolha o dia e o horário.",
+    incentive: "Esse horário fica reservado para você.",
+  },
   { id: "name", label: "Nome", question: "Qual é o seu nome?", incentive: "É assim que a barbearia te chama." },
   { id: "phone", label: "Telefone", question: "Qual é o seu telefone?", incentive: "A confirmação chega por aqui." },
 ] as const;
-const GENERIC_WHATSAPP_TEXT =
-  "Olá, gostaria de agendar um horario. Quais são os serviços disponíveis?";
-const GENERIC_WHATSAPP_TEXT_CONFIRMATION =
-  "Olá, gostaria de confirmar meu agendamento.";
+const WEEKDAY_LABEL = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"] as const;
+
+function formatBookingDay(date: Date) {
+  return `${WEEKDAY_LABEL[date.getDay()]}, ${format(date, "d 'de' MMMM", { locale: ptBR })}`;
+}
+
+const GENERIC_WHATSAPP_TEXT = "Olá, gostaria de agendar um horario?";
+const GENERIC_WHATSAPP_TEXT_CONFIRMATION = "Olá, gostaria de confirmar meu agendamento.";
 const ACTION_CARD =
   "flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left text-base font-medium text-white transition-colors hover:bg-white/10";
 
@@ -86,8 +86,7 @@ function AdvanceButton({
           : typed
             ? "bg-primary shadow-[0_0_16px_hsl(239_84%_62%/0.55)]"
             : "bg-white/10 text-white/35",
-      )}
-    >
+      )}>
       <SendHorizontal className="h-5 w-5" />
     </button>
   );
@@ -116,6 +115,8 @@ export default function PublicBooking() {
   const queryClient = useQueryClient();
   const [slideDir, setSlideDir] = useState<"next" | "prev">("next");
   const inputRef = useRef<HTMLInputElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   const {
     data: barbershop,
@@ -161,14 +162,16 @@ export default function PublicBooking() {
       if (!barberToUse) {
         throw Object.assign(new Error("Esse horário não está mais disponível."), { status: 409 });
       }
-      await publicApi.createAppointment(slug!, {
-        service_ids: serviceIds,
-        barber_id: barberToUse,
-        scheduled_date: dateStr,
-        scheduled_time: selectedTime,
-        client_name: clientName,
-        client_phone: clientPhone,
-      }).then((created) => setPublicToken(created?.public_token ?? null));
+      await publicApi
+        .createAppointment(slug!, {
+          service_ids: serviceIds,
+          barber_id: barberToUse,
+          scheduled_date: dateStr,
+          scheduled_time: selectedTime,
+          client_name: clientName,
+          client_phone: clientPhone,
+        })
+        .then((created) => setPublicToken(created?.public_token ?? null));
     },
     onSuccess: () => setSuccess(true),
     onError: onSlotConflict,
@@ -221,19 +224,13 @@ export default function PublicBooking() {
   const showActionError = actionError != null && !isSlotConflictError(actionError);
   const submitting = createMutation.isPending || rescheduleMutation.isPending;
 
-  const timeSlots = getTimeSlotsForDay(
-    barbershop?.business_hours,
-    selectedDate,
-  );
+  const timeSlots = getTimeSlotsForDay(barbershop?.business_hours, selectedDate);
 
   useEffect(() => {
     const meta = document.querySelector('meta[name="viewport"]');
     const previous = meta?.getAttribute("content") ?? "";
     if (meta) {
-      meta.setAttribute(
-        "content",
-        "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
-      );
+      meta.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no");
     }
     const blockGesture = (event: Event) => event.preventDefault();
     document.addEventListener("gesturestart", blockGesture, { passive: false });
@@ -251,8 +248,30 @@ export default function PublicBooking() {
 
   useEffect(() => {
     if (step !== 4 && step !== 5) return;
-    const frame = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
+    const shell = shellRef.current;
+    const viewport = window.visualViewport;
+    const pinToVisibleTop = () => {
+      if (!shell || !viewport) return;
+      const keyboardOpen = viewport.height < window.innerHeight - 80 || viewport.offsetTop > 0;
+      if (keyboardOpen) {
+        shell.style.height = `${viewport.height}px`;
+        shell.style.transform = viewport.offsetTop ? `translateY(${viewport.offsetTop}px)` : "";
+      } else {
+        shell.style.height = "";
+        shell.style.transform = "";
+      }
+      if (window.scrollY > 0) window.scrollTo(0, 0);
+    };
+    viewport?.addEventListener("resize", pinToVisibleTop);
+    viewport?.addEventListener("scroll", pinToVisibleTop);
+    return () => {
+      viewport?.removeEventListener("resize", pinToVisibleTop);
+      viewport?.removeEventListener("scroll", pinToVisibleTop);
+      if (shell) {
+        shell.style.height = "";
+        shell.style.transform = "";
+      }
+    };
   }, [step]);
 
   const serviceKey = serviceIds.join(",");
@@ -260,10 +279,11 @@ export default function PublicBooking() {
     setSelectedTime("");
   }, [dateStr, barberId, serviceKey]);
 
-  const selectedDuration = serviceIds.reduce((acc, id) => {
-    const sv = services.find((x) => x.id === id);
-    return acc + (sv?.duration_minutes ?? 30);
-  }, 0) || 30;
+  const selectedDuration =
+    serviceIds.reduce((acc, id) => {
+      const sv = services.find((x) => x.id === id);
+      return acc + (sv?.duration_minutes ?? 30);
+    }, 0) || 30;
   const bookableFor = (barber: { id: string; schedule?: BarberSchedule }, t: string) =>
     isSlotBookable({
       slot: t,
@@ -311,10 +331,52 @@ export default function PublicBooking() {
     setStep(1);
   };
 
-  const whatsappConfirmUrl = getWhatsAppUrl(
-    barbershop.phone,
-    GENERIC_WHATSAPP_TEXT_CONFIRMATION,
-  );
+  const resumeAfterCancel = () => {
+    setFieldError("");
+    setConflictNotice(false);
+    setSlideDir("prev");
+    setIntent("create");
+    setCancelled(false);
+    setSuccess(false);
+    setStep(1);
+  };
+
+  const selectedServices = serviceIds.map((id) => services.find((s) => s.id === id)).filter(Boolean) as typeof services;
+  const selectedBarber = barbers.find((b) => b.id === barberId);
+  const totalPrice = selectedServices.reduce((sum, s) => sum + Number(s.price), 0);
+  const buildConfirmationWhatsAppText = () => {
+    const servicesLines =
+      selectedServices.length > 0
+        ? selectedServices.map((s) => {
+            const price = Number(s.price).toFixed(2).replace(".", ",");
+            return `• ${s.name} — R$ ${price}`;
+          })
+        : ["• (nenhum serviço selecionado)"];
+    const total = totalPrice.toFixed(2).replace(".", ",");
+    const barber = selectedBarber?.name ?? "Não tenho preferência";
+    const dateLabel = format(selectedDate, "dd/MM/yyyy", { locale: ptBR });
+    const weekday = format(selectedDate, "EEEE", { locale: ptBR });
+    const phoneLabel = clientPhone.trim() ? formatPhoneAsTyped(clientPhone) : "—";
+    const nameLabel = clientName?.trim() ? clientName.trim() : "—";
+
+    return [
+      `Olá! Gostaria de confirmar meu agendamento na ${barbershop.name}.`,
+      "",
+      "*Serviços:*",
+      ...servicesLines,
+      "",
+      `*Data:* ${dateLabel} (${weekday})`,
+      `*Horário:* ${selectedTime || "—"}`,
+      `*Barbeiro:* ${barber}`,
+      "",
+      `*Cliente:* ${nameLabel}`,
+      `*Telefone:* ${phoneLabel}`,
+      "",
+      `*Total:* R$ ${total}`,
+    ].join("\n");
+  };
+  const whatsappConfirmUrl = getWhatsAppUrl(barbershop.phone, buildConfirmationWhatsAppText());
+  const whatsappCancelledUrl = getWhatsAppUrl(barbershop.phone, GENERIC_WHATSAPP_TEXT_CONFIRMATION);
 
   if (cancelled) {
     return (
@@ -325,12 +387,18 @@ export default function PublicBooking() {
           </div>
           <h2 className="font-display text-xl font-semibold">Agendamento cancelado</h2>
           <p className="mt-2 text-sm text-white/55">O horário foi liberado.</p>
-          {barbershop.phone ? (
-            <a href={whatsappConfirmUrl} target="_blank" rel="noopener noreferrer" className={cn(ACTION_CARD, "mt-6")}>
-              <MessageCircle className="h-5 w-5 shrink-0 text-primary" aria-hidden />
-              WhatsApp
-            </a>
-          ) : null}
+          <div className="mt-6 space-y-3 text-left">
+            <button type="button" onClick={resumeAfterCancel} className={ACTION_CARD}>
+              <CalendarClock className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+              Reagendar
+            </button>
+            {barbershop.phone ? (
+              <a href={whatsappCancelledUrl} target="_blank" rel="noopener noreferrer" className={ACTION_CARD}>
+                <MessageCircle className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+                WhatsApp
+              </a>
+            ) : null}
+          </div>
         </div>
       </div>
     );
@@ -344,9 +412,7 @@ export default function PublicBooking() {
             <Check className="h-8 w-8 text-success" />
           </div>
           <h2 className="font-display text-xl font-semibold">Agendamento solicitado!</h2>
-          <p className="mt-2 text-sm text-white/55">
-            Você receberá uma confirmação em breve. Status: Pendente.
-          </p>
+          <p className="mt-2 text-sm text-white/55">Você receberá uma confirmação em breve. Status: Pendente.</p>
           <p className="mt-4 text-sm text-white">
             {format(selectedDate, "EEEE, d 'de' MMMM", { locale: ptBR })} às {selectedTime}
           </p>
@@ -379,36 +445,29 @@ export default function PublicBooking() {
           onOpenChange={(open) => {
             setCancelOpen(open);
             if (!open) cancelMutation.reset();
-          }}
-        >
+          }}>
           <DialogContent className="border-white/10 bg-[#14141c] text-white">
             <DialogHeader>
               <DialogTitle>Cancelar este horário?</DialogTitle>
-              <DialogDescription className="text-white/60">
-                Essa ação não pode ser desfeita.
-              </DialogDescription>
+              <DialogDescription className="text-white/60">Você ainda pode remarcar num melhor horário.</DialogDescription>
             </DialogHeader>
             {cancelMutation.isError && (
               <p role="alert" className="text-sm text-red-400">
-                {cancelMutation.error instanceof Error
-                  ? cancelMutation.error.message
-                  : "Não foi possível cancelar."}
+                {cancelMutation.error instanceof Error ? cancelMutation.error.message : "Não foi possível cancelar."}
               </p>
             )}
             <div className="flex gap-3">
               <button
                 type="button"
                 onClick={() => setCancelOpen(false)}
-                className="flex-1 rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white"
-              >
+                className="flex-1 rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white">
                 Voltar
               </button>
               <button
                 type="button"
                 onClick={() => cancelMutation.mutate()}
                 disabled={cancelMutation.isPending}
-                className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white disabled:opacity-60"
-              >
+                className="flex-1 rounded-xl bg-red-600 py-3 text-sm font-semibold text-white disabled:opacity-60">
                 {cancelMutation.isPending ? "Cancelando..." : "Cancelar horário"}
               </button>
             </div>
@@ -418,47 +477,7 @@ export default function PublicBooking() {
     );
   }
 
-  const selectedServices = serviceIds
-    .map((id) => services.find((s) => s.id === id))
-    .filter(Boolean) as typeof services;
-  const selectedBarber = barbers.find((b) => b.id === barberId);
-  const totalPrice = selectedServices.reduce(
-    (sum, s) => sum + Number(s.price),
-    0,
-  );
-  const buildConfirmationWhatsAppText = () => {
-    const servicesLines =
-      selectedServices.length > 0
-        ? selectedServices.map((s) => {
-            const price = Number(s.price).toFixed(2).replace(".", ",");
-            return `• ${s.name} — R$ ${price}`;
-          })
-        : ["• (nenhum serviço selecionado)"];
-    const total = totalPrice.toFixed(2).replace(".", ",");
-    const barber = selectedBarber?.name ?? "Não tenho preferência";
-    const dateLabel = format(selectedDate, "dd/MM/yyyy", { locale: ptBR });
-    const weekday = format(selectedDate, "EEEE", { locale: ptBR });
-    const phoneLabel = clientPhone.trim() ? formatPhoneAsTyped(clientPhone) : "—";
-    const nameLabel = clientName?.trim() ? clientName.trim() : "—";
-
-    return [
-      `Salve! Gostaria de confirmar meu agendamento na ${barbershop.name}.`,
-      "",
-      "*Serviços:*",
-      ...servicesLines,
-      "",
-      `*Data:* ${dateLabel} (${weekday})`,
-      `*Horário:* ${selectedTime || "—"}`,
-      `*Barbeiro:* ${barber}`,
-      "",
-      `*Cliente:* ${nameLabel}`,
-      `*Telefone:* ${phoneLabel}`,
-      "",
-      `*Total:* R$ ${total}`,
-    ].join("\n");
-  };
-  const whatsappText =
-    step >= 4 ? buildConfirmationWhatsAppText() : GENERIC_WHATSAPP_TEXT;
+  const whatsappText = step >= 4 ? buildConfirmationWhatsAppText() : GENERIC_WHATSAPP_TEXT;
   const whatsappUrl = getWhatsAppUrl(barbershop.phone, whatsappText);
 
   const bookingStep = step > 0 ? BOOKING_STEPS[step - 1] : null;
@@ -468,6 +487,11 @@ export default function PublicBooking() {
   const goTo = (next: number) => {
     setFieldError("");
     setSlideDir(next > step ? "next" : "prev");
+    if (next === 4 || next === 5) {
+      flushSync(() => setStep(next));
+      inputRef.current?.focus({ preventScroll: true });
+      return;
+    }
     setStep(next);
   };
 
@@ -509,10 +533,21 @@ export default function PublicBooking() {
 
   const phoneDigits = clientPhone.replace(/\D/g, "");
 
+  const revealBookingField = (input: HTMLInputElement | null) => {
+    const scroller = input?.closest("[data-booking-fields]");
+    if (input && scroller instanceof HTMLElement) {
+      const inputBox = input.getBoundingClientRect();
+      const frameBox = scroller.getBoundingClientRect();
+      const below = inputBox.bottom - frameBox.bottom + 12;
+      if (below > 1) scroller.scrollTop += below;
+    }
+    if (window.visualViewport && window.scrollY > 0) window.scrollTo(0, 0);
+  };
+
   const holdFieldFocus = (e: FocusEvent<HTMLInputElement>) => {
     const next = e.relatedTarget instanceof Element ? e.relatedTarget : null;
     if (next?.closest("button, a")) return;
-    requestAnimationFrame(() => inputRef.current?.focus());
+    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
   };
 
   const choiceShell = (selected: boolean) =>
@@ -531,17 +566,29 @@ export default function PublicBooking() {
     "mt-[clamp(0.6rem,1.6dvh,1.1rem)] flex min-h-0 flex-1 flex-col gap-[clamp(0.45rem,1.2dvh,0.8rem)] overflow-y-auto overscroll-contain pb-2";
 
   return (
-    <div className="flex h-dvh touch-manipulation flex-col overflow-hidden bg-[#0e0e0e] text-white">
+    <div
+      ref={shellRef}
+      className="fixed inset-x-0 top-0 flex h-dvh w-full touch-manipulation flex-col overflow-hidden bg-[#0e0e0e] text-white transition-[height,transform] duration-200 ease-out">
       <header className="shrink-0">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-4">
-          <h1 className="truncate font-display text-lg font-semibold">{barbershop.name}</h1>
+          <div className="flex min-w-0 items-center gap-1">
+            {step >= 4 && (
+              <button
+                type="button"
+                onClick={() => goTo(step - 1)}
+                className="inline-flex h-9 shrink-0 items-center gap-0.5 pr-1 text-sm text-white/50 hover:text-white md:hidden">
+                <ChevronLeft className="h-4 w-4" />
+                Voltar
+              </button>
+            )}
+            <h1 className="truncate font-display text-lg font-semibold">{barbershop.name}</h1>
+          </div>
           {barbershop.phone ? (
             <a
               href={whatsappUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex shrink-0 items-center gap-1.5 text-sm text-white/55 hover:text-white"
-            >
+              className="inline-flex shrink-0 items-center gap-1.5 text-sm text-white/55 hover:text-white">
               <MessageCircle className="h-4 w-4" />
               WhatsApp
             </a>
@@ -557,8 +604,7 @@ export default function PublicBooking() {
                 "aria-valuenow": step,
                 "aria-valuetext": `Etapa ${step} de ${BOOKING_STEPS.length}: ${bookingStep?.label ?? ""}`,
               }
-            : { "aria-hidden": true })}
-        >
+            : { "aria-hidden": true })}>
           <div
             className="h-full bg-gradient-to-r from-primary to-violet-400 transition-[width] duration-300"
             style={{ width: `${progress}%` }}
@@ -576,15 +622,12 @@ export default function PublicBooking() {
               <div className="space-y-2">
                 <h2 className="font-display text-3xl font-bold">{barbershop.name}</h2>
                 <p className="text-sm text-white/55">Agende seu horário em poucos passos.</p>
-                {barbershop.address?.trim() ? (
-                  <p className="pt-2 text-xs text-white/40">{barbershop.address}</p>
-                ) : null}
+                {barbershop.address?.trim() ? <p className="pt-2 text-xs text-white/40">{barbershop.address}</p> : null}
               </div>
               <button
                 type="button"
                 onClick={() => goTo(1)}
-                className="lp-shimmer group relative w-full overflow-hidden rounded-2xl bg-primary py-4 text-lg font-bold text-white shadow-[0_0_32px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_48px_hsl(239_84%_62%/0.6)]"
-              >
+                className="lp-shimmer group relative w-full overflow-hidden rounded-2xl bg-primary py-4 text-lg font-bold text-white shadow-[0_0_32px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_0_48px_hsl(239_84%_62%/0.6)]">
                 <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                 <span className="relative z-10">Começar</span>
               </button>
@@ -600,274 +643,304 @@ export default function PublicBooking() {
                 return;
               }
               continueBooking();
-            }}
-          >
+            }}>
+            {step >= 4 && (
+              <aside className="z-20 mt-4 shrink-0 rounded-2xl border border-white/10 bg-[#14141c] p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold uppercase tracking-[0.16em] text-white/70">RESUMO</p>
+                  <p className="font-display text-lg font-bold">
+                    {selectedServices.length > 0 ? `R$ ${money(totalPrice)}` : "—"}
+                  </p>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="flex items-center gap-2 text-white/45">
+                      <Scissors className="h-4 w-4" /> Serviço
+                    </span>
+                    <span
+                      className={cn(
+                        "line-clamp-2 text-right",
+                        selectedServices.length ? "text-white" : "text-white/25",
+                      )}>
+                      {selectedServices.length ? selectedServices.map((s) => s.name).join(", ") : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-white/45">
+                      <User className="h-4 w-4" /> Barbeiro
+                    </span>
+                    <span className="text-white">{selectedBarber?.name ?? "Sem preferência"}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-white/45">
+                      <CalendarDays className="h-4 w-4" /> Data
+                    </span>
+                    <span className="text-white">{format(selectedDate, "d 'de' MMMM", { locale: ptBR })}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-white/45">
+                      <Clock className="h-4 w-4" /> Horário
+                    </span>
+                    <span className={cn(selectedTime ? "text-white" : "text-white/25")}>{selectedTime || "—"}</span>
+                  </div>
+                </div>
+              </aside>
+            )}
             <div
               key={bookingStep?.id}
+              data-booking-fields={step >= 4 ? "" : undefined}
               className={cn(
                 "flex min-h-0 flex-1 flex-col",
-                slideDir === "next" ? "checkout-step-next" : "checkout-step-prev",
-              )}
-            >
-              <div className="shrink-0 pt-[clamp(0.85rem,2.4dvh,1.5rem)]">
-                <h2 className="font-display font-bold leading-tight text-[clamp(1.4rem,4.4dvh,2.15rem)]">{bookingStep?.question}</h2>
-                <p className="mt-[clamp(0.25rem,1dvh,0.5rem)] text-[clamp(0.8rem,2.1dvh,1rem)] text-white/55">{bookingStep?.incentive}</p>
+                step >= 4 ? "overflow-y-auto overscroll-contain px-1.5" : "overflow-y-auto",
+                step >= 4 ? "booking-field-in" : slideDir === "next" ? "checkout-step-next" : "checkout-step-prev",
+              )}>
+              <div className={cn("shrink-0 pt-[clamp(0.85rem,2.4dvh,1.5rem)]", step >= 4 && "max-md:hidden")}>
+                <h2 className="font-display font-bold leading-tight text-[clamp(1.4rem,4.4dvh,2.15rem)]">
+                  {bookingStep?.question}
+                </h2>
+                <p className="mt-[clamp(0.25rem,1dvh,0.5rem)] text-[clamp(0.8rem,2.1dvh,1rem)] text-white/55">
+                  {bookingStep?.incentive}
+                </p>
               </div>
 
-              {step >= 4 && (
-                <aside className="mt-4 shrink-0 rounded-2xl border border-white/10 bg-[#14141c] p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <p className="text-sm font-semibold uppercase tracking-[0.16em] text-white/70">RESUMO</p>
-                    <p className="font-display text-lg font-bold">
-                      {selectedServices.length > 0 ? `R$ ${money(totalPrice)}` : "—"}
-                    </p>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="flex items-center gap-2 text-white/45"><Scissors className="h-4 w-4" /> Serviço</span>
-                      <span className={cn("line-clamp-2 text-right", selectedServices.length ? "text-white" : "text-white/25")}>
-                        {selectedServices.length ? selectedServices.map((s) => s.name).join(", ") : "—"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2 text-white/45"><User className="h-4 w-4" /> Barbeiro</span>
-                      <span className="text-white">{selectedBarber?.name ?? "Sem preferência"}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2 text-white/45"><CalendarDays className="h-4 w-4" /> Data</span>
-                      <span className="text-white">{format(selectedDate, "d 'de' MMMM", { locale: ptBR })}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2 text-white/45"><Clock className="h-4 w-4" /> Horário</span>
-                      <span className={cn(selectedTime ? "text-white" : "text-white/25")}>{selectedTime || "—"}</span>
-                    </div>
-                  </div>
-                </aside>
-              )}
-
-                {step === 1 && (
-                  <div className={choiceList}>
-                    {services.length === 0 ? (
-                      <p className="text-sm text-white/45">Nenhum serviço disponível.</p>
-                    ) : (
-                      services.map((s) => {
-                        const selected = serviceIds.includes(s.id);
-                        return (
-                          <button
-                            key={s.id}
-                            type="button"
-                            onClick={() => {
-                              setServiceIds((prev) =>
-                                selected ? prev.filter((id) => id !== s.id) : [...prev, s.id],
-                              );
-                              setFieldError("");
-                            }}
-                            aria-pressed={selected}
-                            className={choiceShell(selected)}
-                          >
-                            <span className={choiceBody}>
-                              <span className="flex min-w-0 items-center gap-[clamp(0.5rem,3cqw,0.85rem)]">
-                                <Scissors className={choiceIcon} />
-                                <span className="min-w-0">
-                                  <span className={choiceTitle}>{s.name}</span>
-                                  <span className={choiceMeta}>
-                                    R$ {money(Number(s.price))} · {s.duration_minutes} min
-                                  </span>
+              {step === 1 && (
+                <div className={choiceList}>
+                  {services.length === 0 ? (
+                    <p className="text-sm text-white/45">Nenhum serviço disponível.</p>
+                  ) : (
+                    services.map((s) => {
+                      const selected = serviceIds.includes(s.id);
+                      return (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => {
+                            setServiceIds((prev) => (selected ? prev.filter((id) => id !== s.id) : [...prev, s.id]));
+                            setFieldError("");
+                          }}
+                          aria-pressed={selected}
+                          className={choiceShell(selected)}>
+                          <span className={choiceBody}>
+                            <span className="flex min-w-0 items-center gap-[clamp(0.5rem,3cqw,0.85rem)]">
+                              <Scissors className={choiceIcon} />
+                              <span className="min-w-0">
+                                <span className={choiceTitle}>{s.name}</span>
+                                <span className={choiceMeta}>
+                                  R$ {money(Number(s.price))} · {s.duration_minutes} min
                                 </span>
                               </span>
                             </span>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
 
-                {step === 2 && (
-                  <div className={choiceList}>
-                    <button type="button" aria-pressed={barberId === ""} onClick={() => setBarberId("")} className={choiceShell(barberId === "")}>
+              {step === 2 && (
+                <div className={choiceList}>
+                  <button
+                    type="button"
+                    aria-pressed={barberId === ""}
+                    onClick={() => setBarberId("")}
+                    className={choiceShell(barberId === "")}>
+                    <span className={choiceBody}>
+                      <span className="flex min-w-0 items-center gap-[clamp(0.5rem,3cqw,0.85rem)]">
+                        <User className={choiceIcon} />
+                        <span className={choiceTitle}>Não tenho preferência</span>
+                      </span>
+                    </span>
+                  </button>
+                  {barbers.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      aria-pressed={b.id === barberId}
+                      onClick={() => setBarberId(b.id)}
+                      className={choiceShell(b.id === barberId)}>
                       <span className={choiceBody}>
                         <span className="flex min-w-0 items-center gap-[clamp(0.5rem,3cqw,0.85rem)]">
                           <User className={choiceIcon} />
-                          <span className={choiceTitle}>Não tenho preferência</span>
+                          <span className={choiceTitle}>{b.name}</span>
                         </span>
                       </span>
                     </button>
-                    {barbers.map((b) => (
+                  ))}
+                </div>
+              )}
+
+              {step === 3 && (
+                <TooltipProvider delayDuration={0}>
+                  <div className="mt-[clamp(0.6rem,1.6dvh,1.1rem)] flex min-h-0 flex-1 flex-col [container-type:size]">
+                    <div className="flex shrink-0 items-center gap-[clamp(0.4rem,1.2cqh,0.7rem)]">
                       <button
-                        key={b.id}
                         type="button"
-                        aria-pressed={b.id === barberId}
-                        onClick={() => setBarberId(b.id)}
-                        className={choiceShell(b.id === barberId)}
-                      >
-                        <span className={choiceBody}>
-                          <span className="flex min-w-0 items-center gap-[clamp(0.5rem,3cqw,0.85rem)]">
-                            <User className={choiceIcon} />
-                            <span className={choiceTitle}>{b.name}</span>
-                          </span>
-                        </span>
+                        onClick={() => setSelectedDate((d) => addDays(d, -1))}
+                        disabled={isPastDay(addDays(selectedDate, -1))}
+                        aria-label="Dia anterior"
+                        className="flex aspect-square h-[clamp(2.75rem,8cqh,3.75rem)] w-auto shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-[0_0_16px_hsl(239_84%_62%/0.35)] hover:bg-indigo-500 disabled:bg-white/10 disabled:text-white/30 disabled:shadow-none">
+                        <ChevronLeft className="h-[clamp(1rem,3.2cqh,1.4rem)] w-[clamp(1rem,3.2cqh,1.4rem)]" />
                       </button>
-                    ))}
-                  </div>
-                )}
-
-                {step === 3 && (
-                  <TooltipProvider delayDuration={0}>
-                    <div className="mt-[clamp(0.6rem,1.6dvh,1.1rem)] flex min-h-0 flex-1 flex-col [container-type:size]">
-                      <div className="flex shrink-0 items-center gap-[clamp(0.4rem,1.2cqh,0.7rem)]">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedDate((d) => addDays(d, -1))}
-                          disabled={isPastDay(addDays(selectedDate, -1))}
-                          aria-label="Dia anterior"
-                          className="flex aspect-square h-[clamp(2.75rem,8cqh,3.75rem)] w-auto items-center justify-center rounded-xl border border-white/15 text-white hover:bg-white/5"
-                        >
-                          <ChevronLeft className="h-[clamp(1rem,3.2cqh,1.4rem)] w-[clamp(1rem,3.2cqh,1.4rem)]" />
-                        </button>
-                        <DatePicker
-                          value={selectedDate}
-                          onChange={(d) => d && setSelectedDate(d)}
-                          minDate={startOfToday()}
-                          triggerVariant="verbose"
-                          className="h-[clamp(2.75rem,8cqh,3.75rem)] flex-1 justify-center rounded-xl border-white/15 bg-white/5 text-[clamp(0.95rem,3.2cqh,1.25rem)] text-white hover:bg-white/10 [&_svg]:h-[clamp(1rem,3.2cqh,1.4rem)] [&_svg]:w-[clamp(1rem,3.2cqh,1.4rem)]"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setSelectedDate((d) => addDays(d, 1))}
-                          aria-label="Próximo dia"
-                          className="flex aspect-square h-[clamp(2.75rem,8cqh,3.75rem)] w-auto items-center justify-center rounded-xl border border-white/15 text-white hover:bg-white/5"
-                        >
-                          <ChevronRight className="h-[clamp(1rem,3.2cqh,1.4rem)] w-[clamp(1rem,3.2cqh,1.4rem)]" />
-                        </button>
-                      </div>
-                      {conflictNotice && (
-                        <p role="alert" className="mt-4 shrink-0 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
-                          Esse horário acabou de ser ocupado por outra pessoa. Escolha outro horário abaixo.
-                        </p>
-                      )}
-                      {timeSlots.length === 0 ? (
-                        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 py-8 text-white/45">
-                          <CalendarIcon className="h-12 w-12" strokeWidth={1.5} />
-                          <p className="text-sm">Fechado neste dia.</p>
-                        </div>
-                      ) : (
-                        <div className="mt-[clamp(0.5rem,1.6cqh,1rem)] grid min-h-0 flex-1 auto-rows-[minmax(3rem,1fr)] grid-cols-3 gap-[clamp(0.4rem,1.4cqh,0.8rem)] overflow-y-auto overscroll-contain pb-2 sm:grid-cols-4">
-                          {timeSlots.map((t) => {
-                            const available = availableSlots.includes(t);
-                            const barberName = selectedBarber?.name ?? "barbeiro";
-                            if (!available) {
-                              return (
-                                <Tooltip key={t}>
-                                  <TooltipTrigger asChild>
-                                    <span className="inline-flex h-full min-h-12 cursor-not-allowed items-center justify-center rounded-xl border border-white/10 bg-white/5 px-2 text-white/30 [container-type:size]">
-                                      <span className="text-[clamp(1rem,42cqh,1.75rem)] leading-none">{t}</span>
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    Horário indisponível para o barbeiro {barberName}
-                                  </TooltipContent>
-                                </Tooltip>
-                              );
-                            }
-                            const selected = selectedTime === t;
-                            return (
-                              <button
-                                key={t}
-                                type="button"
-                                aria-pressed={selected}
-                                onClick={() => {
-                                  setSelectedTime(t);
-                                  setConflictNotice(false);
-                                  setFieldError("");
-                                }}
-                                className={cn(
-                                  "flex h-full min-h-12 items-center justify-center rounded-xl px-2 font-medium [container-type:size]",
-                                  selected
-                                    ? "bg-gradient-to-r from-primary to-violet-500 text-white shadow-[0_0_20px_hsl(239_84%_62%/0.45)]"
-                                    : "border border-white/15 bg-white/5 text-white hover:border-primary/60",
-                                )}
-                              >
-                                <span className="text-[clamp(1rem,42cqh,1.75rem)] leading-none">{t}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <DatePicker
+                        value={selectedDate}
+                        onChange={(d) => d && setSelectedDate(d)}
+                        minDate={startOfToday()}
+                        formatDate={formatBookingDay}
+                        size="touch"
+                        className="h-[clamp(2.75rem,8cqh,3.75rem)] w-0 min-w-0 flex-1 justify-center overflow-hidden rounded-xl border-white/15 bg-white/5 text-[clamp(0.95rem,3.2cqh,1.25rem)] text-white hover:bg-white/10 [&_svg]:h-[clamp(1rem,3.2cqh,1.4rem)] [&_svg]:w-[clamp(1rem,3.2cqh,1.4rem)]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDate((d) => addDays(d, 1))}
+                        aria-label="Próximo dia"
+                        className="flex aspect-square h-[clamp(2.75rem,8cqh,3.75rem)] w-auto shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-[0_0_16px_hsl(239_84%_62%/0.35)] hover:bg-indigo-500">
+                        <ChevronRight className="h-[clamp(1rem,3.2cqh,1.4rem)] w-[clamp(1rem,3.2cqh,1.4rem)]" />
+                      </button>
                     </div>
-                  </TooltipProvider>
-                )}
-
-                {step === 4 && (
-                  <div className="relative mt-6 shrink-0">
-                    <Label htmlFor="booking-name" className="sr-only">Nome</Label>
-                    <Input
-                      ref={inputRef}
-                      id="booking-name"
-                      value={clientName}
-                      onChange={(e) => {
-                        setClientName(e.target.value);
-                        setFieldError("");
-                      }}
-                      onBlur={holdFieldFocus}
-                      placeholder="Seu nome"
-                      autoComplete="name"
-                      aria-invalid={!!fieldError}
-                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
-                    />
-                    <AdvanceButton
-                      typed={clientName.trim().length > 0}
-                      ready={clientName.trim().length > 0}
-                      pending={submitting}
-                      onAdvance={continueBooking}
-                    />
+                    {conflictNotice && (
+                      <p
+                        role="alert"
+                        className="mt-4 shrink-0 rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
+                        Esse horário acabou de ser ocupado por outra pessoa. Escolha outro horário abaixo.
+                      </p>
+                    )}
+                    {timeSlots.length === 0 ? (
+                      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 py-8 text-white/45">
+                        <CalendarIcon className="h-12 w-12" strokeWidth={1.5} />
+                        <p className="text-sm">Fechado neste dia.</p>
+                      </div>
+                    ) : (
+                      <div className="mt-[clamp(0.5rem,1.6cqh,1rem)] grid min-h-0 flex-1 auto-rows-[minmax(3rem,1fr)] grid-cols-3 gap-[clamp(0.4rem,1.4cqh,0.8rem)] overflow-y-auto overscroll-contain pb-2 sm:grid-cols-4">
+                        {timeSlots.map((t) => {
+                          const available = availableSlots.includes(t);
+                          const barberName = selectedBarber?.name ?? "barbeiro";
+                          if (!available) {
+                            return (
+                              <Tooltip key={t}>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex h-full min-h-12 cursor-not-allowed items-center justify-center rounded-xl border border-white/10 bg-white/5 px-2 text-white/30 [container-type:size]">
+                                    <span className="text-[clamp(1rem,42cqh,1.75rem)] leading-none">{t}</span>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent>Horário indisponível para o barbeiro {barberName}</TooltipContent>
+                              </Tooltip>
+                            );
+                          }
+                          const selected = selectedTime === t;
+                          return (
+                            <button
+                              key={t}
+                              type="button"
+                              aria-pressed={selected}
+                              onClick={() => {
+                                setSelectedTime(t);
+                                setConflictNotice(false);
+                                setFieldError("");
+                              }}
+                              className={cn(
+                                "flex h-full min-h-12 items-center justify-center rounded-xl px-2 font-medium [container-type:size]",
+                                selected
+                                  ? "bg-gradient-to-r from-primary to-violet-500 text-white shadow-[0_0_20px_hsl(239_84%_62%/0.45)]"
+                                  : "border border-white/15 bg-white/5 text-white hover:border-primary/60",
+                              )}>
+                              <span className="text-[clamp(1rem,42cqh,1.75rem)] leading-none">{t}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
-                )}
+                </TooltipProvider>
+              )}
 
-                {step === 5 && (
-                  <div className="relative mt-6 shrink-0">
-                    <Label htmlFor="booking-phone" className="sr-only">Telefone</Label>
-                    <Input
-                      ref={inputRef}
-                      id="booking-phone"
-                      type="tel"
-                      inputMode="tel"
-                      autoComplete="tel"
-                      value={clientPhone}
-                      onChange={(e) => {
-                        setClientPhone(formatPhoneAsTyped(e.target.value));
-                        setFieldError("");
-                      }}
-                      onBlur={holdFieldFocus}
-                      placeholder="(11) 98765-4321"
-                      aria-invalid={!!fieldError}
-                      className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
-                    />
-                    <AdvanceButton
-                      typed={phoneDigits.length > 0}
-                      ready={phoneDigits.length >= 10}
-                      pending={submitting}
-                      onAdvance={submitBooking}
-                    />
-                  </div>
-                )}
+              {step === 4 && (
+                <div className="relative mt-6 shrink-0">
+                  <Label htmlFor="booking-name" className="sr-only">
+                    Nome
+                  </Label>
+                  <Input
+                    ref={inputRef}
+                    id="booking-name"
+                    value={clientName}
+                    onChange={(e) => {
+                      setClientName(e.target.value);
+                      setFieldError("");
+                    }}
+                    onBlur={holdFieldFocus}
+                    onFocus={(e) => {
+                      const input = e.currentTarget;
+                      window.requestAnimationFrame(() => revealBookingField(input));
+                    }}
+                    placeholder={isMobile ? bookingStep?.question : "Seu nome"}
+                    autoComplete="name"
+                    aria-invalid={!!fieldError}
+                    className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                  />
+                  <AdvanceButton
+                    typed={clientName.trim().length > 0}
+                    ready={clientName.trim().length > 0}
+                    pending={submitting}
+                    onAdvance={continueBooking}
+                  />
+                </div>
+              )}
 
-                {fieldError && (
-                  <p className="mt-3 shrink-0 text-center text-sm text-red-400" role="alert">{fieldError}</p>
-                )}
-                {showActionError && step === 5 && (
-                  <p className="mt-3 shrink-0 text-center text-sm text-red-400" role="alert">
-                    {actionError instanceof Error ? actionError.message : "Erro ao agendar."}
-                  </p>
-                )}
+              {step === 5 && (
+                <div className="relative mt-6 shrink-0">
+                  <Label htmlFor="booking-phone" className="sr-only">
+                    Telefone
+                  </Label>
+                  <Input
+                    ref={inputRef}
+                    id="booking-phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={clientPhone}
+                    onChange={(e) => {
+                      setClientPhone(formatPhoneAsTyped(e.target.value));
+                      setFieldError("");
+                    }}
+                    onBlur={holdFieldFocus}
+                    onFocus={(e) => {
+                      const input = e.currentTarget;
+                      window.requestAnimationFrame(() => revealBookingField(input));
+                    }}
+                    placeholder={isMobile ? bookingStep?.question : "(11) 98765-4321"}
+                    aria-invalid={!!fieldError}
+                    className="h-14 rounded-xl border-white/15 bg-white/5 px-4 pr-16 text-lg text-white placeholder:text-white/30 focus-visible:ring-primary focus-visible:ring-offset-0 md:text-lg"
+                  />
+                  <AdvanceButton
+                    typed={phoneDigits.length > 0}
+                    ready={phoneDigits.length >= 10}
+                    pending={submitting}
+                    onAdvance={submitBooking}
+                  />
+                </div>
+              )}
+
+              {fieldError && (
+                <p className="mt-3 shrink-0 text-center text-sm text-red-400" role="alert">
+                  {fieldError}
+                </p>
+              )}
+              {showActionError && step === 5 && (
+                <p className="mt-3 shrink-0 text-center text-sm text-red-400" role="alert">
+                  {actionError instanceof Error ? actionError.message : "Erro ao agendar."}
+                </p>
+              )}
             </div>
 
-            <div className="flex shrink-0 items-center gap-3 border-t border-white/10 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div
+              className={cn(
+                "flex shrink-0 items-center gap-3 border-t border-white/10 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))]",
+                step >= 4 && "max-md:hidden",
+              )}>
               <button
                 type="button"
                 onClick={() => goTo(step - 1)}
-                className="rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white"
-              >
+                className="rounded-xl border border-white/15 px-4 py-3 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white">
                 Voltar
               </button>
               <button
@@ -876,8 +949,7 @@ export default function PublicBooking() {
                 onMouseDown={(e) => {
                   if (step === 4 || step === 5) e.preventDefault();
                 }}
-                className="lp-shimmer group relative flex-1 overflow-hidden rounded-xl bg-primary py-3 text-sm font-semibold text-white shadow-[0_0_20px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:shadow-[0_0_48px_hsl(239_84%_62%/0.7)] disabled:opacity-60"
-              >
+                className="lp-shimmer group relative flex-1 overflow-hidden rounded-xl bg-primary py-3 text-sm font-semibold text-white shadow-[0_0_20px_hsl(239_84%_62%/0.4)] transition-all duration-300 hover:shadow-[0_0_48px_hsl(239_84%_62%/0.7)] disabled:opacity-60">
                 <span className="absolute inset-0 bg-gradient-to-r from-primary to-violet-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                 <span className="relative z-10">
                   {submitting ? "Enviando..." : step === 5 ? "Confirmar" : "Continuar"}

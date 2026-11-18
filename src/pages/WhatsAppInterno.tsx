@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { whatsappApi } from "@/lib/api";
 import { InboxView } from "@/components/whatsapp/InboxView";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 
 export default function WhatsAppInterno() {
+  useMobilePageTitle("Atendimento");
   const { data: connection, isLoading } = useQuery({
     queryKey: ["integrations", "whatsapp"],
     queryFn: () => whatsappApi.get(),

@@ -34,6 +34,8 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
+import { MobileCreateButton } from "@/components/layout/MobileCreateButton";
 
 const DAYS = [
   { key: "monday", label: "Segunda" },
@@ -110,6 +112,7 @@ export default function Barbeiros() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingBarber, setEditingBarber] = useState<Barber | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Barber | null>(null);
+  useMobilePageTitle("Barbeiros");
 
   const {
     data: barbers = [],
@@ -266,7 +269,7 @@ export default function Barbeiros() {
   return (
     <>
       <div className="animate-fade-in">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+        <div className="mb-8 hidden flex-col gap-4 md:flex md:flex-row md:items-center md:justify-between">
           <div className="page-header mb-0">
             <h1 className="page-title">Barbeiros</h1>
             <p className="page-subtitle">
@@ -629,6 +632,7 @@ export default function Barbeiros() {
           onConfirm={handleDelete}
         />
       )}
+      <MobileCreateButton label="Adicionar barbeiro" onClick={openCreate} />
     </>
   );
 }

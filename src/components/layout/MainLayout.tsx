@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ChangePasswordModal } from "@/components/shared";
 import { AiUsageAlertBadge } from "@/components/layout/AiUsageAlertBadge";
 import { shouldRunSetupTour, runSetupTour } from "@/lib/setup-tour";
+import { MobilePageTitleProvider } from "./mobile-page-title";
 
 interface MainLayoutProps {
   children: ReactNode;
@@ -17,6 +18,8 @@ interface MainLayoutProps {
 export function MainLayout({ children }: MainLayoutProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileTitle, setMobileTitle] = useState<string | null>(null);
+  const mobileTitleValue = useMemo(() => ({ title: mobileTitle, setTitle: setMobileTitle }), [mobileTitle]);
   const { profile } = useAuth();
   const tourRunRef = useRef(false);
 
@@ -70,7 +73,11 @@ export function MainLayout({ children }: MainLayoutProps) {
           </SheetContent>
         </Sheet>
         <img src="/logo-v5.png" alt="NavalhIA" className="h-7 w-7 object-contain" />
-        <span className="font-bold text-foreground">NavalhIA</span>
+        {mobileTitle ? (
+          <span className="truncate font-display text-lg font-semibold text-foreground">{mobileTitle}</span>
+        ) : (
+          <span className="font-bold text-foreground">NavalhIA</span>
+        )}
       </header>
       <main
         className={cn(
@@ -95,7 +102,7 @@ export function MainLayout({ children }: MainLayoutProps) {
             </div>
           )}
           <AiUsageAlertBadge />
-          {children}
+          <MobilePageTitleProvider value={mobileTitleValue}>{children}</MobilePageTitleProvider>
         </div>
       </main>
     </div>

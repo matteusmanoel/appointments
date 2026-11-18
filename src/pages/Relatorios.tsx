@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
-import { FileDown, Columns, Search } from "lucide-react";
+import { FileDown, Columns, Search, SlidersHorizontal } from "lucide-react";
 import {
   appointmentsApi,
   barbersApi,
@@ -34,6 +34,15 @@ import { LoadingState } from "@/components/LoadingState";
 import { EmptyState } from "@/components/EmptyState";
 import { buildCsv, downloadCsv } from "@/lib/csv";
 import { useAuth } from "@/contexts/AuthContext";
+import { Label } from "@/components/ui/label";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 
 const COLUMN_IDS = [
   "data",
@@ -143,6 +152,7 @@ function getCellValue(apt: AppointmentListItem, colId: (typeof COLUMN_IDS)[numbe
 }
 
 export default function Relatorios() {
+  useMobilePageTitle("Relatórios");
   const { profile } = useAuth();
   const profileId = profile?.id;
 
@@ -154,6 +164,8 @@ export default function Relatorios() {
   });
   const [filterSearch, setFilterSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("__all__");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersActive = statusFilter !== "__all__" || filterSearch.trim() !== "";
   const [visibleColumns, setVisibleColumns] = useState<(typeof COLUMN_IDS)[number][]>(() =>
     getStoredColumns(profileId),
   );
@@ -213,14 +225,64 @@ export default function Relatorios() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="max-md:hidden">
         <h1 className="text-2xl font-bold text-foreground">Relatórios</h1>
         <p className="text-muted-foreground mt-1">
           Agendamentos por período. Ajuste as colunas e exporte em CSV.
         </p>
       </div>
 
+      <div className="flex items-center justify-end gap-2 md:hidden max-md:!mt-0">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="relative"
+          onClick={() => setFiltersOpen(true)}
+          aria-label={filtersActive ? "Filtros ativos" : "Filtros"}
+        >
+          <SlidersHorizontal className="h-5 w-5" />
+          {filtersActive ? (
+            <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary" aria-hidden />
+          ) : null}
+        </Button>
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="icon" aria-label="Colunas">
+              <Columns className="h-4 w-4" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-56 p-2">
+            <div className="mb-2 text-sm font-medium">Exibir colunas</div>
+            <div className="flex max-h-[280px] flex-col gap-2 overflow-y-auto">
+              {COLUMN_IDS.map((id) => (
+                <label
+                  key={id}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-muted"
+                >
+                  <Checkbox
+                    checked={visibleColumns.includes(id)}
+                    onCheckedChange={() => toggleColumn(id)}
+                  />
+                  <span className="text-sm">{COLUMN_LABELS[id]}</span>
+                </label>
+              ))}
+            </div>
+          </PopoverContent>
+        </Popover>
+        <Button
+          type="button"
+          size="icon"
+          aria-label="Exportar CSV"
+          onClick={handleExportCsv}
+          disabled={appointments.length === 0}
+        >
+          <FileDown className="h-4 w-4" />
+        </Button>
+      </div>
+
       <FiltersBar
+        className="max-md:hidden"
         left={
           <FiltersBarField label="Status" width="status">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -342,6 +404,72 @@ export default function Relatorios() {
           </div>
         </div>
       )}
+      <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <SheetContent
+          side="bottom"
+          className="rounded-t-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <SheetHeader className="text-left">
+            <SheetTitle>Filtros</SheetTitle>
+            <SheetDescription className="sr-only">
+              Período, busca e status dos agendamentos
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-4">
+            <div className="space-y-2">
+              <Label>Período</Label>
+              <DateRangePicker value={range} onChange={setRange} className="w-full" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="relatorios-filtro-busca">Buscar</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="relatorios-filtro-busca"
+                  placeholder="Cliente, barbeiro ou serviço"
+                  value={filterSearch}
+                  onChange={(e) => setFilterSearch(e.target.value)}
+                  className="h-11 w-full pl-8 text-base"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-11 w-full" aria-label="Status">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todos</SelectItem>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="confirmed">Confirmado</SelectItem>
+                  <SelectItem value="completed">Concluído</SelectItem>
+                  <SelectItem value="cancelled">Cancelado</SelectItem>
+                  <SelectItem value="no_show">Faltou</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="mt-6 flex gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 flex-1"
+              onClick={() => {
+                setStatusFilter("__all__");
+                setFilterSearch("");
+              }}
+              disabled={!filtersActive}
+            >
+              Limpar
+            </Button>
+            <Button type="button" className="h-11 flex-1" onClick={() => setFiltersOpen(false)}>
+              Ver resultados
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

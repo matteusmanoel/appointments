@@ -63,12 +63,27 @@ describe("RescheduleOrCancel", () => {
   });
 
   it("a menos de 2 h: botão desabilitado e aviso explicando o motivo", async () => {
-    vi.mocked(publicApi.getAppointmentByToken).mockResolvedValue(appt(1) as never);
+    vi.mocked(publicApi.getAppointmentByToken).mockResolvedValue({
+      ...appt(1),
+      created_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    } as never);
     renderPage();
     fireEvent.click(await screen.findByText("Sim, cancelar"));
     const btn = await screen.findByText("Confirmar cancelamento");
     await waitFor(() => expect(btn.closest("button")).toBeDisabled());
     expect(screen.getByRole("alert")).toHaveTextContent(/menos de 2 horas/);
+  });
+
+  it("horário recém marcado dentro das 2 h ainda pode ser cancelado", async () => {
+    vi.mocked(publicApi.getAppointmentByToken).mockResolvedValue({
+      ...appt(1),
+      created_at: new Date(Date.now() - 2 * 60_000).toISOString(),
+    } as never);
+    renderPage();
+    fireEvent.click(await screen.findByText("Sim, cancelar"));
+    const btn = await screen.findByText("Confirmar cancelamento");
+    expect(btn.closest("button")).not.toBeDisabled();
+    expect(screen.queryByText(/menos de 2 horas/)).toBeNull();
   });
 });
 

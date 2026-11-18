@@ -5,6 +5,7 @@ import { format, addDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { publicApi, type PublicAppointment } from "@/lib/api";
+import { MANAGE_CUTOFF_MINUTES, manageChangeBlock } from "@/lib/manage-window";
 import { getTimeSlotsForDay } from "@/lib/slots";
 import { LoadingState } from "@/components/LoadingState";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -35,9 +36,6 @@ function isNotFoundError(err: unknown): boolean {
   const status = (err as { status?: unknown } | null)?.status;
   return status === 404 || status === 410 || status === 400;
 }
-
-/** Mesmo prazo do backend (public.ts RESCHEDULE_CUTOFF_MINUTES). */
-const CUTOFF_MINUTES = 120;
 
 export default function RescheduleOrCancel() {
   const { token } = useParams<{ token: string }>();
@@ -180,7 +178,13 @@ export default function RescheduleOrCancel() {
 
   const bookingLink = appointment.slug ? `/b/${appointment.slug}` : "/";
   const startMs = new Date(`${String(appointment.scheduled_date).slice(0, 10)}T${appointment.scheduled_time.slice(0, 5)}:00`).getTime();
-  const tooLate = Number.isFinite(startMs) && startMs - Date.now() < CUTOFF_MINUTES * 60_000;
+  const createdAtMs = appointment.created_at ? Date.parse(appointment.created_at) : null;
+  const changeBlock = manageChangeBlock({
+    startMs,
+    createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : null,
+    nowMs: Date.now(),
+  });
+  const tooLate = changeBlock != null;
   const shopPhone = (barbershop?.phone ?? "").replace(/\D/g, "");
 
   return (
@@ -208,12 +212,16 @@ export default function RescheduleOrCancel() {
         </div>
 
         <p className="text-xs text-muted-foreground" data-testid="regra-2h">
-          Cancelamento e reagendamento são possíveis até {CUTOFF_MINUTES / 60} horas antes do horário marcado.
+          Cancelamento e reagendamento são possíveis até {MANAGE_CUTOFF_MINUTES / 60} horas antes do horário marcado. Um horário recém marcado ainda pode ser alterado por alguns minutos.
         </p>
 
         {tooLate && (
           <div role="alert" className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm space-y-2">
-            <p>Faltam menos de {CUTOFF_MINUTES / 60} horas para o horário: não dá mais para {isCancel ? "cancelar" : "reagendar"} por aqui.</p>
+            <p>
+              {changeBlock === "past"
+                ? `Esse horário já passou: não dá mais para ${isCancel ? "cancelar" : "reagendar"} por aqui.`
+                : `Faltam menos de ${MANAGE_CUTOFF_MINUTES / 60} horas para o horário: não dá mais para ${isCancel ? "cancelar" : "reagendar"} por aqui.`}
+            </p>
             {shopPhone && (
               <Button asChild size="sm" variant="outline">
                 <a href={`https://wa.me/${shopPhone}`} target="_blank" rel="noreferrer">Falar com a barbearia no WhatsApp</a>

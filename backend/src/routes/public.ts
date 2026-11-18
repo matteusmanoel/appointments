@@ -12,8 +12,7 @@ import {
 import { recordAgendaChangeFromAppointment } from "../agenda/record-agenda-change.js";
 import { clientIp, envInt, rateLimitMiddleware } from "../lib/rate-limit.js";
 import { parsePublicPhone } from "../lib/phone-validate.js";
-
-const RESCHEDULE_CUTOFF_MINUTES = 120;
+import { manageChangeBlock } from "../lib/manage-window.js";
 
 async function getBarbershopIdBySlug(slug: string): Promise<string | null> {
   const r = await pool.query(
@@ -109,6 +108,7 @@ async function getAppointmentByToken(token: string): Promise<{
   barbershop_name: string;
   slug: string | null;
   service_names: string;
+  created_at: string;
 } | null> {
   const r = await pool.query<{
     id: string;
@@ -121,9 +121,10 @@ async function getAppointmentByToken(token: string): Promise<{
     barbershop_name: string;
     slug: string | null;
     service_names: string;
+    created_at: Date | string;
   }>(
     `SELECT a.id, a.barbershop_id, a.barber_id, a.scheduled_date::text, a.scheduled_time::text, a.duration_minutes, a.status,
-            bs.name AS barbershop_name, bs.slug,
+            bs.name AS barbershop_name, bs.slug, a.created_at,
             (SELECT string_agg(aps.service_name, ', ' ORDER BY aps.position) FROM public.appointment_services aps WHERE aps.appointment_id = a.id) AS service_names
      FROM public.appointments a
      JOIN public.barbershops bs ON bs.id = a.barbershop_id
@@ -137,7 +138,17 @@ async function getAppointmentByToken(token: string): Promise<{
     scheduled_date: String(row.scheduled_date),
     scheduled_time: String(row.scheduled_time).slice(0, 5),
     service_names: row.service_names ?? "",
+    created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
   };
+}
+
+function blockPublicChange(startUtc: Date, createdAtIso: string): "past" | "cutoff" | null {
+  const createdAtMs = Date.parse(createdAtIso);
+  return manageChangeBlock({
+    startMs: startUtc.getTime(),
+    createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : null,
+    nowMs: Date.now(),
+  });
 }
 
 publicRouter.get("/appointments/:token", manageRateLimit, async (req: Request, res: Response): Promise<void> => {
@@ -168,12 +179,12 @@ publicRouter.post("/appointments/:token/cancel", manageRateLimit, async (req: Re
   }
   const startUtc = await getAppointmentStartUtc(appointment.id);
   if (startUtc) {
-    const now = Date.now();
-    if (startUtc.getTime() <= now) {
+    const block = blockPublicChange(startUtc, appointment.created_at);
+    if (block === "past") {
       res.status(400).json({ error: "Não é possível cancelar agendamento que já passou" });
       return;
     }
-    if (startUtc.getTime() - now < RESCHEDULE_CUTOFF_MINUTES * 60 * 1000) {
+    if (block === "cutoff") {
       res.status(400).json({ error: "Só é possível cancelar até 2 horas antes do horário" });
       return;
     }
@@ -200,12 +211,12 @@ publicRouter.post("/appointments/:token/reschedule", manageRateLimit, async (req
   }
   const startUtc = await getAppointmentStartUtc(appointment.id);
   if (startUtc) {
-    const now = Date.now();
-    if (startUtc.getTime() <= now) {
+    const block = blockPublicChange(startUtc, appointment.created_at);
+    if (block === "past") {
       res.status(400).json({ error: "Não é possível reagendar agendamento que já passou" });
       return;
     }
-    if (startUtc.getTime() - now < RESCHEDULE_CUTOFF_MINUTES * 60 * 1000) {
+    if (block === "cutoff") {
       res.status(400).json({ error: "Só é possível reagendar até 2 horas antes do horário" });
       return;
     }

@@ -41,8 +41,10 @@ import {
   LayoutGrid,
   Pencil,
   Search,
+  SlidersHorizontal,
   Users,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   appointmentsApi,
   barbersApi,
@@ -104,7 +106,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
+import { MobileCreateButton } from "@/components/layout/MobileCreateButton";
 import {
   FiltersBar,
   FiltersBarField,
@@ -436,6 +447,8 @@ export default function Agendamentos() {
   const [listStatus, setListStatus] = useState<string>(
     statusParam || "__all__",
   );
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  useMobilePageTitle("Agendamentos");
 
   const dateStr = format(selectedDate, "yyyy-MM-dd");
   const listFromStr = listRange?.from
@@ -838,18 +851,11 @@ export default function Agendamentos() {
 
   useEffect(() => {
     if (editingAppointment || priceManuallyEdited) return;
-    const next = computedTotals.totalPrice;
-    const current = Number(watchedPrice ?? 0);
-    if (next > 0 && current === 0) {
-      form.setValue("price", next, { shouldDirty: false, shouldTouch: false });
-    }
-  }, [
-    computedTotals.totalPrice,
-    editingAppointment,
-    form,
-    priceManuallyEdited,
-    watchedPrice,
-  ]);
+    form.setValue("price", computedTotals.totalPrice, {
+      shouldDirty: false,
+      shouldTouch: false,
+    });
+  }, [computedTotals.totalPrice, editingAppointment, form, priceManuallyEdited]);
 
   const { data: editDayAppointments = [] } = useQuery({
     queryKey: ["appointments", editDateStr],
@@ -1278,19 +1284,46 @@ export default function Agendamentos() {
     }
   };
 
+  const activeStatus = viewMode === "grade" ? gradeStatus : listStatus;
+  const setActiveStatus = viewMode === "grade" ? setGradeStatus : setListStatus;
+  const mobileFiltersActive =
+    filterSearch.trim() !== "" || activeStatus !== "__all__";
+  const clearMobileFilters = () => {
+    setFilterSearch("");
+    setActiveStatus("__all__");
+  };
+  const stepGradePeriod = (dir: 1 | -1) =>
+    setSelectedDate((d) =>
+      gradeViewMode === "day"
+        ? addDays(d, dir)
+        : gradeViewMode === "month"
+          ? addMonths(d, dir)
+          : addYears(d, dir),
+    );
+  const listRangeLabel =
+    listRange.from && listRange.to
+      ? isSameDay(listRange.from, listRange.to)
+        ? format(listRange.from, "d 'de' MMM", { locale: ptBR })
+        : `${format(listRange.from, "d MMM", { locale: ptBR })} – ${format(listRange.to, "d MMM", { locale: ptBR })}`
+      : "Período";
+
   return (
     <>
-      <div className="animate-fade-in flex flex-col flex-1 min-h-0">
-        <div
-          className={`flex flex-col md:flex-row md:items-center md:justify-between gap-4 ${
-            isMobile && viewMode === "grade" && gradeViewMode === "day" ? "mb-4" : "mb-8"
-          }`}
-        >
-          <div className="page-header mb-0">
-            <h1 className="page-title">Agendamentos</h1>
-            <p className="page-subtitle">Gerencie sua agenda de atendimentos</p>
-          </div>
-          {!(isMobile && viewMode === "grade" && gradeViewMode === "day") && (
+      <div
+        className={cn(
+          "animate-fade-in flex flex-col flex-1 min-h-0",
+          isMobile &&
+            viewMode === "grade" &&
+            gradeViewMode === "day" &&
+            "h-[calc(100dvh-5.5rem)]",
+        )}
+      >
+        {!isMobile && (
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
+            <div className="page-header mb-0">
+              <h1 className="page-title">Agendamentos</h1>
+              <p className="page-subtitle">Gerencie sua agenda de atendimentos</p>
+            </div>
             <Button
               className="btn-accent w-full md:w-fit"
               onClick={openCreateFromButton}
@@ -1299,30 +1332,142 @@ export default function Agendamentos() {
               <Plus className="w-4 h-4 mr-2" />
               Novo Agendamento
             </Button>
-          )}
-        </div>
+          </div>
+        )}
+
+        {isMobile && (
+          <div className="mb-3 flex shrink-0 flex-col gap-2">
+            <div className="flex items-center gap-2">
+              {viewMode === "grade" ? (
+                <Tabs
+                  value={gradeViewMode}
+                  onValueChange={(v) =>
+                    setGradeViewMode(v as "day" | "month" | "year")
+                  }
+                >
+                  <TabsList className="h-10 p-1 grid grid-cols-3">
+                    <TabsTrigger value="day" className="px-3 text-sm">
+                      Dia
+                    </TabsTrigger>
+                    <TabsTrigger value="month" className="px-3 text-sm">
+                      Mês
+                    </TabsTrigger>
+                    <TabsTrigger value="year" className="px-3 text-sm">
+                      Ano
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              ) : (
+                <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                  {listRangeLabel}
+                </p>
+              )}
+              <div className="ml-auto flex shrink-0 items-center gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="relative h-10 w-10"
+                  onClick={() => setFiltersOpen(true)}
+                  aria-label={mobileFiltersActive ? "Filtros ativos" : "Filtros"}
+                >
+                  <SlidersHorizontal className="h-5 w-5" />
+                  {mobileFiltersActive && (
+                    <span
+                      className="absolute right-2 top-2 h-2 w-2 rounded-full bg-primary"
+                      aria-hidden
+                    />
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10"
+                  onClick={() =>
+                    setViewMode(viewMode === "grade" ? "lista" : "grade")
+                  }
+                  aria-label={viewMode === "grade" ? "Ver em lista" : "Ver grade"}
+                >
+                  {viewMode === "grade" ? (
+                    <List className="h-5 w-5" />
+                  ) : (
+                    <LayoutGrid className="h-5 w-5" />
+                  )}
+                </Button>
+              </div>
+            </div>
+            {viewMode === "grade" &&
+              (gradeViewMode === "day" ? (
+                <WeekDayStrip
+                  selectedDate={selectedDate}
+                  onSelect={setSelectedDate}
+                />
+              ) : (
+                <div className="flex h-11 items-center overflow-hidden rounded-xl border bg-muted/30">
+                  <button
+                    type="button"
+                    className="flex h-full w-11 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted"
+                    onClick={() => stepGradePeriod(-1)}
+                    aria-label={gradeViewMode === "month" ? "Mês anterior" : "Ano anterior"}
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <div className="h-full min-w-0 flex-1 border-x border-border">
+                    {gradeViewMode === "month" ? (
+                      <MonthPicker
+                        value={selectedDate}
+                        onChange={setSelectedDate}
+                        className="h-full w-full min-w-0 justify-center rounded-none border-0 text-base font-medium"
+                      />
+                    ) : (
+                      <YearPicker
+                        value={selectedDate}
+                        onChange={setSelectedDate}
+                        className="h-full w-full min-w-0 justify-center rounded-none border-0 text-base font-medium"
+                      />
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="flex h-full w-11 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted"
+                    onClick={() => stepGradePeriod(1)}
+                    aria-label={gradeViewMode === "month" ? "Próximo mês" : "Próximo ano"}
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
 
         <Tabs
           value={viewMode}
           onValueChange={(v) => setViewMode(v as "grade" | "lista")}
           className="w-full flex flex-col flex-1 min-h-0"
         >
-          <TabsList className="mb-0 w-full grid grid-cols-2">
-            <TabsTrigger value="grade" className="gap-2">
-              <LayoutGrid className="w-4 h-4" />
-              Grade
-            </TabsTrigger>
-            <TabsTrigger value="lista" className="gap-2">
-              <List className="w-4 h-4" />
-              Agenda
-            </TabsTrigger>
-          </TabsList>
+          {!isMobile && (
+            <TabsList className="mb-0 w-full grid grid-cols-2">
+              <TabsTrigger value="grade" className="gap-2">
+                <LayoutGrid className="w-4 h-4" />
+                Grade
+              </TabsTrigger>
+              <TabsTrigger value="lista" className="gap-2">
+                <List className="w-4 h-4" />
+                Agenda
+              </TabsTrigger>
+            </TabsList>
+          )}
 
           <TabsContent
             value="grade"
-            className="mt-0 pt-4 flex flex-col flex-1 min-h-0"
+            className={cn(
+              "mt-0 flex flex-col flex-1 min-h-0 data-[state=inactive]:hidden",
+              !isMobile && "pt-4",
+            )}
           >
-            <div className="stat-card mb-4 shrink-0 max-md:p-3">
+            {!isMobile && (
+            <div className="stat-card mb-4 shrink-0">
               <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] gap-3 items-center">
                 <div className="flex flex-wrap items-center justify-start gap-2 min-w-0">
                   <Tabs
@@ -1354,12 +1499,6 @@ export default function Agendamentos() {
                   </Tabs>
                 </div>
                 <div className="flex flex-1 min-w-0 justify-center">
-                  {gradeViewMode === "day" && isMobile ? (
-                    <WeekDayStrip
-                      selectedDate={selectedDate}
-                      onSelect={setSelectedDate}
-                    />
-                  ) : (
                   <div className="flex items-center border rounded-xl overflow-hidden bg-muted/30">
                     <button
                       type="button"
@@ -1441,7 +1580,6 @@ export default function Agendamentos() {
                       <ChevronRight className="w-6 h-6 text-muted-foreground" />
                     </button>
                   </div>
-                  )}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                   <div className="relative min-w-[180px]">
@@ -1469,6 +1607,7 @@ export default function Agendamentos() {
                 </div>
               </div>
             </div>
+            )}
 
             <div className="flex-1 min-h-0 flex flex-col">
               {gradeViewMode === "day" && (
@@ -1525,16 +1664,6 @@ export default function Agendamentos() {
                       onCreate={openCreate}
                     />
                   )}
-                  {isMobile && (
-                    <button
-                      type="button"
-                      className="fixed bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      onClick={openCreateFromButton}
-                      aria-label="Novo agendamento"
-                    >
-                      <Plus className="h-6 w-6" />
-                    </button>
-                  )}
                 </>
               )}
 
@@ -1572,7 +1701,7 @@ export default function Agendamentos() {
                               return (
                                 <div
                                   key={`pad-${i}`}
-                                  className="min-h-[120px] rounded bg-muted/20"
+                                  className="min-h-[4.5rem] rounded bg-muted/20"
                                 />
                               );
                             const dayStr = format(day, "yyyy-MM-dd");
@@ -1583,7 +1712,7 @@ export default function Agendamentos() {
                               <button
                                 type="button"
                                 key={dayStr}
-                                className="min-h-[4.5rem] rounded border border-border p-2 overflow-hidden text-left flex flex-col gap-1.5 hover:bg-muted/30 transition-colors"
+                                className="min-h-[4.5rem] cursor-pointer rounded border border-border p-2 overflow-hidden text-left flex flex-col gap-1.5 hover:bg-muted/30 transition-colors"
                                 aria-label={
                                   dayCount > 0
                                     ? `${format(day, "d 'de' MMMM", { locale: ptBR })}, ${dayCount} agendamento${dayCount > 1 ? "s" : ""}`
@@ -1654,7 +1783,7 @@ export default function Agendamentos() {
                                 <button
                                   key={dayStr}
                                   type="button"
-                                  className="flex flex-col items-center gap-0.5 rounded py-0.5 hover:bg-muted"
+                                  className="flex cursor-pointer flex-col items-center gap-0.5 rounded py-0.5 hover:bg-muted"
                                   aria-label={
                                     count > 0
                                       ? `${format(day, "d 'de' MMMM", { locale: ptBR })}, ${count} agendamento${count > 1 ? "s" : ""}`
@@ -1685,9 +1814,10 @@ export default function Agendamentos() {
 
           <TabsContent
             value="lista"
-            className="mt-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+            className="mt-0 flex flex-col flex-1 min-h-0 overflow-hidden data-[state=inactive]:hidden"
           >
             <div className="flex flex-col flex-1 min-h-0 gap-4">
+              {!isMobile && (
               <FiltersBar
                 left={
                   <FiltersBarField label="Buscar" width="barber">
@@ -1729,6 +1859,7 @@ export default function Agendamentos() {
                   </FiltersBarField>
                 }
               />
+              )}
               {listLoading ? (
                 <AgendamentosListSkeleton />
               ) : listError ? (
@@ -1853,6 +1984,82 @@ export default function Agendamentos() {
           </TabsContent>
         </Tabs>
       </div>
+
+      <MobileCreateButton label="Novo agendamento" onClick={openCreateFromButton} />
+
+      <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}>
+        <SheetContent
+          side="bottom"
+          className="rounded-t-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))]"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+        >
+          <SheetHeader className="text-left">
+            <SheetTitle>Filtros</SheetTitle>
+            <SheetDescription className="sr-only">
+              Busca e status dos agendamentos
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-4">
+            {viewMode === "lista" && (
+              <div className="space-y-2">
+                <Label>Período</Label>
+                <DateRangePicker
+                  value={listRange}
+                  onChange={setListRange}
+                  className="w-full"
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="agendamentos-filtro-busca">Buscar</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="agendamentos-filtro-busca"
+                  placeholder="Cliente, barbeiro ou serviço"
+                  value={filterSearch}
+                  onChange={(e) => setFilterSearch(e.target.value)}
+                  className="h-11 w-full pl-8 text-base"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={activeStatus} onValueChange={setActiveStatus}>
+                <SelectTrigger className="h-11 w-full" aria-label="Status">
+                  <SelectValue placeholder="Todos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todos</SelectItem>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="confirmed">Confirmado</SelectItem>
+                  <SelectItem value="completed">Concluído</SelectItem>
+                  <SelectItem value="cancelled">Cancelado</SelectItem>
+                  <SelectItem value="no_show">Faltou</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="mt-6 flex gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 flex-1"
+              onClick={clearMobileFilters}
+              disabled={!mobileFiltersActive}
+            >
+              Limpar
+            </Button>
+            <Button
+              type="button"
+              className="h-11 flex-1"
+              onClick={() => setFiltersOpen(false)}
+            >
+              Ver resultados
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <EntityFormDialog
         open={formOpen}
@@ -2353,58 +2560,6 @@ export default function Agendamentos() {
                   />
                 ) : null}
 
-                <FormField
-                  control={form.control}
-                  name="price"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Valor (R$)</FormLabel>
-                      <div className="flex gap-2">
-                        <FormControl>
-                          <Input
-                            type="number"
-                            inputMode="decimal"
-                            step="0.5"
-                            min={0}
-                            value={Number(field.value ?? 0)}
-                            onChange={(e) => {
-                              setPriceManuallyEdited(true);
-                              field.onChange(Number(e.target.value));
-                            }}
-                          />
-                        </FormControl>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="shrink-0"
-                          onClick={() => {
-                            setPriceManuallyEdited(false);
-                            form.setValue("price", computedTotals.totalPrice, {
-                              shouldDirty: true,
-                              shouldTouch: true,
-                            });
-                          }}
-                          disabled={computedTotals.totalPrice <= 0}
-                        >
-                          Usar total
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Total dos serviços:{" "}
-                        <span className="font-medium">
-                          R$ {computedTotals.totalPrice.toFixed(2)}
-                        </span>
-                        {" · "}
-                        Duração:{" "}
-                        <span className="font-medium">
-                          {computedTotals.totalDuration} min
-                        </span>
-                      </p>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
                 <div className="md:col-span-2">
                   <FormField
                     control={form.control}
@@ -2447,6 +2602,38 @@ export default function Agendamentos() {
                             }
                           />
                         </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <FormField
+                    control={form.control}
+                    name="price"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Valor (R$)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.5"
+                            min={0}
+                            value={Number(field.value ?? 0)}
+                            onChange={(e) => {
+                              setPriceManuallyEdited(true);
+                              field.onChange(Number(e.target.value));
+                            }}
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Duração:{" "}
+                          <span className="font-medium">
+                            {computedTotals.totalDuration} min
+                          </span>
+                        </p>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -2498,27 +2685,6 @@ export default function Agendamentos() {
                     />
                   </div>
                 )}
-
-                <div className="md:col-span-2">
-                  <FormField
-                    control={form.control}
-                    name="notes"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Observações</FormLabel>
-                        <FormControl>
-                          <input
-                            type="text"
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder="Observações"
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
               </div>
             )}
           </form>

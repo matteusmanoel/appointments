@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useFieldArray } from "react-hook-form";
@@ -222,6 +223,7 @@ function PaymentsCommissionsModal({
 }
 
 export default function Configuracoes() {
+  useMobilePageTitle("Configurações");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -698,7 +700,7 @@ export default function Configuracoes() {
   return (
     <>
       <div className="animate-fade-in">
-        <div className="page-header">
+        <div className="page-header max-md:hidden">
           <h1 className="page-title">Configurações</h1>
           <p className="page-subtitle">
             Gerencie as configurações da sua NavalhIA

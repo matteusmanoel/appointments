@@ -9,12 +9,14 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { BookOpen, MessageCircle, Clock, Brain, Send, Bell, Key, AlertCircle } from "lucide-react";
 import { getWhatsAppSupportUrl } from "@/lib/whatsapp-sales";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 
 export default function AjudaWhatsApp() {
+  useMobilePageTitle("Ajuda");
   return (
     <div className="max-w-3xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold text-foreground">
+        <h1 className="text-2xl font-semibold text-foreground max-md:hidden">
           Tutorial: Configurar o WhatsApp
         </h1>
         <p className="text-muted-foreground mt-1">

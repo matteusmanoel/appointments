@@ -25,6 +25,7 @@ import type { AppointmentListItem } from "@/lib/api";
 import { OPERATIONAL_TONE_CLASS, operationalActivity, operationalActivityText } from "@/lib/agenda-activity";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useMobilePageTitle } from "@/components/layout/mobile-page-title";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -1129,6 +1130,7 @@ function UpgradeCard() {
 // ---------------------------------------------------------------------------
 
 export default function Inteligencia() {
+  useMobilePageTitle("Inteligência");
   const { data: statusData, isLoading: statusLoading } = useQuery({
     queryKey: ["whatsapp-status"],
     queryFn: () => whatsappApi.status(),
@@ -1148,9 +1150,9 @@ export default function Inteligencia() {
         <div className="live-line" />
       </div>
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <BrainCircuit className="w-6 h-6 text-primary shrink-0" />
-        <div className="flex-1 min-w-0">
+      <div className="flex items-center gap-3 max-md:justify-end">
+        <BrainCircuit className="w-6 h-6 shrink-0 text-primary max-md:hidden" />
+        <div className="min-w-0 flex-1 max-md:hidden">
           <h1 className="text-xl font-bold tracking-tight">Inteligência</h1>
           <p className="text-sm text-muted-foreground">
             Monitor central do agente NavalhIA
