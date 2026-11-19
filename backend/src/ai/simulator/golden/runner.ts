@@ -282,14 +282,20 @@ export async function deleteGoldenFixture(fx: GoldenFixture): Promise<void> {
   await pool.query(`DELETE FROM public.barbershops WHERE id = ANY($1::uuid[]) AND slug LIKE $2`, [shop, `${SLUG_PREFIX}%`]);
 }
 
-export async function runGoldenTurn(fx: GoldenFixture, turn: GoldenTurn): Promise<TurnOutcome> {
+export async function runGoldenTurn(
+  fx: GoldenFixture,
+  turn: GoldenTurn,
+  run?: () => Promise<AgentResult>,
+): Promise<TurnOutcome> {
   await pool.query(`INSERT INTO public.ai_messages (conversation_id, role, content) VALUES ($1, 'user', $2)`, [
     fx.conversationId,
     turn.user,
   ]);
-  const result = await runAgent(fx.barbershopId, fx.conversationId, fx.clientPhone, scriptedOpenAI(turn.llm(fx)), {
-    persistAssistantMessages: true,
-  });
+  const result = run
+    ? await run()
+    : await runAgent(fx.barbershopId, fx.conversationId, fx.clientPhone, scriptedOpenAI(turn.llm(fx)), {
+        persistAssistantMessages: true,
+      });
   const draft = await loadBookingDraft(fx.conversationId);
   const pending = await loadPendingIntents(fx.conversationId);
   const client = await pool.query<{ name: string | null; name_confirmed: boolean | null }>(

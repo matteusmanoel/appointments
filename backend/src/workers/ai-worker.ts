@@ -8,7 +8,9 @@ import {
   clampInboundQuietSeconds,
   shouldDropReplyBecauseTurnGrew,
 } from "../integrations/whatsapp/inbound-turn.js";
-import { runAgent, detectViolations, sanitizeClientFacingReply, containsAiExposure, looksLikeHallucinatedBookingClaim, replyClaimsPresenceConfirmed } from "../ai/agent.js";
+import { detectViolations, sanitizeClientFacingReply, containsAiExposure, looksLikeHallucinatedBookingClaim, replyClaimsPresenceConfirmed } from "../ai/agent.js";
+import { runConversationTurn } from "../ai/agent/engine-router.js";
+import { startTurnShadow } from "../ai/agent/shadow.js";
 import { logTurnTrace, maskPhone, previewError, previewText, type AgentTurnTrace, type TurnTraceOutbound } from "../ai/turn-trace.js";
 import { persistTurnSheet } from "../ai/turn-sheet-store.js";
 import { splitOutgoingBubbles, stripTrailingBubblePeriod } from "../ai/date-calendar.js";
@@ -572,9 +574,11 @@ async function processOneJob(): Promise<boolean> {
           new Promise<void>((resolve) => setTimeout(resolve, 3000).unref?.()),
         ]);
         const openai = new OpenAI({ apiKey: config.openaiApiKey });
-        const result = await runAgent(barbershopId, conversationId, fromPhone, openai, {
+        const shadow = startTurnShadow({ barbershopId, conversationId, openai });
+        const result = await runConversationTurn(barbershopId, conversationId, fromPhone, openai, {
           persistAssistantMessages: false,
         });
+        await shadow.finish(result.turnTrace?.intent ?? null);
       reply = sanitizeClientFacingReply(result.reply);
       turnSink.replyText = reply;
       turnSink.agent = result.turnTrace ?? null;

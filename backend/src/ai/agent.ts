@@ -792,7 +792,7 @@ export function looksLikeBookingConfirmationAsk(reply: string): boolean {
   return /\bposso confirmar\b|\bconfirmo (pra|para) voc|\bposso marcar\b|\bfica assim\b/i.test(reply ?? "");
 }
 
-type CheckAvailabilitySnapshot = {
+export type CheckAvailabilitySnapshot = {
   available: boolean;
   date: string;
   time: string;
@@ -813,7 +813,7 @@ type CheckAvailabilitySnapshot = {
   availableBarbers: Array<{ barber_id: string; barber_name: string }>;
 };
 
-function snapshotCheckAvailability(result: unknown, preferredBarberId?: string): CheckAvailabilitySnapshot | null {
+export function snapshotCheckAvailability(result: unknown, preferredBarberId?: string): CheckAvailabilitySnapshot | null {
   if (!result || typeof result !== "object") return null;
   const r = result as Record<string, unknown>;
   const requested = (r.requested ?? null) as
