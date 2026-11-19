@@ -20,7 +20,7 @@ import {
   parseCompareLimit,
   runCompare,
 } from "../ai/simulator/compare.js";
-import { assertMiniModel, estimateCostUsd, formatUsd } from "../ai/simulator/compare-pricing.js";
+import { DEFAULT_COMPARE_MODEL, assertMiniModel, estimateCostUsd, formatUsd } from "../ai/simulator/compare-pricing.js";
 import { resetWhatsAppOutbound } from "../integrations/whatsapp/noop-outbound.js";
 import { setSimulatorTraceEnabled } from "../ai/simulator/trace.js";
 
@@ -277,14 +277,14 @@ describe("simulate:compare", () => {
     expect(report.completionTokens).toBe(fake.calls() * 8);
     expect(report.costUsd).toBeCloseTo(
       estimateCostUsd({
-        model: "gpt-4o-mini",
+        model: DEFAULT_COMPARE_MODEL,
         promptTokens: report.promptTokens,
         completionTokens: report.completionTokens,
       }),
       8,
     );
     const chatOnly = estimateCostUsd({
-      model: "gpt-4o-mini",
+      model: DEFAULT_COMPARE_MODEL,
       promptTokens: fake.calls() * 20,
       completionTokens: fake.calls() * 8,
     });

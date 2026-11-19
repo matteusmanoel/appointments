@@ -10,7 +10,7 @@ import { DEFAULT_COMPARE_MODEL, DEFAULT_MAX_RUNS, DEFAULT_MAX_TOKENS } from "../
 
 function usage(): string {
   return `Uso:
-  npm run simulate:compare -- --tenant <slug|uuid> [--out arquivo.md] [--model gpt-4o-mini]
+  npm run simulate:compare -- --tenant <slug|uuid> [--out arquivo.md] [--model gpt-6-luna]
                               [--max-runs 1] [--max-tokens 300000] [--only <id>]
 
 Opções:

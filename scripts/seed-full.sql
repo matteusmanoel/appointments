@@ -132,7 +132,7 @@ BEGIN
 
   -- ---------- IA / WhatsApp ----------
   INSERT INTO public.barbershop_ai_settings (barbershop_id, enabled, timezone, model, temperature, max_output_tokens)
-  VALUES (bid, true, 'America/Sao_Paulo', 'gpt-4o-mini', 0.7, 350)
+  VALUES (bid, true, 'America/Sao_Paulo', 'gpt-6-luna', 0.7, 350)
   ON CONFLICT (barbershop_id) DO UPDATE SET enabled = true, max_output_tokens = 350;
 
   -- ---------- Mensagens agendadas ----------

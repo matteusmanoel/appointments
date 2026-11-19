@@ -1,10 +1,11 @@
 /**
  * Tabela de preços do simulate:compare (USD por 1M de tokens).
- * Valores do gpt-4o-mini; atualize aqui se a tabela da OpenAI mudar.
+ * Valores da tabela da OpenAI; atualize aqui se a tabela da OpenAI mudar.
  */
-export const DEFAULT_COMPARE_MODEL = "gpt-4o-mini";
+export const DEFAULT_COMPARE_MODEL = "gpt-6-luna";
 
 export const MINI_MODEL_PRICES_USD_PER_1M: Record<string, { input: number; output: number }> = {
+  "gpt-6-luna": { input: 0.1, output: 0.5 },
   "gpt-4o-mini": { input: 0.15, output: 0.6 },
   "gpt-4o-mini-2024-07-18": { input: 0.15, output: 0.6 },
 };
@@ -14,9 +15,9 @@ export const DEFAULT_MAX_RUNS = 1;
 
 export function assertMiniModel(model: string): string {
   const name = model.trim();
-  if (!name) throw new Error("Informe um modelo mini, ex. gpt-4o-mini.");
-  if (!/mini/i.test(name)) {
-    throw new Error(`--model só aceita modelos mini (recebido: ${name}).`);
+  if (!name) throw new Error("Informe um modelo mini ou luna, ex. gpt-6-luna.");
+  if (!/mini|luna/i.test(name)) {
+    throw new Error(`--model só aceita modelos mini ou luna (recebido: ${name}).`);
   }
   return name;
 }

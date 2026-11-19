@@ -166,6 +166,18 @@ variable "openai_api_key" {
   sensitive   = true
 }
 
+variable "ai_agent_shadow_barbershops" {
+  type        = string
+  description = "Barbearias com interpretador em sombra (ids separados por vírgula ou *). Vazio desliga."
+  default     = ""
+}
+
+variable "ai_agent_v2_composer" {
+  type        = string
+  description = "false faz o motor v2 usar só templates, sem redação por LLM."
+  default     = "true"
+}
+
 variable "stripe_secret_key" {
   type        = string
   description = "Stripe da conta de testes. Vazio desliga checkout."

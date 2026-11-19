@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { config } from "../config.js";
+import { DEFAULT_CHAT_MODEL, createChatCompletion } from "./models.js";
 import { getBase64FromMediaMessage } from "../integrations/whatsapp/evolution-client.js";
 import { decideReceiptAcceptance, type ReceiptFacts } from "./parse-receipt.js";
 
@@ -33,8 +34,8 @@ export async function readReceiptFromMedia(params: {
     const openai = params.openai ?? (config.openaiApiKey ? new OpenAI({ apiKey: config.openaiApiKey }) : null);
     if (!openai) return { readable: false, recipient: null, transferDate: null, amount: null };
     const dataUrl = `data:${mime};base64,${media.base64}`;
-    const out = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const out = await createChatCompletion(openai, {
+      model: DEFAULT_CHAT_MODEL,
       response_format: { type: "json_object" },
       messages: [
         {

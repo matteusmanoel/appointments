@@ -100,7 +100,7 @@ const SALES_STYLE_SNIPPETS: Record<SalesStyle, string> = {
   direct: "Seja direto ao sugerir agendamento e próximos passos.",
 };
 
-function profileToSnippet(profile: AgentProfile): string {
+export function profileToSnippet(profile: AgentProfile): string {
   const parts: string[] = [];
   if (profile.displayName?.trim()) {
     parts.push(`Você se apresenta como "${profile.displayName.trim()}".`);

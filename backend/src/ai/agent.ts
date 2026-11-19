@@ -1,5 +1,6 @@
 import { OPT_OUT_PROMO_LINE } from "../outbound/templates.js";
 import OpenAI from "openai";
+import { DEFAULT_CHAT_MODEL, createChatCompletion, resolveChatModel } from "./models.js";
 import { pool } from "../db.js";
 import * as aiTools from "./tools.js";
 import { understandTurn } from "./agent/understanding.js";
@@ -791,7 +792,7 @@ export function looksLikeBookingConfirmationAsk(reply: string): boolean {
   return /\bposso confirmar\b|\bconfirmo (pra|para) voc|\bposso marcar\b|\bfica assim\b/i.test(reply ?? "");
 }
 
-type CheckAvailabilitySnapshot = {
+export type CheckAvailabilitySnapshot = {
   available: boolean;
   date: string;
   time: string;
@@ -812,7 +813,7 @@ type CheckAvailabilitySnapshot = {
   availableBarbers: Array<{ barber_id: string; barber_name: string }>;
 };
 
-function snapshotCheckAvailability(result: unknown, preferredBarberId?: string): CheckAvailabilitySnapshot | null {
+export function snapshotCheckAvailability(result: unknown, preferredBarberId?: string): CheckAvailabilitySnapshot | null {
   if (!result || typeof result !== "object") return null;
   const r = result as Record<string, unknown>;
   const requested = (r.requested ?? null) as
@@ -1638,6 +1639,17 @@ export const RUNTIME_GUARDRAILS = `GUARDRAILS CRÍTICOS (têm precedência sobre
 - appointment_id sempre UUID de list_client_upcoming_appointments — nunca número, nunca nome de barbeiro.
 - Sem dados reais das tools para responder: retorne string vazia (handoff).`;
 
+/** O modelo só vê as ferramentas que o turno pode executar. A escolha de filial vale em toda conta com filiais. */
+export function toolsOfferedThisTurn(
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  allowedTools: string[],
+  canSelectBranch: boolean,
+): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  const allowed = new Set(allowedTools);
+  if (canSelectBranch) allowed.add("select_branch");
+  return tools.filter((tool) => tool.type === "function" && allowed.has(tool.function.name));
+}
+
 const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
@@ -2224,10 +2236,9 @@ export async function runAgent(
   // ── Derived constants (unchanged from original) ─────────────────────────
   const ESCALATION_TOOL_ERROR_THRESHOLD = 2;
   let usePremiumModel = usePremiumByMessages;
-  let model: string = options?.model
-    || (usePremiumModel
-      ? (settings?.model_premium ?? settings?.model ?? "gpt-4o-mini")
-      : (settings?.model ?? "gpt-4o-mini"));
+  let model: string = resolveChatModel(
+    options?.model || (usePremiumModel ? (settings?.model_premium ?? settings?.model) : settings?.model),
+  );
   const temperature = settings?.temperature ?? 0.3;
   const draft = options?.sandboxDraft;
   const useDraft = draft && draft.agent_profile != null && typeof draft.agent_profile === "object";
@@ -2913,7 +2924,7 @@ export async function runAgent(
         if (interpreted.usage) addUsage(interpreted.usage);
         turnTrace.openai.push({
           round: -1,
-          model: "gpt-4o-mini",
+          model: DEFAULT_CHAT_MODEL,
           latencyMs: 0,
           finishReason: interpreted.timedOut ? "timeout" : "stop",
           promptTokens: interpreted.usage?.prompt_tokens ?? 0,
@@ -5259,16 +5270,20 @@ export async function runAgent(
     return finishTurn(withRobotPrefix(BASIC_FLOW_SAFE_FALLBACK), true);
   }
 
+  const toolsThisTurn = toolsOfferedThisTurn(
+    OPENAI_TOOLS,
+    routing.allowedTools,
+    numberMode === "account_wide" && accountBranches.length > 1,
+  );
   for (let round = 0; round < maxToolRounds; round++) {
     const maxTokens = settings?.max_output_tokens ?? 350;
     const openAiStarted = Date.now();
-    const completion = await openai.chat.completions.create({
+    const completion = await createChatCompletion(openai, {
       model,
       temperature: effectiveTemperature,
-      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       messages: loopMessages,
-      tools: OPENAI_TOOLS,
-      tool_choice: "auto",
+      ...(toolsThisTurn.length ? { tools: toolsThisTurn, tool_choice: "auto" as const } : {}),
     });
     const choice = completion.choices[0];
     const toolsRequested = (choice?.message.tool_calls ?? []).map((tc) => {
@@ -5981,7 +5996,7 @@ export async function runAgent(
         toolErrorCount >= ESCALATION_TOOL_ERROR_THRESHOLD
       ) {
         usePremiumModel = true;
-        model = settings?.model_premium ?? settings?.model ?? model;
+        model = resolveChatModel(settings?.model_premium ?? settings?.model ?? model);
       }
       continue;
     }

@@ -70,6 +70,8 @@ locals {
     UAZAPI_WEBHOOK_PUBLIC_URL       = local.uazapi_webhook_public_url
     OPENAI_API_KEY                  = var.openai_api_key
     NATIVE_AI_DISABLED              = "false"
+    AI_AGENT_SHADOW_BARBERSHOPS     = var.ai_agent_shadow_barbershops
+    AI_AGENT_V2_COMPOSER            = var.ai_agent_v2_composer
     STRIPE_SECRET_KEY               = var.stripe_secret_key
     STRIPE_WEBHOOK_SECRET           = var.stripe_webhook_secret
     STRIPE_PRICE_ID                 = var.stripe_price_id
